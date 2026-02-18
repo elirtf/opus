@@ -1,0 +1,41 @@
+services:
+  opus:
+    build: .
+    container_name: opus
+    restart: always
+    env_file:
+      - .env
+    volumes:
+      - ./instance:/app/instance
+      - ./go2rtc:/config
+    networks:
+      - opusnet
+
+  go2rtc:
+    image: alexxit/go2rtc
+    container_name: go2rtc
+    restart: always
+    env_file:
+      - .env
+    volumes:
+      - ./go2rtc:/config
+    networks:
+      - opusnet
+
+  nginx:
+    image: nginx:alpine
+    container_name: opus-nginx
+    restart: always
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      - opus
+      - go2rtc
+    networks:
+      - opusnet
+
+networks:
+  opusnet:
+    driver: bridge

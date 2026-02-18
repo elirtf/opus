@@ -1,0 +1,27 @@
+{# Shared input fields used in both Add and Edit NVR modals #}
+{% macro field(label, name, type='text', placeholder='', required=False) %}
+<div>
+    <label class="block text-xs font-medium text-gray-400 mb-1">{{ label }}{% if required %} *{% endif %}</label>
+    <input name="{{ name }}" type="{{ type }}" placeholder="{{ placeholder }}"
+           {% if required %}required{% endif %}
+           class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white
+           placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+</div>
+{% endmacro %}
+
+{{ field('Internal Name (slug)', 'name', placeholder='warehouse-nvr-1', required=True) }}
+{{ field('Display Name', 'display_name', placeholder='Warehouse NVR', required=True) }}
+{{ field('IP Address', 'ip_address', placeholder='192.168.1.100') }}
+{{ field('Username', 'username', placeholder='admin') }}
+<div>
+    <label class="block text-xs font-medium text-gray-400 mb-1">Password</label>
+    <input name="password" type="password"
+           class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white
+           placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+</div>
+<div>
+    <label class="block text-xs font-medium text-gray-400 mb-1">Max Channels</label>
+    <input name="max_channels" type="number" value="50" min="1"
+           class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white
+           focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+</div>

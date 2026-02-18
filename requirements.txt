@@ -1,0 +1,7 @@
+Flask>=3.0.2 # Core
+Flask-Login>=0.6.3 # For session management
+Flask-Bcrypt>=1.0.1 # For password hashing
+Flask-SQLAlchemy>=3.1.1 # For SQLite ORM - not sure what yet tbh
+requests>=2.32.4
+pyyaml
+werkzeug

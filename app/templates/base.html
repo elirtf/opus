@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-gray-950">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{% block title %}Opus NVR{% endblock %}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>tailwind.config = { darkMode: 'class' }</script>
+</head>
+<body class="h-full text-gray-100 dark" x-data>
+
+{% if current_user.is_authenticated %}
+<nav class="bg-gray-900 border-b border-gray-800 px-6 py-3 flex items-center justify-between">
+    <div class="flex items-center gap-6">
+        <span class="font-bold text-lg tracking-wide text-white">🎥 Opus</span>
+        <a href="{{ url_for('main.dashboard') }}"
+           class="text-sm hover:text-white {% if request.endpoint == 'main.dashboard' %}text-white font-medium{% else %}text-gray-400{% endif %}">
+            Live View
+        </a>
+        <a href="{{ url_for('cameras.index') }}"
+           class="text-sm hover:text-white {% if request.endpoint and 'cameras' in request.endpoint %}text-white font-medium{% else %}text-gray-400{% endif %}">
+            Cameras
+        </a>
+        <a href="{{ url_for('nvrs.index') }}"
+           class="text-sm hover:text-white {% if request.endpoint and 'nvrs' in request.endpoint %}text-white font-medium{% else %}text-gray-400{% endif %}">
+            NVRs
+        </a>
+    </div>
+    <div class="flex items-center gap-4 text-sm text-gray-400">
+    <span>{{ current_user.username }}
+      <span class="ml-1 px-1.5 py-0.5 rounded text-xs font-medium
+        {% if current_user.is_admin %}bg-indigo-600 text-white{% else %}bg-gray-700 text-gray-300{% endif %}">
+        {{ current_user.role }}
+      </span>
+    </span>
+        <a href="{{ url_for('auth.logout') }}" class="hover:text-red-400 transition-colors">Logout</a>
+    </div>
+</nav>
+{% endif %}
+
+<!-- Flash messages -->
+{% with messages = get_flashed_messages(with_categories=true) %}
+{% if messages %}
+<div class="max-w-7xl mx-auto px-6 pt-4 space-y-2">
+    {% for category, message in messages %}
+    <div class="px-4 py-2 rounded text-sm font-medium
+          {% if category == 'error' %}bg-red-900/60 text-red-300 border border-red-700
+          {% else %}bg-green-900/60 text-green-300 border border-green-700{% endif %}">
+        {{ message }}
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+{% endwith %}
+
+<main class="max-w-7xl mx-auto px-6 py-6">
+    {% block content %}{% endblock %}
+</main>
+
+{% block full_width %}{% endblock %}
+
+</body>
+</html>

@@ -8,15 +8,13 @@ bp = Blueprint("main", __name__)
 @bp.route("/")
 @login_required
 def dashboard():
-    # Only show main streams on the dashboard.
-    # Sub streams are loaded dynamically in the template when the grid is large.
+    # Only show main-stream cameras on the dashboard.
+    # The JS swaps to sub streams automatically — all grid sizes use sub streams.
     cameras = Camera.query.filter(
         Camera.active == True,
         Camera.name.like("%-main")
     ).all()
 
-    # Build a lookup: cam.name -> sub stream name
-    # e.g. "warehouse-ch1-main" -> "warehouse-ch1-sub"
     sub_map = {
         cam.name: cam.name.replace("-main", "-sub")
         for cam in cameras

@@ -9,12 +9,10 @@
       Main stream
     </span>
         <div class="flex items-center gap-1 bg-gray-800 rounded-lg p-1">
-            <button onclick="setGrid(1)" class="grid-btn px-3 py-1.5 rounded text-sm text-gray-400 hover:text-white">1×1</button>
-            <button onclick="setGrid(2)" class="grid-btn px-3 py-1.5 rounded text-sm text-white bg-gray-700">2×2</button>
-            <button onclick="setGrid(3)" class="grid-btn px-3 py-1.5 rounded text-sm text-gray-400 hover:text-white">3×3</button>
+            <button onclick="setGrid(3)" class="grid-btn px-3 py-1.5 rounded text-sm text-white bg-gray-700">3×3</button>
             <button onclick="setGrid(4)" class="grid-btn px-3 py-1.5 rounded text-sm text-gray-400 hover:text-white">4×4</button>
+            <button onclick="setGrid(6)" class="grid-btn px-3 py-1.5 rounded text-sm text-gray-400 hover:text-white">6×6</button>
         </div>
-        <!-- Pagination -->
         <div class="flex items-center gap-1">
             <button onclick="changePage(-1)" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded text-sm">‹</button>
             <span id="pageLabel" class="text-sm text-gray-400 px-2"></span>
@@ -25,27 +23,27 @@
 {% endblock %}
 
 {% block full_width %}
-
-{# Pass camera data to JS as JSON — no iframes rendered server-side at all #}
 <script>
     const ALL_CAMERAS = [
       {% for cam in cameras %}
-      { main: "{{ cam.name }}", sub: "{{ sub_map[cam.name] }}", label: "{{ cam.display_name | replace(' — ', ' ') | replace(' Main', '') }}", nvr: "{{ cam.nvr.display_name if cam.nvr else '' }}" },
+      {
+        main:  "{{ cam.name }}",
+        sub:   "{{ sub_map[cam.name] }}",
+        label: "{{ cam.display_name | replace(' — ', ' ') | replace(' Main', '') }}",
+        nvr:   "{{ cam.nvr.display_name if cam.nvr else '' }}"
+      },
       {% endfor %}
     ];
 </script>
 
 {% if cameras %}
-<div id="cameraGrid" style="display:grid; grid-template-columns: repeat(2, 1fr); gap: 4px;">
-    <!-- Tiles injected by JS -->
-</div>
+<div id="cameraGrid" style="display:grid; grid-template-columns:repeat(3,1fr); gap:4px;"></div>
 {% else %}
-<div class="text-center py-24 text-gray-500 px-6">
+<div class="text-center py-24 px-6 text-gray-500">
     <div class="text-5xl mb-4">📷</div>
     <p class="text-lg font-medium text-gray-400">No active cameras</p>
     <p class="text-sm mt-1">
-        <a href="{{ url_for('cameras.index') }}" class="text-indigo-400 hover:underline">Add a camera</a>
-        to get started.
+        <a href="{{ url_for('cameras.index') }}" class="text-indigo-400 hover:underline">Add a camera</a> to get started.
     </p>
 </div>
 {% endif %}
@@ -64,135 +62,139 @@
 </div>
 
 <script>
-    const SUB_THRESHOLD = 3;
-    let currentCols = 2;
+    const SUB_THRESHOLD = 3;  // all views use sub streams
+    let currentCols = 3;
     let currentPage = 0;
 
-    function visibleCount() { return currentCols * currentCols; }
+    function streamUrl(name) {
+      return `/go2rtc/stream.html?src=${name}&mode=mse`;
+    }
 
-    function totalPages() {
-      return Math.max(1, Math.ceil(ALL_CAMERAS.length / visibleCount()));
+    function createTile(cam, streamName) {
+      const tile = document.createElement('div');
+      tile.style.cssText = 'position:relative; background:#000; overflow:hidden;';
+      tile.dataset.main = cam.main;
+      tile.dataset.sub  = cam.sub;
+
+      // 16:9 ratio box
+      const ratio = document.createElement('div');
+      ratio.style.cssText = 'position:relative; padding-bottom:56.25%;';
+
+      // The iframe — this is what we know works
+      const iframe = document.createElement('iframe');
+      iframe.style.cssText = 'position:absolute; inset:0; width:100%; height:100%; border:0;';
+      iframe.src = streamUrl(streamName);
+      iframe.allow = 'autoplay';
+      ratio.appendChild(iframe);
+
+      // Click shield — above iframe, below overlays
+      const shield = document.createElement('div');
+      shield.style.cssText = 'position:absolute; inset:0; z-index:10;';
+      ratio.appendChild(shield);
+
+      tile.appendChild(ratio);
+
+      // Label overlay (shows on hover)
+      const label = document.createElement('div');
+      label.style.cssText = `
+        position:absolute; top:0; left:0; right:0; z-index:20; pointer-events:none;
+        padding:8px 12px; display:flex; justify-content:space-between; align-items:center;
+        background:linear-gradient(to bottom,rgba(0,0,0,0.75),transparent);
+        opacity:0; transition:opacity 0.15s;
+      `;
+      label.innerHTML = `
+        <span style="color:#fff;font-size:13px;font-weight:500;text-shadow:0 1px 3px rgba(0,0,0,.8);">${cam.label}</span>
+        <span style="color:#aaa;font-size:11px;">${cam.nvr}</span>
+      `;
+
+      // Fullscreen button (shows on hover)
+      const fsBtn = document.createElement('button');
+      fsBtn.textContent = '⛶';
+      fsBtn.style.cssText = `
+        position:absolute; top:8px; right:8px; z-index:30;
+        background:rgba(0,0,0,0.6); color:#fff; border:1px solid #555;
+        border-radius:4px; padding:2px 8px; font-size:12px; cursor:pointer;
+        opacity:0; transition:opacity 0.15s;
+      `;
+      fsBtn.onclick = () => openFullscreen(cam.main, cam.label);
+
+      tile.appendChild(label);
+      tile.appendChild(fsBtn);
+
+      tile.addEventListener('mouseenter', () => { label.style.opacity='1'; fsBtn.style.opacity='1'; });
+      tile.addEventListener('mouseleave', () => { label.style.opacity='0'; fsBtn.style.opacity='0'; });
+
+      return tile;
+    }
+
+    function destroyAll() {
+      const grid = document.getElementById('cameraGrid');
+      if (!grid) return;
+      // Clear iframe src before removing — tells go2rtc to drop the RTSP connection
+      grid.querySelectorAll('iframe').forEach(f => { f.src = ''; });
+      grid.innerHTML = '';
     }
 
     function render() {
+      destroyAll();
+
       const grid = document.getElementById('cameraGrid');
       if (!grid) return;
 
       const useSub = currentCols >= SUB_THRESHOLD;
-      const count  = visibleCount();
-      const start  = currentPage * count;
-      const slice  = ALL_CAMERAS.slice(start, start + count);
-
-      // ── Destroy all existing iframes first so go2rtc drops the connections ──
-      grid.querySelectorAll('iframe').forEach(f => { f.src = ''; });
-      grid.innerHTML = '';
+      const count  = currentCols * currentCols;
+      const pages  = Math.max(1, Math.ceil(ALL_CAMERAS.length / count));
+      const slice  = ALL_CAMERAS.slice(currentPage * count, (currentPage + 1) * count);
 
       grid.style.gridTemplateColumns = `repeat(${currentCols}, 1fr)`;
+      slice.forEach(cam => grid.appendChild(createTile(cam, useSub ? cam.sub : cam.main)));
 
-      slice.forEach(cam => {
-        const streamName = useSub ? cam.sub : cam.main;
-        const tile = document.createElement('div');
-        tile.className = 'bg-black overflow-hidden group';
-        tile.style.position = 'relative';
-        tile.dataset.main = cam.main;
-
-        tile.innerHTML = `
-          <!-- Camera label overlay (top, on hover) -->
-          <div style="position:absolute; top:0; left:0; right:0; z-index:20;
-                      background:linear-gradient(to bottom,rgba(0,0,0,0.7),transparent);
-                      padding:8px 12px; display:flex; justify-content:space-between; align-items:center;
-                      opacity:0; transition:opacity 0.2s;" class="tile-overlay">
-            <span style="color:#fff; font-size:13px; font-weight:500; text-shadow:0 1px 3px rgba(0,0,0,0.8);">${cam.label}</span>
-            <span style="color:#ccc; font-size:11px;">${cam.nvr}</span>
-          </div>
-
-          <!-- Fullscreen button (top-right, on hover) -->
-          <button onclick="openFullscreen('${cam.main}','${cam.label}')"
-            style="position:absolute; top:8px; right:8px; z-index:30;
-                   background:rgba(0,0,0,0.6); color:#fff; border:1px solid #555;
-                   border-radius:4px; padding:2px 8px; font-size:12px; cursor:pointer;
-                   opacity:0; transition:opacity 0.2s;" class="tile-overlay">
-            ⛶
-          </button>
-
-          <!-- Click shield — blocks all mouse interaction with the iframe -->
-          <div style="position:absolute; inset:0; z-index:10; cursor:default;"></div>
-
-          <!-- Stream iframe -->
-          <div style="position:relative; padding-bottom:56.25%;">
-            <iframe
-              style="position:absolute; inset:0; width:100%; height:100%; border:0;"
-              src="/go2rtc/stream.html?src=${streamName}&mode=mse"
-              allow="autoplay">
-            </iframe>
-          </div>
-        `;
-
-        // Hover show/hide overlays
-        tile.addEventListener('mouseenter', () => {
-          tile.querySelectorAll('.tile-overlay').forEach(el => el.style.opacity = '1');
-        });
-        tile.addEventListener('mouseleave', () => {
-          tile.querySelectorAll('.tile-overlay').forEach(el => el.style.opacity = '0');
-        });
-
-        grid.appendChild(tile);
-      });
-
-      // Update page label
-      document.getElementById('pageLabel').textContent =
-        `${currentPage + 1} / ${totalPages()}`;
-
-      // Update quality badge
+      // Quality badge
       const badge = document.getElementById('qualityBadge');
       badge.textContent = useSub ? 'Sub stream' : 'Main stream';
-      badge.className = useSub
+      badge.className   = useSub
         ? 'text-xs px-2 py-1 rounded font-medium bg-yellow-900/60 text-yellow-300 border border-yellow-800'
         : 'text-xs px-2 py-1 rounded font-medium bg-indigo-900/60 text-indigo-300 border border-indigo-800';
+
+      document.getElementById('pageLabel').textContent = `${currentPage + 1} / ${pages}`;
     }
 
     function setGrid(cols) {
       currentCols = cols;
       currentPage = 0;
-
       document.querySelectorAll('.grid-btn').forEach((btn, i) => {
-        const btnCols = [1, 2, 3, 4][i];
-        btn.className = btnCols === cols
+        const c = [3,4,6][i];
+        btn.className = c === cols
           ? 'grid-btn px-3 py-1.5 rounded text-sm text-white bg-gray-700'
           : 'grid-btn px-3 py-1.5 rounded text-sm text-gray-400 hover:text-white';
       });
-
       render();
     }
 
     function changePage(dir) {
-      const next = currentPage + dir;
-      if (next < 0 || next >= totalPages()) return;
+      const pages = Math.max(1, Math.ceil(ALL_CAMERAS.length / (currentCols * currentCols)));
+      const next  = currentPage + dir;
+      if (next < 0 || next >= pages) return;
       currentPage = next;
       render();
     }
 
     function openFullscreen(streamName, label) {
       document.getElementById('fsTitle').textContent = label;
-      document.getElementById('fsFrame').src = `/go2rtc/stream.html?src=${streamName}&mode=mse`;
+      document.getElementById('fsFrame').src = streamUrl(streamName);
       document.getElementById('fsOverlay').classList.remove('hidden');
       document.body.style.overflow = 'hidden';
     }
 
     function closeFullscreen() {
+      document.getElementById('fsFrame').src = '';
       document.getElementById('fsOverlay').classList.add('hidden');
-      document.getElementById('fsFrame').src = '';  // kills the stream connection immediately
       document.body.style.overflow = '';
     }
 
     document.addEventListener('keydown', e => { if (e.key === 'Escape') closeFullscreen(); });
+    window.addEventListener('beforeunload', destroyAll);
 
-    // Kill all streams when user navigates away
-    window.addEventListener('beforeunload', () => {
-      document.querySelectorAll('iframe').forEach(f => { f.src = ''; });
-    });
-
-    // Initial render
     render();
 </script>
 {% endblock %}

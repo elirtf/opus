@@ -1,6 +1,25 @@
+.git
+go2rtc.yaml
+
+# Python
+__pycache__/
+*.pyc
+instance/*
 .env
 .db
-go2rtc.yaml
+
+# Node
+frontend/node_modules
+frontend/dist
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode
+.idea
+.venv
 
 # Default ignored files
 /shelf/

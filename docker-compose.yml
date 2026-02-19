@@ -11,11 +11,6 @@ services:
       - static_files:/app/app/static
     networks:
       - opusnet
-    healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:5000/api/auth/admin" ]
-      interval: 1m
-      timeout: 10s
-      retries: 3
 
   go2rtc:
     image: alexxit/go2rtc
@@ -27,8 +22,6 @@ services:
       - ./go2rtc:/config
     networks:
       - opusnet
-    healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:1984/api/streams" ]
 
   nginx:
     image: nginx:alpine

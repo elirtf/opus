@@ -1,5 +1,5 @@
 import os
-from flask import Flask, g
+from flask import Flask
 from flask_login import LoginManager
 from app.database import db
 from app.models import User, NVR, Camera
@@ -18,10 +18,13 @@ def create_app():
     db.init(app.config["DATABASE_PATH"])
     db.start()          # starts the background writer thread
     db.connect(reuse_if_open=True)
-    db.create_tables([User, NVR, Camera], safe=True)  # safe=True = IF NOT EXISTS
 
-    # Open a connection at the start of each request, close it on teardown.
-    # Peewee requires this — connections are not thread-safe by default.
+    # Run pending migrations before serving any requests.
+    # Replaces db.create_tables() — migrations own the schema from here on.
+    from app.migrate import run_migrations
+    run_migrations(app.config["DATABASE_PATH"])
+
+    # Per-request connection management
     @app.before_request
     def open_db():
         if db.is_closed():

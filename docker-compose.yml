@@ -8,8 +8,14 @@ services:
     volumes:
       - ./instance:/app/instance
       - ./go2rtc:/config
+      - static_files:/app/app/static
     networks:
       - opusnet
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:5000/api/auth/admin" ]
+      interval: 1m
+      timeout: 10s
+      retries: 3
 
   go2rtc:
     image: alexxit/go2rtc
@@ -21,6 +27,8 @@ services:
       - ./go2rtc:/config
     networks:
       - opusnet
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:1984/api/streams" ]
 
   nginx:
     image: nginx:alpine
@@ -30,6 +38,7 @@ services:
       - "80:80"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf
+      - static_files:/app/static
     depends_on:
       - opus
       - go2rtc
@@ -39,3 +48,6 @@ services:
 networks:
   opusnet:
     driver: bridge
+
+volumes:
+  static_files:

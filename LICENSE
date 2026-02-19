@@ -1,16 +1,17 @@
 Copyright (c) 2026 Elijah Southern
 
-All rights reserved.
+This software is provided for viewing, educational use, 
+and non-commercial experimentation only.
 
-Permission is granted to:
-- View this source code
-- Fork this repository for personal or non-commercial use
-- Submit pull requests or suggestions
+You are allowed to:
+- Fork the repository
+- Submit pull requests
+- Modify for personal or non-commercial use
 
-You may NOT:
-- Redistribute this code in original or modified form
-- Sell this code
-- Use this code commercially
-- Repackage or sublicense this project
+You are NOT allowed to:
+- Sell this software
+- Redistribute it publicly
+- Use it commercially
+- Create competing commercial products from it
 
-Commercial licensing is available upon request.
+Commercial licensing may be available in the future.

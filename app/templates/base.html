@@ -25,6 +25,10 @@
            class="text-sm hover:text-white {% if request.endpoint and 'nvrs' in request.endpoint %}text-white font-medium{% else %}text-gray-400{% endif %}">
             NVRs
         </a>
+        <a href="{{ url_for('users.index') }}"
+           class="text-sm hover:text-white {% if request.endpoint and 'users' in request.endpoint %}text-white font-medium{% else %}text-gray-400{% endif %}">
+            Users
+        </a>
     </div>
     <div class="flex items-center gap-4 text-sm text-gray-400">
     <span>{{ current_user.username }}

@@ -46,13 +46,29 @@ def create_app():
         except User.DoesNotExist:
             return None
 
-    # ── Blueprints ───────────────────────────────────────────────────────────
-    from app.routes import auth, main, nvrs, cameras, users
-    app.register_blueprint(auth.bp)
-    app.register_blueprint(main.bp)
-    app.register_blueprint(nvrs.bp)
-    app.register_blueprint(cameras.bp)
-    app.register_blueprint(users.bp)
+    # ── Blueprints (Jinja) ───────────────────────────────────────────────────
+    from app.routes.auth    import bp as auth_bp
+    from app.routes.main    import bp as main_bp
+    from app.routes.nvrs    import bp as nvrs_bp
+    from app.routes.cameras import bp as cameras_bp
+    from app.routes.users   import bp as users_bp
+
+    app.register_blueprint(auth_bp)
+    app.register_blueprint(main_bp)
+    app.register_blueprint(nvrs_bp)
+    app.register_blueprint(cameras_bp)
+    app.register_blueprint(users_bp)
+
+    # ── Blueprints (API) ─────────────────────────────────────────────────────
+    from app.routes.api.auth    import bp as api_auth_bp
+    from app.routes.api.nvrs    import bp as api_nvrs_bp
+    from app.routes.api.cameras import bp as api_cameras_bp
+    from app.routes.api.users   import bp as api_users_bp
+
+    app.register_blueprint(api_auth_bp)
+    app.register_blueprint(api_nvrs_bp)
+    app.register_blueprint(api_cameras_bp)
+    app.register_blueprint(api_users_bp)
 
     # ── Seed default admin if no users exist ─────────────────────────────────
     if User.select().count() == 0:

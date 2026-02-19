@@ -1,0 +1,4 @@
+node_modules
+.git
+instance/*
+frontend/node_modules

@@ -14,7 +14,6 @@ Designed to manage Hikvision-compatible NVRs, view live camera feeds in a config
 - **Camera Management** — Full CRUD for individual cameras; each synced to go2rtc as a named stream
 - **User Auth** — Login/logout with admin and viewer roles. Admins can add/edit/delete; viewers can only watch
 - **Fullscreen Mode** — Click any camera tile to open it fullscreen in main stream quality
-- **Click Shield** — Transparent overlay prevents accidental interaction with the video player controls
 
 ---
 

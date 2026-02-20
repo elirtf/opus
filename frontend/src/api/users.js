@@ -5,4 +5,6 @@ export const usersApi = {
   create: (data)       => api.post('/api/users/', data),
   update: (id, data)   => api.patch(`/api/users/${id}`, data),
   delete: (id)         => api.delete(`/api/users/${id}`),
+  getNvrs:    (id)            => api.get(`/api/users/${id}/nvrs`),
+  setNvrs:    (id, nvr_ids)   => api.post(`/api/users/${id}/nvrs`, { nvr_ids }),
 }

@@ -1,4 +1,5 @@
 from flask import Blueprint, request, current_app
+from flask_login import current_user
 from app.models import Camera, NVR
 from app.routes.api.utils import api_response, api_error, login_required_api, admin_required
 import requests as http
@@ -58,9 +59,16 @@ def stream_delete(name):
 @bp.route("/", methods=["GET"])
 @login_required_api
 def list_cameras():
-    cameras  = Camera.select().order_by(Camera.name)
+    allowed = current_user.allowed_nvr_ids()  # None = admin, set = restricted
+
+    query = Camera.select().order_by(Camera.name)
+    if allowed is not None:
+        if not allowed:
+            return api_response([])  # no assignments → see nothing
+        query = query.where(Camera.nvr.in_(allowed))
+
     nvr_map  = {nvr.id: nvr for nvr in NVR.select()}
-    return api_response([camera_to_dict(c, nvr_map) for c in cameras])
+    return api_response([camera_to_dict(c, nvr_map) for c in query])
 
 
 @bp.route("/", methods=["POST"])
@@ -68,7 +76,6 @@ def list_cameras():
 @admin_required
 def create_camera():
     data = request.get_json(silent=True) or {}
-
     name         = (data.get("name") or "").strip()
     display_name = (data.get("display_name") or "").strip()
     rtsp_url     = (data.get("rtsp_url") or "").strip()

@@ -1,5 +1,6 @@
 from flask import Blueprint, request, current_app
-from app.models import NVR, Camera
+from flask_login import current_user
+from app.models import NVR, Camera, UserNVR
 from app.routes.api.utils import api_response, api_error, login_required_api, admin_required
 import requests as http
 
@@ -8,18 +9,21 @@ bp = Blueprint("api_nvrs",  __name__, url_prefix="/api/nvrs")
 
 # ── Serializer ────────────────────────────────────────────────────────────────
 
-def nvr_to_dict(nvr, cam_count=None):
-    return {
+def nvr_to_dict(nvr, cam_count=None, admin=False):
+    base = {
         "id":           nvr.id,
-        "name":         nvr.name,
         "display_name": nvr.display_name,
-        "ip_address":   nvr.ip_address,
-        "username":     nvr.username,
-        # Never return password — not even hashed
-        "max_channels": nvr.max_channels,
         "active":       nvr.active,
         "camera_count": cam_count if cam_count is not None else 0,
     }
+    if admin:
+        base.update({
+            "name":         nvr.name,
+            "ip_address":   nvr.ip_address,
+            "username":     nvr.username,
+            "max_channels": nvr.max_channels,
+        })
+    return base
 
 
 # ── go2rtc + import helpers ───────────────────────────────────────────────────
@@ -62,11 +66,18 @@ def import_cameras(nvr):
 @bp.route("/", methods=["GET"])
 @login_required_api
 def list_nvrs():
-    nvrs = NVR.select()
+    allowed = current_user.allowed_nvr_ids()  # None = admin, set = restricted
+
+    query = NVR.select()
+    if allowed is not None:
+        if not allowed:
+            return api_response([])  # no assignments → see nothing
+        query = query.where(NVR.id.in_(allowed))
     result = []
-    for nvr in nvrs:
+
+    for nvr in query:
         count = Camera.select().where(Camera.nvr == nvr.id).count()
-        result.append(nvr_to_dict(nvr, count))
+        result.append(nvr_to_dict(nvr, count, admin=current_user.is_admin))
     return api_response(result)
 
 
@@ -75,13 +86,11 @@ def list_nvrs():
 @admin_required
 def create_nvr():
     data = request.get_json(silent=True) or {}
-
     name         = (data.get("name") or "").strip()
     display_name = (data.get("display_name") or "").strip()
 
     if not name or not display_name:
         return api_error("name and display_name are required.")
-
     if NVR.select().where(NVR.name == name).exists():
         return api_error(f'NVR name "{name}" is already taken.')
 
@@ -94,7 +103,7 @@ def create_nvr():
         max_channels=int(data.get("max_channels") or 50),
     )
     created, skipped = import_cameras(nvr)
-    result = nvr_to_dict(nvr, created)
+    result = nvr_to_dict(nvr, created, admin=True)
     result["imported"] = created
     result["skipped"]  = skipped
     return api_response(result, message=f"NVR created. {created} streams imported.", status=201)
@@ -127,7 +136,7 @@ def update_nvr(nvr_id):
         nvr.active = bool(data["active"])
 
     nvr.save()
-    return api_response(nvr_to_dict(nvr), message="NVR updated.")
+    return api_response(nvr_to_dict(nvr, admin=True), message="NVR updated.")
 
 
 @bp.route("/<int:nvr_id>", methods=["DELETE"])
@@ -139,10 +148,11 @@ def delete_nvr(nvr_id):
     except NVR.DoesNotExist:
         return api_error("NVR not found.", 404)
 
-    cam_count = Camera.delete().where(Camera.nvr == nvr_id).execute()
+    Camera.delete().where(Camera.nvr == nvr_id).execute()
+    UserNVR.delete().where(UserNVR.nvr_id == nvr_id).execute()
     name = nvr.display_name
     nvr.delete_instance()
-    return api_response(message=f'"{name}" and {cam_count} cameras deleted.')
+    return api_response(message=f'"{name}" and its cameras deleted.')
 
 
 @bp.route("/<int:nvr_id>/sync", methods=["POST"])

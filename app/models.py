@@ -39,6 +39,18 @@ class User(UserMixin, BaseModel):
     def get_id(self) -> str:
         return str(self.id)
 
+    def allowed_nvr_ids(self):
+        """
+        Returns a set of NVR IDs this user can see.
+        Admins get None (meaning no restriction).
+        Non-admins get a set — empty means they see nothing.
+        """
+        if self.is_admin:
+            return None
+        return {
+            row.nvr_id
+            for row in UserNVR.select().where(UserNVR.user_id == self.id)
+        }
 
 class NVR(BaseModel):
     id           = AutoField()
@@ -64,3 +76,11 @@ class Camera(BaseModel):
 
     class Meta:
         table_name = "camera"
+
+class UserNVR(BaseModel):
+    id      = AutoField()
+    user_id = IntegerField()
+    nvr_id  = IntegerField()
+
+    class Meta:
+        table_name = "user_nvr"

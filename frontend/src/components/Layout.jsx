@@ -3,12 +3,12 @@ import { useAuth } from '../context/AuthContext'
 
 const navItems = [
   { to: '/',         label: 'Live View' },
-  { to: '/cameras',  label: 'Cameras' },
-  { to: '/nvrs',     label: 'NVRs' },
 ]
 
 const adminItems = [
   { to: '/users', label: 'Users' },
+  { to: '/cameras',  label: 'Cameras' },
+  { to: '/nvrs',     label: 'NVRs' },
 ]
 
 export default function Layout({ children }) {

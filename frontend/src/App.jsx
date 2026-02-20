@@ -24,7 +24,11 @@ export default function App() {
           <Route path="/login" element={<Login />} />
           <Route path="/" element={<AppLayout><Dashboard /></AppLayout>} />
           <Route path="/nvrs" element={<AppLayout><NVRs /></AppLayout>} />
-          <Route path="/cameras" element={<AppLayout><Cameras /></AppLayout>} />
+          <Route path="/cameras" element={
+            <ProtectedRoute adminOnly>
+              <Layout><Cameras /></Layout>
+            </ProtectedRoute>
+          } />
           <Route path="/users" element={
             <ProtectedRoute adminOnly>
               <Layout><Users /></Layout>

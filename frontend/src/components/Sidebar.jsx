@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { camerasApi } from '../api/cameras'
 import { healthApi } from '../api/health'
+import logo from '../assets/logo-black.png'
 
 const HEALTH_POLL_MS = 30000
 
@@ -17,14 +18,14 @@ function StatusDot({ online }) {
 }
 
 function NVRGroup({ name, cameras, health, isOpen, onToggle }) {
-  const online  = cameras.filter(c => health[c.name.replace('-main', '-sub')] === true).length
-  const total   = cameras.length
+  const online = cameras.filter(c => health[c.name.replace('-main', '-sub')] === true).length
+  const total  = cameras.length
 
   return (
     <div className="mb-1">
       <button
         onClick={onToggle}
-        className="w-full flex items-center justify-between px-3 py-1.5 text-left hover:bg-gray-800 rounded-lg transition-colors group"
+        className="w-full flex items-center justify-between px-3 py-1.5 text-left hover:bg-gray-800 rounded-lg transition-colors"
       >
         <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider truncate">
           {name}
@@ -56,8 +57,11 @@ function NVRGroup({ name, cameras, health, isOpen, onToggle }) {
                   {cam.display_name
                     .replace(' — ', ' ')
                     .replace(' Main', '')
-                    .replace(/^.*? — /, '')}
+                    .split(' — ').pop()}
                 </span>
+                {cam.recording_enabled && (
+                  <span className="ml-auto w-1.5 h-1.5 rounded-full bg-red-500 shrink-0" title="Recording" />
+                )}
               </NavLink>
             )
           })}
@@ -72,14 +76,13 @@ export default function Sidebar() {
   const navigate              = useNavigate()
   const [cameras, setCameras] = useState([])
   const [health, setHealth]   = useState({})
-  const [open, setOpen]       = useState({})  // nvr group open state
+  const [open, setOpen]       = useState({})
 
   useEffect(() => {
     camerasApi.list()
       .then(all => {
         const mains = all.filter(c => c.active && c.is_main)
         setCameras(mains)
-        // Default all groups to open
         const groups = {}
         mains.forEach(c => { groups[c.nvr_id ?? 'standalone'] = true })
         setOpen(groups)
@@ -105,7 +108,6 @@ export default function Sidebar() {
     setOpen(prev => ({ ...prev, [key]: !prev[key] }))
   }
 
-  // Group cameras by NVR
   const groups = {}
   cameras.forEach(cam => {
     const key   = cam.nvr_id ?? 'standalone'
@@ -121,7 +123,7 @@ export default function Sidebar() {
       {/* Logo */}
       <div className="px-4 py-4 border-b border-gray-800">
         <NavLink to="/" className="flex items-center gap-2">
-          <span className="text-xl">🎥</span>
+          <img src={logo} alt="Opus NVR" className="h-10 w-auto" />
           <span className="font-bold text-white tracking-wide">Opus NVR</span>
         </NavLink>
         <div className="mt-1 text-xs text-gray-500">
@@ -129,11 +131,10 @@ export default function Sidebar() {
         </div>
       </div>
 
-      {/* Live View link */}
+      {/* All Cameras link */}
       <div className="px-3 pt-3">
         <NavLink
-          to="/"
-          end
+          to="/" end
           className={({ isActive }) =>
             `flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
               isActive ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-800'
@@ -162,13 +163,12 @@ export default function Sidebar() {
       {user?.role === 'admin' && (
         <div className="px-3 py-3 border-t border-gray-800 space-y-0.5">
           {[
-            { to: '/cameras', label: '📷 Cameras' },
-            { to: '/nvrs',    label: '🖥️ NVRs' },
-            { to: '/users',   label: '👤 Users' },
+            { to: '/recordings', label: '🎬 Recordings' },
+            { to: '/cameras',    label: '📷 Cameras' },
+            { to: '/nvrs',       label: '🖥️ NVRs' },
+            { to: '/users',      label: '👤 Users' },
           ].map(({ to, label }) => (
-            <NavLink
-              key={to}
-              to={to}
+            <NavLink key={to} to={to}
               className={({ isActive }) =>
                 `block px-3 py-1.5 rounded-lg text-sm transition-colors ${
                   isActive ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-800'
@@ -187,10 +187,8 @@ export default function Sidebar() {
           <div className="text-sm font-medium text-white">{user?.username}</div>
           <div className="text-xs text-gray-500">{user?.role}</div>
         </div>
-        <button
-          onClick={handleLogout}
-          className="text-xs text-gray-500 hover:text-red-400 transition-colors"
-        >
+        <button onClick={handleLogout}
+          className="text-xs text-gray-500 hover:text-red-400 transition-colors">
           Logout
         </button>
       </div>

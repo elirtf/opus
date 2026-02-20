@@ -1,22 +1,21 @@
-# Git
 .git
 .gitignore
-
-# Python
 __pycache__/
 *.pyc
 instance/
 .env
-
-# Node
 frontend/node_modules
 frontend/dist
-
-# OS junk
+web/.npm
 .DS_Store
 Thumbs.db
-
-# Editor
 .vscode
 .idea
 .venv
+README.md
+docs/
+debug
+*.mp4
+*.jpg
+*.db
+*.ts

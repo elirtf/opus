@@ -1,33 +1,35 @@
 .git
 go2rtc.yaml
-
-# Python
-__pycache__/
 *.pyc
 instance/*
 .env
 .db
-
-# Node
 frontend/node_modules
 frontend/dist
-
-# OS junk
+frontend/build
+frontend/coverage
+!/frontend/**/*.ts
 .DS_Store
 Thumbs.db
-
-# Editor
-.vscode
-.idea
 .venv
-
-# Default ignored files
+__pycache__
+.mypy_cache
+*.swp
+debug
+.vscode/*
+!.vscode/launch.json
+config/*
+!config/*.example
+models
+*.mp4
+*.db
+*.csv
+core
+.idea/*
+.ipynb_checkpoints
 /shelf/
 /workspace.xml
-# Ignored default folder with query files
 /queries/
-# Datasource local storage ignored files
 /dataSources/
 /dataSources.local.xml
-# Editor-based HTTP Client requests
 /httpRequests/

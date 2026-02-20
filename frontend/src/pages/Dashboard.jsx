@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { camerasApi } from '../api/cameras'
 import { healthApi } from '../api/health'
 
@@ -9,13 +10,13 @@ function StatusDot({ online }) {
   return (
     <span className={`inline-block w-2 h-2 rounded-full shrink-0 ${
       online === true  ? 'bg-green-400' :
-      online === false ? 'bg-red-500' :
-      'bg-gray-600'    // unknown
+      online === false ? 'bg-red-500'   :
+      'bg-gray-600'
     }`} />
   )
 }
 
-function CameraTile({ cam, streamName, online, onFullscreen }) {
+function CameraTile({ cam, streamName, online, onClick }) {
   const iframeRef = useRef(null)
 
   useEffect(() => {
@@ -28,94 +29,55 @@ function CameraTile({ cam, streamName, online, onFullscreen }) {
     }
   }, [streamName])
 
-  return (
-    <div className="bg-black overflow-hidden relative group">
-      {/* Label overlay */}
-      <div className="absolute top-0 left-0 right-0 z-20 px-3 py-2 flex justify-between items-center
-                      bg-gradient-to-b from-black/75 to-transparent
-                      opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-        <div className="flex items-center gap-1.5">
-          <StatusDot online={online} />
-          <span className="text-white text-sm font-medium drop-shadow">
-            {cam.display_name.replace(' — ', ' ').replace(' Main', '')}
-          </span>
-        </div>
-        <span className="text-gray-300 text-xs">{cam.nvr_name || ''}</span>
-      </div>
+  const label = cam.display_name
+    .replace(' — ', ' ')
+    .replace(' Main', '')
+    .split(' — ').pop()
 
-      {/* Fullscreen button */}
-      <button
-        onClick={() => onFullscreen(cam)}
-        className="absolute top-2 right-2 z-30 opacity-0 group-hover:opacity-100 transition-opacity
-                   bg-black/60 hover:bg-black/90 text-white border border-gray-600
-                   rounded px-2 py-0.5 text-xs"
-      >
-        ⛶
-      </button>
+  return (
+    <div className="bg-black overflow-hidden relative flex flex-col cursor-pointer group"
+         onClick={onClick}>
 
       {/* Offline overlay */}
       {online === false && (
-        <div className="absolute inset-0 z-20 bg-black/60 flex items-center justify-center pointer-events-none">
-          <span className="text-red-400 text-xs font-medium">Offline</span>
+        <div className="absolute inset-0 z-20 bg-black/70 flex items-center justify-center pointer-events-none">
+          <span className="text-red-400 text-xs font-medium tracking-wide uppercase">Offline</span>
         </div>
       )}
 
-      {/* Click shield */}
+      {/* Click shield — prevents iframe stealing clicks */}
       <div className="absolute inset-0 z-10" />
 
       {/* Stream */}
-      <div className="relative" style={{ paddingBottom: '56.25%' }}>
+      <div className="relative w-full" style={{ paddingBottom: '56.25%' }}>
         <iframe
           ref={iframeRef}
-          src={`/go2rtc/stream.html?src=${streamName}&mode=mse`}
           allow="autoplay"
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 0 }}
         />
       </div>
-    </div>
-  )
-}
 
-function FullscreenOverlay({ cam, onClose }) {
-  const iframeRef = useRef(null)
-
-  useEffect(() => {
-    return () => { if (iframeRef.current) iframeRef.current.src = '' }
-  }, [])
-
-  useEffect(() => {
-    const handler = (e) => { if (e.key === 'Escape') onClose() }
-    document.addEventListener('keydown', handler)
-    return () => document.removeEventListener('keydown', handler)
-  }, [onClose])
-
-  return (
-    <div className="fixed inset-0 bg-black z-50 flex flex-col">
-      <div className="flex items-center justify-between px-4 py-3 bg-gray-900 border-b border-gray-800 shrink-0">
-        <span className="text-white font-medium">{cam.display_name.replace(' — ', ' ').replace(' Main', '')}</span>
-        <button onClick={onClose} className="text-gray-400 hover:text-white text-sm px-3 py-1 border border-gray-700 rounded">
-          ✕ Close
-        </button>
-      </div>
-      <div className="flex-1 relative">
-        <iframe
-          ref={iframeRef}
-          src={`/go2rtc/stream.html?src=${cam.name}&mode=mse`}
-          allow="autoplay"
-          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 0 }}
-        />
+      {/* Always-visible label bar */}
+      <div className="bg-gray-900/95 px-2.5 py-1.5 flex items-center justify-between gap-2 shrink-0">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <StatusDot online={online} />
+          <span className="text-xs text-gray-200 font-medium truncate">{label}</span>
+        </div>
+        {cam.nvr_name && (
+          <span className="text-xs text-gray-500 shrink-0 truncate max-w-[6rem]">{cam.nvr_name}</span>
+        )}
       </div>
     </div>
   )
 }
 
 export default function Dashboard() {
-  const [cameras, setCameras]       = useState([])
-  const [health, setHealth]         = useState({})
-  const [loading, setLoading]       = useState(true)
-  const [cols, setCols]             = useState(3)
-  const [page, setPage]             = useState(0)
-  const [fullscreen, setFullscreen] = useState(null)
+  const navigate              = useNavigate()
+  const [cameras, setCameras] = useState([])
+  const [health, setHealth]   = useState({})
+  const [loading, setLoading] = useState(true)
+  const [cols, setCols]       = useState(3)
+  const [page, setPage]       = useState(0)
 
   useEffect(() => {
     camerasApi.list()
@@ -124,21 +86,18 @@ export default function Dashboard() {
       .finally(() => setLoading(false))
   }, [])
 
-  // Poll health every 30s
   useEffect(() => {
     function fetchHealth() {
-      healthApi.streams()
-        .then(setHealth)
-        .catch(() => {}) // silently fail — dots just stay grey
+      healthApi.streams().then(setHealth).catch(() => {})
     }
     fetchHealth()
     const interval = setInterval(fetchHealth, HEALTH_POLL_MS)
     return () => clearInterval(interval)
   }, [])
 
-  const perPage  = cols * cols
-  const pages    = Math.max(1, Math.ceil(cameras.length / perPage))
-  const slice    = cameras.slice(page * perPage, (page + 1) * perPage)
+  const perPage = cols * cols
+  const pages   = Math.max(1, Math.ceil(cameras.length / perPage))
+  const slice   = cameras.slice(page * perPage, (page + 1) * perPage)
 
   function handleSetCols(newCols) {
     setCols(newCols)
@@ -150,20 +109,23 @@ export default function Dashboard() {
   }
 
   return (
-    <>
+    <div className="flex flex-col h-full">
       {/* Toolbar */}
-      <div className="px-6 py-3 flex items-center justify-between border-b border-gray-800 bg-gray-900 shrink-0">
-        <h2 className="text-base font-semibold text-white">Live View</h2>
+      <div className="px-4 py-2.5 flex items-center justify-between border-b border-gray-800 bg-gray-900 shrink-0">
         <div className="flex items-center gap-3">
-          <span className="text-xs px-2 py-1 rounded font-medium bg-yellow-900/60 text-yellow-300 border border-yellow-800">
+          <span className="text-sm font-semibold text-white">Live View</span>
+          <span className="text-xs px-2 py-0.5 rounded font-medium bg-yellow-900/60 text-yellow-300 border border-yellow-800">
             Sub stream
           </span>
-          <div className="flex items-center gap-1 bg-gray-800 rounded-lg p-1">
+        </div>
+        <div className="flex items-center gap-2">
+          {/* Grid size */}
+          <div className="flex items-center bg-gray-800 rounded-lg p-0.5">
             {GRID_SIZES.map(s => (
               <button
                 key={s}
                 onClick={() => handleSetCols(s)}
-                className={`px-3 py-1.5 rounded text-sm transition-colors ${
+                className={`px-2.5 py-1 rounded text-xs transition-colors ${
                   cols === s ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-white'
                 }`}
               >
@@ -171,29 +133,40 @@ export default function Dashboard() {
               </button>
             ))}
           </div>
+          {/* Pagination */}
           <div className="flex items-center gap-1">
             <button
               onClick={() => setPage(p => Math.max(0, p - 1))}
               disabled={page === 0}
-              className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 disabled:opacity-40 text-gray-300 rounded text-sm"
+              className="px-2.5 py-1 bg-gray-800 hover:bg-gray-700 disabled:opacity-40 text-gray-300 rounded text-sm"
             >‹</button>
-            <span className="text-sm text-gray-400 px-2">{page + 1} / {pages}</span>
+            <span className="text-xs text-gray-400 px-1">{page + 1}/{pages}</span>
             <button
               onClick={() => setPage(p => Math.min(pages - 1, p + 1))}
               disabled={page >= pages - 1}
-              className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 disabled:opacity-40 text-gray-300 rounded text-sm"
+              className="px-2.5 py-1 bg-gray-800 hover:bg-gray-700 disabled:opacity-40 text-gray-300 rounded text-sm"
             >›</button>
           </div>
         </div>
       </div>
 
+      {/* Grid */}
       {cameras.length === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center text-gray-500 gap-3">
           <span className="text-5xl">📷</span>
           <p className="text-gray-400">No active cameras</p>
         </div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: '4px' }}>
+        <div
+          className="flex-1"
+          style={{
+            display: 'grid',
+            gridTemplateColumns: `repeat(${cols}, 1fr)`,
+            gridAutoRows: 'min-content',
+            gap: '2px',
+            backgroundColor: '#111',
+          }}
+        >
           {slice.map(cam => {
             const subName = cam.name.replace('-main', '-sub')
             return (
@@ -202,16 +175,12 @@ export default function Dashboard() {
                 cam={cam}
                 streamName={subName}
                 online={health[subName]}
-                onFullscreen={setFullscreen}
+                onClick={() => navigate(`/camera/${cam.name}`)}
               />
             )
           })}
         </div>
       )}
-
-      {fullscreen && (
-        <FullscreenOverlay cam={fullscreen} onClose={() => setFullscreen(null)} />
-      )}
-    </>
+    </div>
   )
 }

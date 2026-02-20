@@ -7,9 +7,10 @@ login_manager = LoginManager()
 
 def create_app():
     app = Flask(__name__)
-    app.config["SECRET_KEY"]   = os.environ.get("SECRET_KEY", "change-me-in-production")
-    app.config["DATABASE_PATH"] = os.environ.get("DATABASE_PATH", "/app/instance/opus.db")
-    app.config["GO2RTC_URL"]   = os.environ.get("GO2RTC_URL", "http://go2rtc:1984")
+    app.config["SECRET_KEY"]        = os.environ.get("SECRET_KEY", "change-me-in-production")
+    app.config["DATABASE_PATH"]     = os.environ.get("DATABASE_PATH", "/app/instance/opus.db")
+    app.config["GO2RTC_URL"]        = os.environ.get("GO2RTC_URL", "http://go2rtc:1984")
+    app.config["RECORDINGS_DIR"]    = os.environ.get("RECORDINGS_DIR", "/recordings")
 
     # ── Database - Peewee init ───────────────────────────────────────────────
     from app.database import db
@@ -53,12 +54,15 @@ def create_app():
     from app.routes.api.cameras import bp as api_cameras_bp
     from app.routes.api.users   import bp as api_users_bp
     from app.routes.api.health  import bp as api_health_bp
+    from app.routes.api.recordings import bp as api_recordings_bp
 
     app.register_blueprint(api_auth_bp)
     app.register_blueprint(api_nvrs_bp)
     app.register_blueprint(api_cameras_bp)
     app.register_blueprint(api_users_bp)
     app.register_blueprint(api_health_bp)
+    app.register_blueprint(api_recordings_bp)
+
 
     # ── Seed default admin if no users exist ─────────────────────────────────
     if User.select().count() == 0:
@@ -67,4 +71,37 @@ def create_app():
         admin.save(force_insert=True)
         print("Default admin created — username: admin / password: admin")
 
+    # ── Re-register all streams with go2rtc on startup ───────────────────────
+    # go2rtc loses dynamic streams on restart — this restores them.
+    with app.app_context():
+        try:
+            from app.go2rtc import sync_all_on_startup
+            sync_all_on_startup()
+        except Exception as e:
+            app.logger.warning(f"go2rtc startup sync failed: {e}")
+
+    # ── SPA catch-all ────────────────────────────────────────────────────────
+    register_spa_catchall(app)
+
     return app
+
+def register_spa_catchall(app):
+    import os
+    from flask import send_from_directory
+
+    static_dir = os.path.join(app.root_path, 'static')
+
+    @app.route('/assets/<path:filename>')
+    def assets(filename):
+        return send_from_directory(
+            os.path.join(static_dir, 'assets'),
+            filename,
+            mimetype='text/css'              if filename.endswith('.css') else
+            'application/javascript' if filename.endswith('.js')  else
+            None
+        )
+
+    @app.route('/', defaults={'path': ''})
+    @app.route('/<path:path>')
+    def spa(path):
+        return send_from_directory(static_dir, 'index.html')

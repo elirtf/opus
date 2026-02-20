@@ -73,6 +73,7 @@ class Camera(BaseModel):
     rtsp_url     = CharField(max_length=255)
     nvr          = IntegerField(null=True)                      # FK to NVR.id (manual)
     active       = BooleanField(default=True)
+    recording_enabled = BooleanField(default=False)
 
     class Meta:
         table_name = "camera"

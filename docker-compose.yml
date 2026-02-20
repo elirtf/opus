@@ -9,6 +9,7 @@ services:
       - ./instance:/app/instance
       - ./go2rtc:/config
       - static_files:/app/app/static
+      - recordings:/recordings
     networks:
       - opusnet
 
@@ -20,6 +21,7 @@ services:
       - .env
     volumes:
       - ./go2rtc:/config
+      - recordings:/recordings
     networks:
       - opusnet
 
@@ -44,3 +46,4 @@ networks:
 
 volumes:
   static_files:
+  recordings:

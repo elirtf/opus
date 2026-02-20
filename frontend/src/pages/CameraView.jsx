@@ -2,19 +2,23 @@ import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { camerasApi } from '../api/cameras'
 import { healthApi } from '../api/health'
+import { recordingsApi } from '../api/recordings'
+import { useAuth } from '../context/AuthContext'
+import logo from '../assets/logo-black.png'
 
 const HEALTH_POLL_MS = 30000
 
 export default function CameraView() {
-  const { name }              = useParams()
-  const navigate              = useNavigate()
-  const iframeRef             = useRef(null)
-  const [cam, setCam]         = useState(null)
-  const [online, setOnline]   = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [notFound, setNotFound] = useState(false)
+  const { name }                  = useParams()
+  const navigate                  = useNavigate()
+  const { user }                  = useAuth()
+  const iframeRef                 = useRef(null)
+  const [cam, setCam]             = useState(null)
+  const [online, setOnline]       = useState(null)
+  const [loading, setLoading]     = useState(true)
+  const [notFound, setNotFound]   = useState(false)
+  const [toggling, setToggling]   = useState(false)
 
-  // Find camera by name
   useEffect(() => {
     camerasApi.list()
       .then(all => {
@@ -25,12 +29,10 @@ export default function CameraView() {
       .finally(() => setLoading(false))
   }, [name])
 
-  // Health polling
   useEffect(() => {
     function fetchHealth() {
       healthApi.streams()
         .then(h => {
-          // Check both main and sub stream status
           const subName = name.replace('-main', '-sub')
           setOnline(h[subName] ?? h[name] ?? null)
         })
@@ -41,10 +43,22 @@ export default function CameraView() {
     return () => clearInterval(interval)
   }, [name])
 
-  // Cleanup iframe on unmount
   useEffect(() => {
     return () => { if (iframeRef.current) iframeRef.current.src = '' }
   }, [])
+
+  async function handleRecordingToggle() {
+    if (!cam) return
+    setToggling(true)
+    try {
+      const res = await recordingsApi.toggleRecording(cam.id, !cam.recording_enabled)
+      setCam(prev => ({ ...prev, recording_enabled: res.recording_enabled }))
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setToggling(false)
+    }
+  }
 
   if (loading) {
     return <div className="flex-1 flex items-center justify-center text-gray-500 text-sm">Loading...</div>
@@ -62,19 +76,15 @@ export default function CameraView() {
     )
   }
 
-  const label = cam.display_name
-    .replace(' — ', ' ')
-    .replace(' Main', '')
+  const label = cam.display_name.replace(' — ', ' ').replace(' Main', '')
 
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="px-4 py-2.5 bg-gray-900 border-b border-gray-800 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
-          <button
-            onClick={() => navigate(-1)}
-            className="text-gray-400 hover:text-white text-sm transition-colors"
-          >
+          <button onClick={() => navigate(-1)}
+            className="text-gray-400 hover:text-white text-sm transition-colors">
             ← Back
           </button>
           <div className="w-px h-4 bg-gray-700" />
@@ -99,16 +109,30 @@ export default function CameraView() {
           </span>
         </div>
 
-        {/* Stream toggle - main vs sub */}
-        <div className="flex items-center gap-2 text-xs text-gray-400">
-          <span>Stream:</span>
-          <span className="px-2 py-0.5 bg-indigo-600/30 text-indigo-300 border border-indigo-700 rounded">
-            Main
+        {/* Right side controls */}
+        <div className="flex items-center gap-3">
+          {/* Recording toggle — admin only */}
+          {user?.role === 'admin' && (
+            <button
+              onClick={handleRecordingToggle}
+              disabled={toggling}
+              className={`flex items-center gap-2 text-xs px-3 py-1.5 rounded-lg border transition-colors disabled:opacity-50 ${
+                cam.recording_enabled
+                  ? 'bg-red-900/40 text-red-400 border-red-800 hover:bg-red-900/60'
+                  : 'bg-gray-800 text-gray-400 border-gray-700 hover:text-white hover:border-gray-500'
+              }`}
+            >
+              <span className={`w-2 h-2 rounded-full ${cam.recording_enabled ? 'bg-red-500 animate-pulse' : 'bg-gray-600'}`} />
+              {toggling ? 'Updating...' : cam.recording_enabled ? 'Recording' : 'Record'}
+            </button>
+          )}
+          <span className="text-xs px-2 py-0.5 bg-indigo-600/30 text-indigo-300 border border-indigo-700 rounded">
+            Main stream
           </span>
         </div>
       </div>
 
-      {/* Main stream — fills remaining space */}
+      {/* Stream */}
       <div className="flex-1 bg-black relative">
         {online === false && (
           <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 pointer-events-none">

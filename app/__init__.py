@@ -52,11 +52,13 @@ def create_app():
     from app.routes.api.nvrs    import bp as api_nvrs_bp
     from app.routes.api.cameras import bp as api_cameras_bp
     from app.routes.api.users   import bp as api_users_bp
+    from app.routes.api.health  import bp as api_health_bp
 
     app.register_blueprint(api_auth_bp)
     app.register_blueprint(api_nvrs_bp)
     app.register_blueprint(api_cameras_bp)
     app.register_blueprint(api_users_bp)
+    app.register_blueprint(api_health_bp)
 
     # ── Seed default admin if no users exist ─────────────────────────────────
     if User.select().count() == 0:

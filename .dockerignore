@@ -5,7 +5,7 @@
 # Python
 __pycache__/
 *.pyc
-instance/*
+instance/
 .env
 
 # Node

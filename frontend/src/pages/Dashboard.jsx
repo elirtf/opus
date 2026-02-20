@@ -1,20 +1,27 @@
 import { useState, useEffect, useRef } from 'react'
 import { camerasApi } from '../api/cameras'
+import { healthApi } from '../api/health'
 
 const GRID_SIZES = [3, 4, 6]
-const SUB_THRESHOLD = 3  // all grid sizes use sub streams
+const HEALTH_POLL_MS = 30000
 
-function CameraTile({ cam, streamName, onFullscreen }) {
+function StatusDot({ online }) {
+  return (
+    <span className={`inline-block w-2 h-2 rounded-full shrink-0 ${
+      online === true  ? 'bg-green-400' :
+      online === false ? 'bg-red-500' :
+      'bg-gray-600'    // unknown
+    }`} />
+  )
+}
+
+function CameraTile({ cam, streamName, online, onFullscreen }) {
   const iframeRef = useRef(null)
 
-  // Destroy stream on unmount so go2rtc drops the RTSP connection
   useEffect(() => {
-    return () => {
-      if (iframeRef.current) iframeRef.current.src = ''
-    }
+    return () => { if (iframeRef.current) iframeRef.current.src = '' }
   }, [])
 
-  // Swap src when streamName changes (grid size change)
   useEffect(() => {
     if (iframeRef.current) {
       iframeRef.current.src = `/go2rtc/stream.html?src=${streamName}&mode=mse`
@@ -27,7 +34,12 @@ function CameraTile({ cam, streamName, onFullscreen }) {
       <div className="absolute top-0 left-0 right-0 z-20 px-3 py-2 flex justify-between items-center
                       bg-gradient-to-b from-black/75 to-transparent
                       opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-        <span className="text-white text-sm font-medium drop-shadow">{cam.display_name.replace(' — ', ' ').replace(' Main', '')}</span>
+        <div className="flex items-center gap-1.5">
+          <StatusDot online={online} />
+          <span className="text-white text-sm font-medium drop-shadow">
+            {cam.display_name.replace(' — ', ' ').replace(' Main', '')}
+          </span>
+        </div>
         <span className="text-gray-300 text-xs">{cam.nvr_name || ''}</span>
       </div>
 
@@ -40,6 +52,13 @@ function CameraTile({ cam, streamName, onFullscreen }) {
       >
         ⛶
       </button>
+
+      {/* Offline overlay */}
+      {online === false && (
+        <div className="absolute inset-0 z-20 bg-black/60 flex items-center justify-center pointer-events-none">
+          <span className="text-red-400 text-xs font-medium">Offline</span>
+        </div>
+      )}
 
       {/* Click shield */}
       <div className="absolute inset-0 z-10" />
@@ -92,6 +111,7 @@ function FullscreenOverlay({ cam, onClose }) {
 
 export default function Dashboard() {
   const [cameras, setCameras]       = useState([])
+  const [health, setHealth]         = useState({})
   const [loading, setLoading]       = useState(true)
   const [cols, setCols]             = useState(3)
   const [page, setPage]             = useState(0)
@@ -102,6 +122,18 @@ export default function Dashboard() {
       .then(all => setCameras(all.filter(c => c.active && c.is_main)))
       .catch(console.error)
       .finally(() => setLoading(false))
+  }, [])
+
+  // Poll health every 30s
+  useEffect(() => {
+    function fetchHealth() {
+      healthApi.streams()
+        .then(setHealth)
+        .catch(() => {}) // silently fail — dots just stay grey
+    }
+    fetchHealth()
+    const interval = setInterval(fetchHealth, HEALTH_POLL_MS)
+    return () => clearInterval(interval)
   }, [])
 
   const perPage  = cols * cols
@@ -126,7 +158,6 @@ export default function Dashboard() {
           <span className="text-xs px-2 py-1 rounded font-medium bg-yellow-900/60 text-yellow-300 border border-yellow-800">
             Sub stream
           </span>
-          {/* Grid buttons */}
           <div className="flex items-center gap-1 bg-gray-800 rounded-lg p-1">
             {GRID_SIZES.map(s => (
               <button
@@ -140,7 +171,6 @@ export default function Dashboard() {
               </button>
             ))}
           </div>
-          {/* Pagination */}
           <div className="flex items-center gap-1">
             <button
               onClick={() => setPage(p => Math.max(0, p - 1))}
@@ -157,21 +187,13 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Camera grid - full width */}
       {cameras.length === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center text-gray-500 gap-3">
           <span className="text-5xl">📷</span>
           <p className="text-gray-400">No active cameras</p>
-          <a href="/cameras" className="text-indigo-400 text-sm hover:underline">Add a camera</a>
         </div>
       ) : (
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: `repeat(${cols}, 1fr)`,
-            gap: '4px',
-          }}
-        >
+        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: '4px' }}>
           {slice.map(cam => {
             const subName = cam.name.replace('-main', '-sub')
             return (
@@ -179,6 +201,7 @@ export default function Dashboard() {
                 key={cam.id}
                 cam={cam}
                 streamName={subName}
+                online={health[subName]}
                 onFullscreen={setFullscreen}
               />
             )
@@ -186,7 +209,6 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Fullscreen overlay */}
       {fullscreen && (
         <FullscreenOverlay cam={fullscreen} onClose={() => setFullscreen(null)} />
       )}

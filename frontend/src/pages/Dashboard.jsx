@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { camerasApi } from '../api/cameras'
 import { healthApi } from '../api/health'
+import logo from '../assets/logo-black.png'
 
 const GRID_SIZES = [3, 4, 6]
 const HEALTH_POLL_MS = 30000

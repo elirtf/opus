@@ -3,6 +3,7 @@ import { camerasApi } from '../api/cameras'
 import { nvrsApi } from '../api/nvrs'
 import { healthApi } from '../api/health'
 import Modal from '../components/Modal'
+import logo from '../assets/logo-black.png'
 
 const HEALTH_POLL_MS = 30000
 

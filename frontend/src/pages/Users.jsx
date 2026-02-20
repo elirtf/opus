@@ -3,6 +3,7 @@ import { usersApi } from '../api/users'
 import { nvrsApi } from '../api/nvrs'
 import { useAuth } from '../context/AuthContext'
 import Modal from '../components/Modal'
+import logo from '../assets/logo-black.png'
 
 const EMPTY_FORM = { username: '', password: '', role: 'viewer' }
 

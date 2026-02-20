@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import logo from '../assets/logo-black.png'
 
 export default function Login() {
   const { login }           = useAuth()
@@ -27,7 +28,9 @@ export default function Login() {
     <div className="min-h-screen bg-gray-950 flex items-center justify-center">
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
-          <div className="text-4xl mb-2">🎥</div>
+          <div className="text-4xl mb-2">
+              <imc src={logo} alt="Opus NVR" className="h-10 w-10 object-cover" />
+          </div>
           <h1 className="text-2xl font-bold text-white">Opus NVR</h1>
           <p className="text-gray-400 text-sm mt-1">Sign in to continue</p>
         </div>

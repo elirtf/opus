@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { nvrsApi } from '../api/nvrs'
 import Modal from '../components/Modal'
+import logo from '../assets/logo-black.png'
 
 const EMPTY_FORM = { name: '', display_name: '', ip_address: '', username: '', password: '', max_channels: 50, active: true }
 

@@ -1,7 +1,22 @@
 import { useState, useEffect } from 'react'
 import { camerasApi } from '../api/cameras'
 import { nvrsApi } from '../api/nvrs'
+import { healthApi } from '../api/health'
 import Modal from '../components/Modal'
+
+const HEALTH_POLL_MS = 30000
+
+function StatusDot({ online }) {
+  return (
+    <span title={online === true ? 'Online' : online === false ? 'Offline' : 'Unknown'}
+      className={`inline-block w-2 h-2 rounded-full shrink-0 ${
+        online === true  ? 'bg-green-400' :
+        online === false ? 'bg-red-500'   :
+        'bg-gray-600'
+      }`}
+    />
+  )
+}
 
 const EMPTY_FORM = { name: '', display_name: '', rtsp_url: '', nvr_id: '', active: true }
 
@@ -34,7 +49,6 @@ function CameraForm({ initial = EMPTY_FORM, nvrs, onSubmit, onClose, submitLabel
       <div>
         <label className="block text-xs font-medium text-gray-400 mb-1">Stream Name (slug) *</label>
         <input className={inputCls} value={form.name} onChange={e => set('name', e.target.value)} placeholder="front-door" required />
-        <p className="text-xs text-gray-500 mt-1">Used as the go2rtc stream key. No spaces.</p>
       </div>
       <div>
         <label className="block text-xs font-medium text-gray-400 mb-1">Display Name *</label>
@@ -74,6 +88,7 @@ function CameraForm({ initial = EMPTY_FORM, nvrs, onSubmit, onClose, submitLabel
 export default function Cameras() {
   const [cameras, setCameras] = useState([])
   const [nvrs, setNvrs]       = useState([])
+  const [health, setHealth]   = useState({})
   const [loading, setLoading] = useState(true)
   const [modal, setModal]     = useState(null)
   const [toast, setToast]     = useState('')
@@ -87,6 +102,15 @@ export default function Cameras() {
     Promise.all([camerasApi.list(), nvrsApi.list()])
       .then(([cams, nvrs]) => { setCameras(cams); setNvrs(nvrs) })
       .finally(() => setLoading(false))
+  }, [])
+
+  useEffect(() => {
+    function fetchHealth() {
+      healthApi.streams().then(setHealth).catch(() => {})
+    }
+    fetchHealth()
+    const interval = setInterval(fetchHealth, HEALTH_POLL_MS)
+    return () => clearInterval(interval)
   }, [])
 
   async function handleAdd(form) {
@@ -135,20 +159,23 @@ export default function Cameras() {
         <div className="space-y-2">
           {cameras.map(cam => (
             <div key={cam.id} className="bg-gray-900 border border-gray-800 rounded-xl px-5 py-4 flex items-center justify-between">
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="font-medium text-white">{cam.display_name}</span>
-                  <span className={`text-xs px-1.5 py-0.5 rounded ${cam.active ? 'bg-green-900/60 text-green-400' : 'bg-gray-700 text-gray-400'}`}>
-                    {cam.active ? 'active' : 'disabled'}
-                  </span>
-                  <span className={`text-xs px-1.5 py-0.5 rounded bg-gray-800 text-gray-400`}>
-                    {cam.is_main ? 'main' : cam.is_sub ? 'sub' : 'custom'}
-                  </span>
+              <div className="flex items-center gap-3 min-w-0">
+                <StatusDot online={health[cam.name]} />
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium text-white">{cam.display_name}</span>
+                    <span className={`text-xs px-1.5 py-0.5 rounded ${cam.active ? 'bg-green-900/60 text-green-400' : 'bg-gray-700 text-gray-400'}`}>
+                      {cam.active ? 'active' : 'disabled'}
+                    </span>
+                    <span className="text-xs px-1.5 py-0.5 rounded bg-gray-800 text-gray-400">
+                      {cam.is_main ? 'main' : cam.is_sub ? 'sub' : 'custom'}
+                    </span>
+                  </div>
+                  <div className="text-xs text-gray-500 mt-0.5 font-mono truncate max-w-xl">{cam.rtsp_url}</div>
+                  {cam.nvr_name && <div className="text-xs text-gray-500 mt-0.5">{cam.nvr_name}</div>}
                 </div>
-                <div className="text-xs text-gray-500 mt-0.5 font-mono truncate max-w-xl">{cam.rtsp_url}</div>
-                {cam.nvr_name && <div className="text-xs text-gray-500 mt-0.5">{cam.nvr_name}</div>}
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 shrink-0 ml-4">
                 <button onClick={() => setModal(cam)}
                   className="text-sm text-gray-400 hover:text-white border border-gray-700 hover:border-gray-500 px-3 py-1.5 rounded-lg transition-colors">
                   Edit

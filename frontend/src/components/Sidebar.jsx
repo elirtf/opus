@@ -3,7 +3,6 @@ import { useState, useEffect } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { camerasApi } from '../api/cameras'
 import { healthApi } from '../api/health'
-import logo from '../assets/logo-black.png'
 
 const HEALTH_POLL_MS = 30000
 
@@ -123,7 +122,7 @@ export default function Sidebar() {
       {/* Logo */}
       <div className="px-4 py-4 border-b border-gray-800">
         <NavLink to="/" className="flex items-center gap-2">
-          <img src={logo} alt="Opus NVR" className="h-10 w-auto" />
+          <span className="text-xl">🎥</span>
           <span className="font-bold text-white tracking-wide">Opus NVR</span>
         </NavLink>
         <div className="mt-1 text-xs text-gray-500">
@@ -163,6 +162,7 @@ export default function Sidebar() {
       {user?.role === 'admin' && (
         <div className="px-3 py-3 border-t border-gray-800 space-y-0.5">
           {[
+            { to: '/discovery',  label: '📡 Discovery' },
             { to: '/recordings', label: '🎬 Recordings' },
             { to: '/cameras',    label: '📷 Cameras' },
             { to: '/nvrs',       label: '🖥️ NVRs' },

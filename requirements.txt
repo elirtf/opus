@@ -4,3 +4,5 @@ peewee>=3.17.0
 requests>=2.32.4
 pyyaml
 werkzeug
+onvif-zeep>=0.2.12
+wsdiscovery>=2.1.1

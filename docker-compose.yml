@@ -1,3 +1,17 @@
+# ── IMPORTANT: WS-Discovery multicast note ──────────────────────────────────
+# For ONVIF camera discovery via multicast (WS-Discovery), the opus container
+# needs host networking. Two options:
+#
+# Option A (recommended for discovery): Set opus to network_mode: host
+#   - Change GO2RTC_URL in .env to http://127.0.0.1:1984
+#   - Change nginx proxy_pass for Flask to http://127.0.0.1:5000
+#   - Subnet scan always works regardless of this setting
+#
+# Option B (default): Keep bridge networking
+#   - WS-Discovery multicast won't reach cameras
+#   - Use the subnet CIDR scan in the Discovery page instead
+# ────────────────────────────────────────────────────────────────────────────
+
 services:
   opus:
     build: .

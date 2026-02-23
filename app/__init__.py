@@ -55,6 +55,7 @@ def create_app():
     from app.routes.api.users   import bp as api_users_bp
     from app.routes.api.health  import bp as api_health_bp
     from app.routes.api.recordings import bp as api_recordings_bp
+    from app.routes.api.discovery   import bp as api_discovery_bp
 
     app.register_blueprint(api_auth_bp)
     app.register_blueprint(api_nvrs_bp)
@@ -62,6 +63,7 @@ def create_app():
     app.register_blueprint(api_users_bp)
     app.register_blueprint(api_health_bp)
     app.register_blueprint(api_recordings_bp)
+    app.register_blueprint(api_discovery_bp)
 
 
     # ── Seed default admin if no users exist ─────────────────────────────────
@@ -96,7 +98,7 @@ def register_spa_catchall(app):
         return send_from_directory(
             os.path.join(static_dir, 'assets'),
             filename,
-            mimetype='text/css'              if filename.endswith('.css') else
+            mimetype='text/css'      if filename.endswith('.css') else
             'application/javascript' if filename.endswith('.js')  else
             None
         )

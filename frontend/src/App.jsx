@@ -9,6 +9,7 @@ import NVRs from './pages/NVRs'
 import Cameras from './pages/Cameras'
 import Users from './pages/Users'
 import Recordings from './pages/Recordings'
+import Discovery from './pages/Discovery'
 
 function AppLayout({ children, adminOnly = false }) {
   return (
@@ -27,6 +28,7 @@ export default function App() {
           <Route path="/"                element={<AppLayout><Dashboard /></AppLayout>} />
           <Route path="/camera/:name"    element={<AppLayout><CameraView /></AppLayout>} />
           <Route path="/recordings"      element={<AppLayout adminOnly><Recordings /></AppLayout>} />
+          <Route path="/discovery"       element={<AppLayout adminOnly><Discovery /></AppLayout>} />
           <Route path="/nvrs"            element={<AppLayout adminOnly><NVRs /></AppLayout>} />
           <Route path="/cameras"         element={<AppLayout adminOnly><Cameras /></AppLayout>} />
           <Route path="/users"           element={<AppLayout adminOnly><Users /></AppLayout>} />

@@ -3,7 +3,9 @@ import { camerasApi } from '../api/cameras'
 import { nvrsApi } from '../api/nvrs'
 import { healthApi } from '../api/health'
 import Modal from '../components/Modal'
+import ConfirmModal from '../components/ConfirmModal'
 import Spinner from '../components/Spinner'
+import { useToast, ToastList } from '../components/Toast'
 
 const HEALTH_POLL_MS = 30000
 
@@ -87,17 +89,13 @@ function CameraForm({ initial = EMPTY_FORM, nvrs, onSubmit, onClose, submitLabel
 }
 
 export default function Cameras() {
-  const [cameras, setCameras] = useState([])
-  const [nvrs, setNvrs]       = useState([])
-  const [health, setHealth]   = useState({})
-  const [loading, setLoading] = useState(true)
-  const [modal, setModal]     = useState(null)
-  const [toast, setToast]     = useState('')
-
-  function showToast(msg) {
-    setToast(msg)
-    setTimeout(() => setToast(''), 3000)
-  }
+  const [cameras, setCameras]   = useState([])
+  const [nvrs, setNvrs]         = useState([])
+  const [health, setHealth]     = useState({})
+  const [loading, setLoading]   = useState(true)
+  const [modal, setModal]       = useState(null)
+  const [confirm, setConfirm]   = useState(null)
+  const { toasts, success, error: toastError } = useToast()
 
   useEffect(() => {
     Promise.all([camerasApi.list(), nvrsApi.list()])
@@ -117,29 +115,25 @@ export default function Cameras() {
   async function handleAdd(form) {
     const created = await camerasApi.create(form)
     setCameras(prev => [...prev, created])
-    showToast(`"${created.display_name}" added`)
+    success(`"${created.display_name}" added`)
   }
 
   async function handleEdit(form) {
     const updated = await camerasApi.update(modal.id, form)
     setCameras(prev => prev.map(c => c.id === updated.id ? updated : c))
-    showToast(`"${updated.display_name}" updated`)
+    success(`"${updated.display_name}" updated`)
   }
 
   async function handleDelete(cam) {
-    if (!confirm(`Delete "${cam.display_name}"?`)) return
     await camerasApi.delete(cam.id)
     setCameras(prev => prev.filter(c => c.id !== cam.id))
-    showToast(`"${cam.display_name}" deleted`)
+    success(`"${cam.display_name}" deleted`)
+    setConfirm(null)
   }
 
   return (
     <div className="max-w-5xl mx-auto px-6 py-6 w-full">
-      {toast && (
-        <div className="fixed bottom-6 right-6 z-50 bg-green-900/90 text-green-300 border border-green-700 px-4 py-2 rounded-lg text-sm shadow-lg">
-          {toast}
-        </div>
-      )}
+      <ToastList toasts={toasts} />
 
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-xl font-bold text-white">Camera Management</h2>
@@ -181,7 +175,7 @@ export default function Cameras() {
                   className="text-sm text-gray-400 hover:text-white border border-gray-700 hover:border-gray-500 px-3 py-1.5 rounded-lg transition-colors">
                   Edit
                 </button>
-                <button onClick={() => handleDelete(cam)}
+                <button onClick={() => setConfirm(cam)}
                   className="text-sm text-red-400 hover:text-red-300 border border-red-900 hover:border-red-700 px-3 py-1.5 rounded-lg transition-colors">
                   Delete
                 </button>
@@ -206,6 +200,17 @@ export default function Cameras() {
             submitLabel="Save Changes"
           />
         </Modal>
+      )}
+
+      {confirm && (
+        <ConfirmModal
+          title="Delete Camera"
+          message={`Delete "${confirm.display_name}"? This cannot be undone.`}
+          confirmLabel="Delete"
+          danger
+          onConfirm={() => handleDelete(confirm)}
+          onClose={() => setConfirm(null)}
+        />
       )}
     </div>
   )

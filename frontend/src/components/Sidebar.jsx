@@ -140,7 +140,10 @@ export default function Sidebar() {
             }`
           }
         >
-          <span>⊞</span> All Cameras
+          <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z" />
+          </svg>
+          All Cameras
         </NavLink>
       </div>
 
@@ -162,19 +165,22 @@ export default function Sidebar() {
       {user?.role === 'admin' && (
         <div className="px-3 py-3 border-t border-gray-800 space-y-0.5">
           {[
-            { to: '/discovery',  label: '📡 Discovery' },
-            { to: '/recordings', label: '🎬 Recordings' },
-            { to: '/cameras',    label: '📷 Cameras' },
-            { to: '/nvrs',       label: '🖥️ NVRs' },
-            { to: '/users',      label: '👤 Users' },
-          ].map(({ to, label }) => (
+            { to: '/discovery',  label: 'Discovery',  icon: <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5M3.75 3.75l6.75 6.75m10.5-6.75v4.5m0-4.5h-4.5m4.5 0l-6.75 6.75M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0l6.75-6.75m10.5 6.75v-4.5m0 4.5h-4.5m4.5 0l-6.75-6.75" /> },
+            { to: '/recordings', label: 'Recordings', icon: <path strokeLinecap="round" strokeLinejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 01-1.125-1.125M3.375 19.5h1.5C5.496 19.5 6 18.996 6 18.375m-3.75.125v-5.25A2.25 2.25 0 014.5 11.25h15A2.25 2.25 0 0121.75 13.5v3.75m-18.375 2.25c0 .621.504 1.125 1.125 1.125h15.75c.621 0 1.125-.504 1.125-1.125M15 12a3 3 0 11-6 0 3 3 0 016 0z" /> },
+            { to: '/cameras',    label: 'Cameras',    icon: <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9A2.25 2.25 0 0013.5 5.25h-9A2.25 2.25 0 002.25 7.5v9A2.25 2.25 0 004.5 18.75z" /> },
+            { to: '/nvrs',       label: 'NVRs',       icon: <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 14.25h13.5m-13.5 0a3 3 0 01-3-3m3 3a3 3 0 100 6h13.5a3 3 0 100-6m-16.5-3a3 3 0 013-3h13.5a3 3 0 013 3m-19.5 0a4.5 4.5 0 01.9-2.7L5.737 5.1a3.375 3.375 0 012.7-1.35h7.126c1.062 0 2.062.5 2.7 1.35l2.587 3.45a4.5 4.5 0 01.9 2.7m0 0a3 3 0 01-3 3m0 3h.008v.008h-.008v-.008zm0-6h.008v.008h-.008v-.008zm-3 6h.008v.008h-.008v-.008zm0-6h.008v.008h-.008v-.008z" /> },
+            { to: '/users',      label: 'Users',      icon: <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" /> },
+          ].map(({ to, label, icon }) => (
             <NavLink key={to} to={to}
               className={({ isActive }) =>
-                `block px-3 py-1.5 rounded-lg text-sm transition-colors ${
+                `flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-sm transition-colors ${
                   isActive ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-800'
                 }`
               }
             >
+              <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                {icon}
+              </svg>
               {label}
             </NavLink>
           ))}

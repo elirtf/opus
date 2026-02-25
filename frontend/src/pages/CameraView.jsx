@@ -13,11 +13,13 @@ export default function CameraView() {
   const navigate                  = useNavigate()
   const { user }                  = useAuth()
   const iframeRef                 = useRef(null)
+  const streamSrc                 = useRef('')
   const [cam, setCam]             = useState(null)
   const [online, setOnline]       = useState(null)
   const [loading, setLoading]     = useState(true)
   const [notFound, setNotFound]   = useState(false)
   const [toggling, setToggling]   = useState(false)
+  const [paused, setPaused]       = useState(false)
 
   useEffect(() => {
     camerasApi.list()
@@ -44,8 +46,26 @@ export default function CameraView() {
   }, [name])
 
   useEffect(() => {
+    if (cam) {
+      streamSrc.current = `/go2rtc/stream.html?src=${cam.name}&mode=mse`
+      if (iframeRef.current) iframeRef.current.src = streamSrc.current
+    }
+  }, [cam])
+
+  useEffect(() => {
     return () => { if (iframeRef.current) iframeRef.current.src = '' }
   }, [])
+
+  function togglePause() {
+    if (!iframeRef.current) return
+    if (paused) {
+      iframeRef.current.src = streamSrc.current
+      setPaused(false)
+    } else {
+      iframeRef.current.src = ''
+      setPaused(true)
+    }
+  }
 
   async function handleRecordingToggle() {
     if (!cam) return
@@ -133,18 +153,44 @@ export default function CameraView() {
       </div>
 
       {/* Stream */}
-      <div className="flex-1 bg-black relative">
+      <div className="flex-1 bg-black relative group">
+
+        {/* Offline overlay */}
         {online === false && (
-          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 pointer-events-none">
+          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 pointer-events-none">
             <span className="text-red-400 text-lg font-medium">Camera Offline</span>
             <span className="text-gray-500 text-sm">{label}</span>
           </div>
         )}
+
+        {/* Pause / play click overlay */}
+        <div
+          className="absolute inset-0 z-10 cursor-pointer"
+          onClick={togglePause}
+        >
+          {/* Show icon on hover or when paused */}
+          <div className={`absolute inset-0 flex items-center justify-center transition-opacity duration-150 ${
+            paused ? 'opacity-100 bg-black/40' : 'opacity-0 group-hover:opacity-100'
+          }`}>
+            <div className="bg-black/60 rounded-full p-4">
+              {paused ? (
+                <svg className="w-10 h-10 text-white" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M8 5v14l11-7z" />
+                </svg>
+              ) : (
+                <svg className="w-10 h-10 text-white" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
+                </svg>
+              )}
+            </div>
+          </div>
+        </div>
+
         <iframe
           ref={iframeRef}
-          src={`/go2rtc/stream.html?src=${cam.name}&mode=mse`}
           allow="autoplay"
-          style={{ width: '100%', height: '100%', border: 0 }}
+          scrolling="no"
+          style={{ width: '100%', height: '100%', border: 0, overflow: 'hidden' }}
         />
       </div>
     </div>

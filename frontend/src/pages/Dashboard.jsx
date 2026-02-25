@@ -5,7 +5,7 @@ import { healthApi } from '../api/health'
 import Spinner from '../components/Spinner'
 import { useAuth } from '../context/AuthContext'
 
-const GRID_SIZES = [1, 2, 3, 4]
+const GRID_SIZES = [1, 3, 4, 5]
 const HEALTH_POLL_MS = 30000
 
 // Grid icon SVGs — each represents the layout at that column count
@@ -13,7 +13,7 @@ function GridIcon({ cols, active }) {
   const cls = active ? 'text-white' : 'text-gray-400 group-hover:text-white'
   const cell = 'fill-current'
   const gap = 1
-  const size = 12
+  const size = 8
   const total = cols * size + (cols - 1) * gap
   const cells = []
   for (let r = 0; r < cols; r++) {

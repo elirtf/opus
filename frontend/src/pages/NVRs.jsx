@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { nvrsApi } from '../api/nvrs'
 import Modal from '../components/Modal'
-import logo from '../assets/logo-black.png'
+import Spinner from '../components/Spinner'
 
 const EMPTY_FORM = { name: '', display_name: '', ip_address: '', username: '', password: '', max_channels: 50, active: true }
 
@@ -141,7 +141,7 @@ export default function NVRs() {
       </div>
 
       {loading ? (
-        <div className="text-gray-500 text-sm">Loading...</div>
+        <div className="flex justify-center py-20"><Spinner className="w-6 h-6" /></div>
       ) : nvrs.length === 0 ? (
         <div className="text-center py-20 text-gray-500">
           <div className="text-4xl mb-3">🖥️</div>

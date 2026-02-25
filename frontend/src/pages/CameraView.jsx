@@ -4,7 +4,7 @@ import { camerasApi } from '../api/cameras'
 import { healthApi } from '../api/health'
 import { recordingsApi } from '../api/recordings'
 import { useAuth } from '../context/AuthContext'
-import logo from '../assets/logo-black.png'
+import Spinner from '../components/Spinner'
 
 const HEALTH_POLL_MS = 30000
 
@@ -61,7 +61,7 @@ export default function CameraView() {
   }
 
   if (loading) {
-    return <div className="flex-1 flex items-center justify-center text-gray-500 text-sm">Loading...</div>
+    return <div className="flex-1 flex items-center justify-center"><Spinner className="w-6 h-6" /></div>
   }
 
   if (notFound) {

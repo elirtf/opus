@@ -5,38 +5,9 @@ import { healthApi } from '../api/health'
 import Spinner from '../components/Spinner'
 import { useAuth } from '../context/AuthContext'
 
-const GRID_SIZES = [1, 3, 4, 5]
+const GRID_SIZES = [1, 3, 4, 6]
 const HEALTH_POLL_MS = 30000
 
-// Grid icon SVGs — each represents the layout at that column count
-function GridIcon({ cols, active }) {
-  const cls = active ? 'text-white' : 'text-gray-400 group-hover:text-white'
-  const cell = 'fill-current'
-  const gap = 1
-  const size = 8
-  const total = cols * size + (cols - 1) * gap
-  const cells = []
-  for (let r = 0; r < cols; r++) {
-    for (let c = 0; c < cols; c++) {
-      cells.push(
-        <rect
-          key={`${r}-${c}`}
-          x={c * (size + gap)}
-          y={r * (size + gap)}
-          width={size}
-          height={size}
-          rx={1.5}
-          className={cell}
-        />
-      )
-    }
-  }
-  return (
-    <svg width={total} height={total} viewBox={`0 0 ${total} ${total}`} className={`transition-colors ${cls}`}>
-      {cells}
-    </svg>
-  )
-}
 
 function StatusDot({ online }) {
   return (
@@ -169,18 +140,17 @@ export default function Dashboard() {
           )}
         </div>
         <div className="flex items-center gap-2">
-          {/* Grid size icons */}
-          <div className="flex items-center bg-gray-800 rounded-lg p-1 gap-0.5">
+          {/* Grid size */}
+          <div className="flex items-center bg-gray-800 rounded-lg p-0.5">
             {GRID_SIZES.map(s => (
               <button
                 key={s}
                 onClick={() => handleSetCols(s)}
-                title={`${s}×${s} grid`}
-                className={`group p-1.5 rounded transition-colors ${
-                  cols === s ? 'bg-gray-700' : 'hover:bg-gray-700/50'
+                className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                  cols === s ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-white'
                 }`}
               >
-                <GridIcon cols={s} active={cols === s} />
+                {s}×
               </button>
             ))}
           </div>

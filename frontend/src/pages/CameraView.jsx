@@ -144,7 +144,8 @@ export default function CameraView() {
           ref={iframeRef}
           src={`/go2rtc/stream.html?src=${cam.name}&mode=mse`}
           allow="autoplay"
-          style={{ width: '100%', height: '100%', border: 0 }}
+          scrolling="no"
+          style={{ width: '100%', height: '100%', border: 0, overflow: 'hidden', pointerEvents: 'none' }}
         />
       </div>
     </div>

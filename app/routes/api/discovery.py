@@ -308,7 +308,7 @@ def add_cameras():
             rtsp_url=rtsp_url,
             nvr=nvr.id if nvr else None,
             active=True,
-            recording_enabled=False,
+            recording_enabled=True,
         )
         stream_sync(cam)
         created.append(name)

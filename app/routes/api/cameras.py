@@ -63,7 +63,7 @@ def create_camera():
         rtsp_url=rtsp_url,
         nvr=data.get("nvr_id") or None,
         active=data.get("active", True),
-        recording_enabled=data.get("recording_enabled", False),
+        recording_enabled=data.get("recording_enabled", True),
     )
     stream_sync(cam)
     nvr_map = {nvr.id: nvr for nvr in NVR.select()}

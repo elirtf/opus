@@ -27,7 +27,7 @@ export default function App() {
           <Route path="/login"           element={<Login />} />
           <Route path="/"                element={<AppLayout><Dashboard /></AppLayout>} />
           <Route path="/camera/:name"    element={<AppLayout><CameraView /></AppLayout>} />
-          <Route path="/recordings"      element={<AppLayout adminOnly><Recordings /></AppLayout>} />
+          <Route path="/recordings"      element={<AppLayout><Recordings /></AppLayout>} />
           <Route path="/discovery"       element={<AppLayout adminOnly><Discovery /></AppLayout>} />
           <Route path="/nvrs"            element={<AppLayout adminOnly><NVRs /></AppLayout>} />
           <Route path="/cameras"         element={<AppLayout adminOnly><Cameras /></AppLayout>} />

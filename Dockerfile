@@ -1,4 +1,3 @@
-# ── Stage 1: Build React frontend ───────────────────────────────────────────
 FROM node:20-alpine AS frontend
 WORKDIR /frontend
 COPY frontend/package*.json ./
@@ -6,12 +5,19 @@ RUN npm install
 COPY frontend/ ./
 RUN npm run build
 
-# ── Stage 2: Python / Flask ──────────────────────────────────────────────────
-FROM python:3.11-slim
 
-RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+FROM python:3.12-slim
 
 WORKDIR /app
+
+RUN set -eu; which python || true; echo "$PATH"; ls -la /usr/bin | head
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends python3 curl ffmpeg && \
+    rm -rf /var/lib/apt/lists/*
+
+# Create recordings directory
+RUN mkdir -p /recordings
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

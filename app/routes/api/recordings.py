@@ -24,6 +24,15 @@ bp = Blueprint("api_recordings", __name__, url_prefix="/api/recordings")
 RECORDINGS_DIR = os.environ.get("RECORDINGS_DIR", "/recordings")
 
 
+def _to_iso(val):
+    """Convert a value to ISO string — handles both datetime objects and strings."""
+    if val is None:
+        return None
+    if isinstance(val, str):
+        return val
+    return val.isoformat()
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def recording_to_dict(rec: Recording) -> dict:
@@ -33,8 +42,8 @@ def recording_to_dict(rec: Recording) -> dict:
         "filename":         rec.filename,
         "file_size":        rec.file_size,
         "size_mb":          round(rec.file_size / (1024 * 1024), 1),
-        "started_at":       rec.started_at.isoformat() if rec.started_at else None,
-        "ended_at":         rec.ended_at.isoformat() if rec.ended_at else None,
+        "started_at":       _to_iso(rec.started_at),
+        "ended_at":         _to_iso(rec.ended_at),
         "duration_seconds": rec.duration_seconds,
         "status":           rec.status,
         "download_url":     f"/api/recordings/{rec.camera_name}/{rec.filename}",
@@ -199,10 +208,32 @@ def timeline():
     # Group by camera
     cameras = {name: [] for name in camera_names}
     for rec in recs:
+        # started_at/ended_at may be strings (from raw SQL inserts) or datetimes
+        start_str = None
+        if rec.started_at:
+            if isinstance(rec.started_at, str):
+                # "2024-01-15 08:00:00" or "2024-01-15T08:00:00"
+                try:
+                    start_str = rec.started_at.split("T")[-1].split(" ")[-1][:8]
+                except Exception:
+                    start_str = rec.started_at
+            else:
+                start_str = rec.started_at.strftime("%H:%M:%S")
+
+        end_str = None
+        if rec.ended_at:
+            if isinstance(rec.ended_at, str):
+                try:
+                    end_str = rec.ended_at.split("T")[-1].split(" ")[-1][:8]
+                except Exception:
+                    end_str = rec.ended_at
+            else:
+                end_str = rec.ended_at.strftime("%H:%M:%S")
+
         cameras.setdefault(rec.camera_name, []).append({
             "id":       rec.id,
-            "start":    rec.started_at.strftime("%H:%M:%S") if rec.started_at else None,
-            "end":      rec.ended_at.strftime("%H:%M:%S") if rec.ended_at else None,
+            "start":    start_str,
+            "end":      end_str,
             "filename": rec.filename,
             "size_mb":  round(rec.file_size / (1024 * 1024), 1),
             "duration": rec.duration_seconds,
@@ -416,8 +447,8 @@ def storage_stats():
             "segment_count": count,
             "total_gb":      round(bytes_used / (1024**3), 2),
             "total_bytes":   bytes_used,
-            "oldest":        row["oldest"].isoformat() if row["oldest"] else None,
-            "newest":        row["newest"].isoformat() if row["newest"] else None,
+            "oldest":        _to_iso(row["oldest"]),
+            "newest":        _to_iso(row["newest"]),
         })
         total_bytes += bytes_used
         total_segments += count

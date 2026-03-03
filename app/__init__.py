@@ -19,6 +19,13 @@ def create_app():
     db.start()
     db.connect(reuse_if_open=True)
 
+    # Performance tuning
+    # WAL mode allows concurrent readers + one writer without locking.
+    # Critical for recording engine writing segments while users browse.
+    db.pragma("journal_mode", "wal")
+    db.pragma("busy_timeout", 5000)    # wait up to 5s on lock instead of failing
+    db.pragma("synchronous", "normal") # safe with WAL, much faster than "full"
+
     # Run pending migrations before serving any requests.
     # Replaces db.create_tables() — migrations own the schema from here on.
     from app.migrate import run_migrations
@@ -81,6 +88,14 @@ def create_app():
             sync_all_on_startup()
         except Exception as e:
             app.logger.warning(f"go2rtc startup sync failed: {e}")
+
+    # ── Start Recording Engine ───────────────────────────────────────────────
+    # Runs in a background daemon thread — manages FFmpeg processes for all
+    # cameras that have recording_enabled=True.
+    import app.recorder as recorder_module
+    recorder_module.engine = recorder_module.RecordingEngine(app)
+    recorder_module.engine.start()
+    app.logger.info("Recording engine initialized and started")
 
     # ── SPA catch-all ────────────────────────────────────────────────────────
     register_spa_catchall(app)

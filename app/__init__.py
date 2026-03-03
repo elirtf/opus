@@ -63,6 +63,7 @@ def create_app():
     from app.routes.api.health  import bp as api_health_bp
     from app.routes.api.recordings import bp as api_recordings_bp
     from app.routes.api.discovery   import bp as api_discovery_bp
+    from app.routes.api.recording_settings import bp as api_rec_settings_bp
 
     app.register_blueprint(api_auth_bp)
     app.register_blueprint(api_nvrs_bp)
@@ -71,6 +72,7 @@ def create_app():
     app.register_blueprint(api_health_bp)
     app.register_blueprint(api_recordings_bp)
     app.register_blueprint(api_discovery_bp)
+    app.register_blueprint(api_rec_settings_bp)
 
 
     # ── Seed default admin if no users exist ─────────────────────────────────

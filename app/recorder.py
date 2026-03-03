@@ -1,21 +1,9 @@
 """
-Recording Engine
-================
-Background service that manages FFmpeg processes for continuous camera recording.
-
-Architecture:
-  Camera (RTSP) → FFmpeg (segments into MP4 files) → /recordings/{camera_name}/
-
-RECORDING MODES (set via RECORDING_MODE env var):
-  "all"       — (default) Records ALL active cameras. No manual toggling needed.
-                 Set recording_enabled=False on specific cameras to EXCLUDE them.
-  "selective" — Only records cameras where recording_enabled=True.
-
-The engine runs a supervisor loop that:
-  1. Syncs FFmpeg processes with the database (start/stop as needed)
-  2. Scans the filesystem for completed segments and registers them in the DB
-  3. Enforces retention policy (age-based and/or storage-cap-based)
-  4. Restarts any FFmpeg processes that crashed
+Recording Engine - Opus NVR
+Manages FFmpeg recording via go2rtc relay.
+Uses raw SQL (SqliteQueueDatabase compatible).
+Staggers FFmpeg launches to avoid overwhelming go2rtc/NVR.
+FFmpeg args matched to Frigate's battle-tested presets.
 """
 
 import os
@@ -29,784 +17,528 @@ from datetime import datetime, timedelta
 
 logger = logging.getLogger("opus.recorder")
 
-
-# ── Configuration (env vars with sensible defaults) ──────────────────────────
-
-RECORDINGS_DIR          = os.environ.get("RECORDINGS_DIR", "/recordings")
-SEGMENT_MINUTES         = int(os.environ.get("RECORDING_SEGMENT_MINUTES", "15"))
-RETENTION_DAYS          = int(os.environ.get("RECORDING_RETENTION_DAYS", "90"))
-MAX_STORAGE_GB          = float(os.environ.get("RECORDING_MAX_STORAGE_GB", "0"))  # 0 = unlimited
-POLL_INTERVAL           = int(os.environ.get("RECORDING_POLL_SECONDS", "10"))
-SCAN_INTERVAL           = int(os.environ.get("RECORDING_SCAN_SECONDS", "30"))
-RETENTION_INTERVAL      = int(os.environ.get("RECORDING_RETENTION_SECONDS", "300"))  # 5 min
-FFMPEG_RESTART_DELAY    = int(os.environ.get("FFMPEG_RESTART_DELAY_SECONDS", "5"))
-GO2RTC_RTSP_URL         = os.environ.get("GO2RTC_RTSP_URL", "")  # e.g. rtsp://go2rtc:8554
-
-# "all" = record every active camera (default)
-# "selective" = only record cameras with recording_enabled=True
-RECORDING_MODE          = os.environ.get("RECORDING_MODE", "all")
-
-# After this many consecutive crashes, shelve the camera (stop retrying frequently)
-# This prevents dead NVR channels (no physical camera) from spamming logs
-MAX_CRASH_BEFORE_SHELVE = int(os.environ.get("RECORDING_MAX_CRASHES", "3"))
-SHELVE_RETRY_MINUTES    = int(os.environ.get("RECORDING_SHELVE_RETRY_MINUTES", "10"))
+RECORDINGS_DIR       = os.environ.get("RECORDINGS_DIR", "/recordings")
+SEGMENT_MINUTES      = int(os.environ.get("RECORDING_SEGMENT_MINUTES", "15"))
+RETENTION_DAYS       = int(os.environ.get("RECORDING_RETENTION_DAYS", "90"))
+MAX_STORAGE_GB       = float(os.environ.get("RECORDING_MAX_STORAGE_GB", "0"))
+POLL_INTERVAL        = int(os.environ.get("RECORDING_POLL_SECONDS", "10"))
+SCAN_INTERVAL        = int(os.environ.get("RECORDING_SCAN_SECONDS", "30"))
+RETENTION_INTERVAL   = int(os.environ.get("RECORDING_RETENTION_SECONDS", "300"))
+FFMPEG_RESTART_DELAY = int(os.environ.get("FFMPEG_RESTART_DELAY_SECONDS", "5"))
+GO2RTC_RTSP_URL      = os.environ.get("GO2RTC_RTSP_URL", "")
+RECORDING_MODE       = os.environ.get("RECORDING_MODE", "all")
+MAX_CRASHES          = int(os.environ.get("RECORDING_MAX_CRASHES", "3"))
+SHELVE_RETRY_MIN     = int(os.environ.get("RECORDING_SHELVE_RETRY_MINUTES", "10"))
+STAGGER_DELAY        = float(os.environ.get("RECORDING_STAGGER_SECONDS", "2"))
 
 
 class RecordingEngine:
-    """
-    Manages FFmpeg recording subprocesses for all cameras.
-
-    Usage:
-        engine = RecordingEngine(flask_app)
-        engine.start()   # call once at app startup
-        engine.stop()    # call on shutdown
-    """
 
     def __init__(self, app):
         self.app = app
         self.recordings_dir = app.config.get("RECORDINGS_DIR", RECORDINGS_DIR)
-
-        # {camera_name: ProcessInfo} — tracks running FFmpeg subprocesses
-        self._processes: dict[str, dict] = {}
+        self._procs = {}
         self._lock = threading.Lock()
         self._running = False
-        self._thread: threading.Thread | None = None
-
-        # Stagger heavy operations so they don't all run every tick
+        self._thread = None
         self._last_scan = 0.0
         self._last_retention = 0.0
-
-    # ── Lifecycle ─────────────────────────────────────────────────────────
+        self._table_ok = False
+        self._stream_map = {}      # lowercase -> actual go2rtc name
+        self._stream_map_time = 0  # when we last fetched it
 
     def start(self):
-        """Start the background supervisor thread."""
         if self._running:
             return
         self._running = True
-        self._thread = threading.Thread(target=self._supervisor_loop, daemon=True, name="recorder")
+        self._thread = threading.Thread(target=self._loop, daemon=True, name="recorder")
         self._thread.start()
-        logger.info(f"Recording engine started (mode={RECORDING_MODE})")
+        logger.info(
+            "Recording engine started (mode=%s, seg=%smin, relay=%s, stagger=%ss)",
+            RECORDING_MODE, SEGMENT_MINUTES, "yes" if GO2RTC_RTSP_URL else "no", STAGGER_DELAY,
+        )
 
     def stop(self):
-        """Gracefully stop all recordings and the supervisor thread."""
-        logger.info("Recording engine stopping...")
         self._running = False
-        self._stop_all_processes()
+        with self._lock:
+            for n in list(self._procs):
+                self._kill(n)
         if self._thread:
             self._thread.join(timeout=15)
-        logger.info("Recording engine stopped")
 
-    # ── Supervisor loop ───────────────────────────────────────────────────
-
-    def _supervisor_loop(self):
-        """Main loop — runs in background thread."""
-        # Small initial delay to let the app finish starting up
+    def _loop(self):
         time.sleep(3)
-
         while self._running:
             try:
                 with self.app.app_context():
-                    self._sync_processes()
-
+                    self._sync()
                     now = time.time()
-
-                    # Segment scanning (less frequent than process sync)
                     if now - self._last_scan >= SCAN_INTERVAL:
-                        self._scan_completed_segments()
+                        self._scan_segments()
                         self._last_scan = now
-
-                    # Retention enforcement (even less frequent)
                     if now - self._last_retention >= RETENTION_INTERVAL:
                         self._enforce_retention()
                         self._last_retention = now
-
             except Exception:
-                logger.exception("Recording engine supervisor error")
-
+                logger.exception("Supervisor error")
             time.sleep(POLL_INTERVAL)
 
-    # ── Process management ────────────────────────────────────────────────
-
-    def _get_cameras_to_record(self):
-        """
-        Returns a dict of {camera_name: Camera} that should be recording,
-        based on the current RECORDING_MODE.
-
-        Skips sub-streams — only main streams get recorded.
-        Sub-streams are low-res duplicates used for live grid view;
-        recording them wastes storage with no benefit.
-        """
+    def _desired(self):
         from app.models import Camera
-
         if RECORDING_MODE == "selective":
-            query = Camera.select().where(
-                (Camera.recording_enabled == True) & (Camera.active == True)
-            )
+            qs = Camera.select().where((Camera.recording_enabled == True) & (Camera.active == True))
         else:
-            # "all" mode — record every active camera UNLESS explicitly excluded
-            query = Camera.select().where(
-                (Camera.active == True) & (Camera.recording_enabled != False)
-            )
+            qs = Camera.select().where(Camera.active == True)
+        return {c.name: c for c in qs if not c.name.endswith("-sub")}
 
-        # Filter out sub-streams — only record main streams
-        return {
-            cam.name: cam for cam in query
-            if not cam.name.endswith("-sub")
-        }
-
-    def _sync_processes(self):
-        """
-        Reconcile running FFmpeg processes with the database.
-        Start processes for cameras that need recording, stop those that don't,
-        and restart any that have crashed — with exponential backoff for
-        unreachable streams so dead NVR channels don't spam logs.
-        """
-        desired = self._get_cameras_to_record()
-
+    def _sync(self):
+        desired = self._desired()
         with self._lock:
-            # Stop processes for cameras that no longer need recording
-            for name in list(self._processes.keys()):
-                if name not in desired:
-                    self._stop_process(name)
-                    logger.info(f"Stopped recording: {name} (removed or excluded)")
+            for n in list(self._procs):
+                if n not in desired:
+                    self._kill(n)
 
-            # Start or restart processes for desired cameras
+            launches = 0
             for name, cam in desired.items():
-                info = self._processes.get(name)
+                p = self._procs.get(name)
 
-                if info is None:
-                    # Never started — launch it
-                    self._start_process(cam)
-
-                elif info.get("shelved"):
-                    # Camera has been shelved after too many failures.
-                    # Only retry every SHELVE_RETRY_INTERVAL (default 10 min).
-                    if time.time() >= info.get("retry_after", 0):
-                        logger.info(f"Retrying shelved camera: {name} (was {info.get('crash_count', 0)} crashes)")
-                        old_crashes = info.get("crash_count", 0)
-                        del self._processes[name]
-                        self._start_process(cam)
-                        if name in self._processes:
-                            self._processes[name]["crash_count"] = old_crashes
-
-                elif info["process"].poll() is not None:
-                    # Process exited (crashed or stream ended)
-                    exit_code = info["process"].returncode
-                    runtime = time.time() - info["started_at"]
-
-                    # Read stderr for diagnostics
-                    stderr_output = ""
-                    try:
-                        stderr_output = info["process"].stderr.read().decode(
-                            errors="replace"
-                        )[-500:]
-                    except Exception:
-                        pass
-
-                    crash_count = info.get("crash_count", 0) + 1
-                    info["crash_count"] = crash_count
-                    info["last_error"] = stderr_output[-300:] if stderr_output else f"exit code {exit_code}"
-
-                    # Only log full warning for first few crashes, then reduce noise
-                    if crash_count <= 3:
-                        logger.warning(
-                            f"FFmpeg exited for {name}: code={exit_code}, "
-                            f"runtime={runtime:.0f}s, stderr=...{stderr_output[-200:]}"
-                        )
-                    elif crash_count == 4:
-                        logger.warning(
-                            f"FFmpeg for {name} has failed {crash_count} times — "
-                            f"shelving (will retry every {SHELVE_RETRY_MINUTES}min). "
-                            f"Last error: ...{stderr_output[-100:]}"
-                        )
-
-                    # Shelve cameras that keep failing (likely no physical camera on that channel)
-                    if crash_count >= MAX_CRASH_BEFORE_SHELVE:
-                        info["shelved"] = True
-                        info["retry_after"] = time.time() + (SHELVE_RETRY_MINUTES * 60)
-                        continue
-
-                    # Exponential backoff: 5s, 10s, 20s, 40s, 60s max
-                    backoff = min(FFMPEG_RESTART_DELAY * (2 ** (crash_count - 1)), 60)
-                    info["restart_after"] = time.time() + backoff
+                if p is None:
+                    if launches > 0:
+                        time.sleep(STAGGER_DELAY)
+                    self._launch(cam)
+                    launches += 1
                     continue
 
-                elif info.get("restart_after") and time.time() < info["restart_after"]:
-                    continue  # still waiting for backoff
+                if p.get("shelved"):
+                    if time.time() >= p.get("retry_at", 0):
+                        logger.info("Retrying shelved: %s", name)
+                        cr = p.get("crashes", 0)
+                        del self._procs[name]
+                        if launches > 0:
+                            time.sleep(STAGGER_DELAY)
+                        self._launch(cam)
+                        if name in self._procs:
+                            self._procs[name]["crashes"] = cr
+                        launches += 1
+                    continue
 
-                elif info.get("restart_after") and time.time() >= info["restart_after"]:
-                    # Backoff expired — restart
-                    old_info = self._processes.pop(name)
-                    self._start_process(cam)
-                    if name in self._processes:
-                        self._processes[name]["crash_count"] = old_info.get("crash_count", 0)
-                        self._processes[name]["last_error"] = old_info.get("last_error")
+                if p.get("wait_until") and time.time() < p["wait_until"]:
+                    continue
 
-    def _build_ffmpeg_cmd(self, source_url: str, output_pattern: str) -> list:
-        """
-        Build the FFmpeg command for recording an RTSP stream.
+                proc = p["process"]
+                if proc.poll() is None:
+                    if p.get("crashes", 0) > 0 and time.time() - p["started_at"] > 60:
+                        p["crashes"] = 0
+                    continue
 
-        Key lessons from Frigate's recording pipeline:
-          - NEVER use -movflags +faststart with -f segment. Faststart rewrites
-            the moov atom after each segment finishes, which conflicts with the
-            segment muxer and causes crashes on streams with timestamp quirks.
-          - Use -fflags +genpts to regenerate clean timestamps (fixes
-            non-monotonic DTS warnings common with NVR RTSP streams).
-          - Keep the command minimal — stream copy, no transcode.
-        """
-        segment_seconds = SEGMENT_MINUTES * 60
+                rt = time.time() - p["started_at"]
+                cr = p.get("crashes", 0) + 1
+                p["crashes"] = cr
 
+                err = ""
+                try:
+                    err = proc.stderr.read().decode(errors="replace")[-300:]
+                except Exception:
+                    pass
+                p["last_error"] = err or "exit %s" % proc.returncode
+
+                if cr <= 3:
+                    logger.warning("FFmpeg exited: %s code=%s rt=%ds err=...%s", name, proc.returncode, rt, err[-120:])
+
+                if cr >= MAX_CRASHES:
+                    if cr == MAX_CRASHES:
+                        logger.warning("Shelving %s (%d crashes)", name, cr)
+                    p["shelved"] = True
+                    p["retry_at"] = time.time() + SHELVE_RETRY_MIN * 60
+                    continue
+
+                backoff = min(FFMPEG_RESTART_DELAY * (2 ** (cr - 1)), 60)
+                p["wait_until"] = time.time() + backoff
+                del self._procs[name]
+                if launches > 0:
+                    time.sleep(STAGGER_DELAY)
+                self._launch(cam)
+                if name in self._procs:
+                    self._procs[name]["crashes"] = cr
+                launches += 1
+
+    def _resolve_stream(self, camera_name):
+        """Map camera name to actual go2rtc stream name (handles case difference)."""
+        now = time.time()
+        if not self._stream_map or now - self._stream_map_time > 120:
+            try:
+                import json
+                import urllib.request
+                go2rtc_http = self.app.config.get("GO2RTC_URL", "http://go2rtc:1984")
+                data = urllib.request.urlopen(
+                    "%s/api/streams" % go2rtc_http, timeout=5
+                ).read()
+                streams = json.loads(data)
+                self._stream_map = {k.lower(): k for k in streams}
+                self._stream_map_time = now
+                logger.info("go2rtc streams: %d found", len(self._stream_map))
+            except Exception as e:
+                logger.warning("go2rtc API query failed: %s", e)
+                return camera_name
+        return self._stream_map.get(camera_name.lower(), camera_name)
+
+    def _launch(self, camera):
+        cam_dir = os.path.join(self.recordings_dir, camera.name)
+        os.makedirs(cam_dir, exist_ok=True)
+
+        if GO2RTC_RTSP_URL:
+            stream_name = self._resolve_stream(camera.name)
+            src = "%s/%s" % (GO2RTC_RTSP_URL, stream_name)
+        else:
+            src = camera.rtsp_url
+
+        seg = SEGMENT_MINUTES * 60
+        pat = os.path.join(cam_dir, "%Y-%m-%d_%H-%M-%S.mp4")
+
+        # Frigate preset-rtsp-generic input + preset-record-generic output
         cmd = [
             "ffmpeg",
             "-hide_banner",
             "-loglevel", "error",
-            "-y",
-
-            # ── Input options ──
-            "-fflags", "+genpts+discardcorrupt",  # regenerate timestamps, drop corrupt frames
+            # input (Frigate preset-rtsp-generic)
+            "-avoid_negative_ts", "make_zero",
+            "-fflags", "+genpts+discardcorrupt",
             "-rtsp_transport", "tcp",
-            "-rtsp_flags", "prefer_tcp",
+            "-timeout", "10000000",
             "-use_wallclock_as_timestamps", "1",
-            "-timeout", "15000000",               # 15s connection timeout (µs)
-            "-analyzeduration", "10000000",        # 10s to analyze stream
-            "-probesize", "10000000",              # 10MB probe buffer
-
-            "-i", source_url,
-
-            # ── Output options ──
-            "-c", "copy",                         # no transcoding — just remux
-            "-an",                                # drop audio (saves storage)
-            "-avoid_negative_ts", "make_zero",    # normalize timestamps
+            "-i", src,
+            # output (Frigate preset-record-generic)
             "-f", "segment",
-            "-segment_time", str(segment_seconds),
+            "-segment_time", str(seg),
             "-segment_format", "mp4",
-            "-segment_atclocktime", "1",
-            "-strftime", "1",
             "-reset_timestamps", "1",
-            "-break_non_keyframes", "1",
-            # NOTE: no -movflags +faststart here — it conflicts with -f segment
-            # and causes crashes. Browser playback works fine without it.
-            # If needed later, we can remux completed segments like Frigate does.
-
-            output_pattern,
+            "-strftime", "1",
+            "-c:v", "copy",
+            "-an",
+            pat,
         ]
 
-        return cmd
-
-    # ── go2rtc stream name resolution ────────────────────────────────────
-
-    _go2rtc_streams_cache: dict | None = None
-    _go2rtc_cache_time: float = 0
-
-    def _resolve_go2rtc_stream(self, camera_name: str) -> str | None:
-        """
-        Look up the correct go2rtc stream name for a camera.
-        go2rtc stream names may use different case (e.g. CBW-ch1-main vs cbw-ch1-main).
-        Caches the stream list for 60 seconds to avoid hammering the API.
-        """
-        import json
-        import urllib.request
-
-        now = time.time()
-        if self._go2rtc_streams_cache is None or (now - self._go2rtc_cache_time) > 60:
-            try:
-                go2rtc_api = GO2RTC_RTSP_URL.replace("rtsp://", "http://").replace(":8554", ":1984")
-                data = urllib.request.urlopen(f"{go2rtc_api}/api/streams", timeout=5).read()
-                streams = json.loads(data)
-                # Build case-insensitive lookup: lowercase -> actual name
-                self._go2rtc_streams_cache = {k.lower(): k for k in streams.keys()}
-                self._go2rtc_cache_time = now
-            except Exception as e:
-                logger.warning(f"Failed to query go2rtc streams API: {e}")
-                # Fall back to using camera name as-is
-                return camera_name
-
-        return self._go2rtc_streams_cache.get(camera_name.lower())
-
-    def _start_process(self, camera):
-        """Launch an FFmpeg subprocess for a camera."""
-        cam_dir = os.path.join(self.recordings_dir, camera.name)
-        os.makedirs(cam_dir, exist_ok=True)
-
-        output_pattern = os.path.join(cam_dir, "%Y-%m-%d_%H-%M-%S.mp4")
-
-        # Determine source URL
-        if GO2RTC_RTSP_URL:
-            # Resolve correct stream name (go2rtc may use different case)
-            stream_name = self._resolve_go2rtc_stream(camera.name)
-            if stream_name is None:
-                logger.warning(
-                    f"No go2rtc stream found for {camera.name} — skipping"
-                )
-                return
-            source_url = f"{GO2RTC_RTSP_URL}/{stream_name}"
-        else:
-            source_url = camera.rtsp_url
-
-        cmd = self._build_ffmpeg_cmd(source_url, output_pattern)
-
         try:
-            proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-            )
+            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         except FileNotFoundError:
-            logger.error(
-                "ffmpeg not found! Install FFmpeg in the Docker image. "
-                "Add 'RUN apt-get update && apt-get install -y ffmpeg' to your Dockerfile."
-            )
+            logger.error("ffmpeg not found")
             return
         except Exception:
-            logger.exception(f"Failed to start FFmpeg for {camera.name}")
+            logger.exception("FFmpeg launch failed: %s", camera.name)
             return
 
-        self._processes[camera.name] = {
-            "process": proc,
-            "camera_id": camera.id,
-            "camera_name": camera.name,
-            "source_url": source_url,
-            "started_at": time.time(),
-            "restart_after": None,
-            "crash_count": 0,
-            "last_error": None,
+        self._procs[camera.name] = {
+            "process": proc, "camera_id": camera.id, "source": src,
+            "started_at": time.time(), "crashes": 0, "last_error": None,
+            "shelved": False, "wait_until": None, "retry_at": None,
         }
+        logger.info("Recording: %s PID=%d src=%s", camera.name, proc.pid, src)
 
-        logger.info(
-            f"Recording started: {camera.name} → {cam_dir}/ "
-            f"(PID {proc.pid}, {SEGMENT_MINUTES}min segments)"
-        )
-
-    def _stop_process(self, camera_name: str):
-        """Gracefully stop an FFmpeg process (SIGINT → wait → SIGKILL)."""
-        info = self._processes.pop(camera_name, None)
+    def _kill(self, name):
+        info = self._procs.pop(name, None)
         if not info:
             return
-
         proc = info["process"]
         if proc.poll() is not None:
-            return  # already dead
-
+            return
         try:
             proc.send_signal(signal.SIGINT)
             proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
-            logger.warning(f"FFmpeg for {camera_name} didn't stop gracefully — killing")
             proc.kill()
-            proc.wait(timeout=5)
+            try:
+                proc.wait(timeout=5)
+            except Exception:
+                pass
         except Exception:
-            logger.exception(f"Error stopping FFmpeg for {camera_name}")
+            pass
 
-    def _stop_all_processes(self):
-        """Stop every running FFmpeg process."""
-        with self._lock:
-            for name in list(self._processes.keys()):
-                self._stop_process(name)
-
-    # ── Segment scanning ──────────────────────────────────────────────────
-
-    def _scan_completed_segments(self):
-        """
-        Walk the recordings directory and register any completed MP4 segments
-        that aren't already in the database.
-        """
-        from app.models import Recording, Camera
+    def _ensure_table(self):
+        if self._table_ok:
+            return True
         from app.database import db
+        try:
+            db.execute_sql(
+                "CREATE TABLE IF NOT EXISTS recording ("
+                "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "  camera INTEGER,"
+                "  camera_name VARCHAR(50) NOT NULL,"
+                "  filename VARCHAR(100) NOT NULL,"
+                "  file_path VARCHAR(255) NOT NULL,"
+                "  file_size INTEGER DEFAULT 0,"
+                "  started_at DATETIME,"
+                "  ended_at DATETIME,"
+                "  duration_seconds INTEGER,"
+                "  status VARCHAR(20) DEFAULT 'complete'"
+                ")"
+            )
+            db.execute_sql(
+                "CREATE INDEX IF NOT EXISTS idx_rec_cam_start "
+                "ON recording (camera_name, started_at)"
+            )
+            self._table_ok = True
+            logger.info("Recording table ready")
+            return True
+        except Exception:
+            logger.exception("Table creation failed")
+            return False
+
+    def _scan_segments(self):
+        from app.database import db
+        from app.models import Camera
 
         if not os.path.exists(self.recordings_dir):
-            logger.debug(f"Recordings dir missing: {self.recordings_dir}")
+            return
+        if not self._ensure_table():
             return
 
-        # ── Ensure the recording table exists ──
-        # If the migration hasn't run, create the table directly as a safety net.
-        try:
-            Recording.select().limit(1).count()
-        except Exception as e:
-            logger.warning(f"Recording table not found ({e}) — creating it now")
-            try:
-                db.create_tables([Recording])
-                logger.info("Recording table created successfully")
-            except Exception:
-                logger.exception("Failed to create recording table — scanner disabled")
-                return
-
-        # Build a set of camera names with active FFmpeg processes
-        active_dirs = set()
+        writing = set()
         with self._lock:
-            for name, info in self._processes.items():
-                if not info.get("shelved"):
-                    active_dirs.add(name)
+            for n, p in self._procs.items():
+                if not p.get("shelved") and p["process"].poll() is None:
+                    writing.add(n)
 
-        # Build a set of already-known files for fast lookup
         known = set()
-        for rec in Recording.select(Recording.camera_name, Recording.filename):
-            known.add((rec.camera_name, rec.filename))
-
-        new_segments = []
-
         try:
-            cam_dirs = [
-                d for d in os.listdir(self.recordings_dir)
-                if os.path.isdir(os.path.join(self.recordings_dir, d))
-            ]
-        except OSError as e:
-            logger.warning(f"Cannot list recordings dir: {e}")
+            cur = db.execute_sql("SELECT camera_name, filename FROM recording")
+            for r in cur.fetchall():
+                known.add((r[0], r[1]))
+        except Exception:
+            logger.exception("Cannot query recordings")
             return
 
-        scanned_files = 0
-        skipped_known = 0
-        skipped_active = 0
-        skipped_small = 0
-        skipped_parse = 0
+        added = 0
+        try:
+            dirs = sorted(os.listdir(self.recordings_dir))
+        except OSError:
+            return
 
-        for cam_name in cam_dirs:
+        for cam_name in dirs:
             cam_dir = os.path.join(self.recordings_dir, cam_name)
-
+            if not os.path.isdir(cam_dir):
+                continue
             try:
-                files = [f for f in os.listdir(cam_dir) if f.endswith(".mp4")]
+                files = sorted(f for f in os.listdir(cam_dir) if f.endswith(".mp4"))
             except OSError:
                 continue
-
             if not files:
                 continue
 
-            scanned_files += len(files)
+            newest = files[-1] if cam_name in writing else None
+            cam_obj = Camera.get_or_none(Camera.name == cam_name)
+            cam_id = cam_obj.id if cam_obj else None
 
-            # Identify the newest file — it's likely still being written
-            files_sorted = sorted(files)
-            newest_file = files_sorted[-1] if cam_name in active_dirs else None
-
-            for filename in files:
-                if (cam_name, filename) in known:
-                    skipped_known += 1
+            for fn in files:
+                if (cam_name, fn) in known or fn == newest:
                     continue
-
-                if filename == newest_file:
-                    skipped_active += 1
-                    continue
-
-                filepath = os.path.join(cam_dir, filename)
-
+                fp = os.path.join(cam_dir, fn)
                 try:
-                    stat = os.stat(filepath)
+                    sz = os.path.getsize(fp)
                 except OSError:
                     continue
-
-                if stat.st_size < 10240:
-                    skipped_small += 1
+                if sz < 10240:
                     continue
-
-                started_at = self._parse_segment_time(filename)
-                if not started_at:
-                    skipped_parse += 1
+                sa = self._parse_ts(fn)
+                if sa is None:
                     continue
+                dur = self._probe_dur(fp)
+                ea = (sa + timedelta(seconds=int(dur))) if sa and dur else None
+                try:
+                    db.execute_sql(
+                        "INSERT INTO recording"
+                        " (camera,camera_name,filename,file_path,file_size,"
+                        "  started_at,ended_at,duration_seconds,status)"
+                        " VALUES (?,?,?,?,?,?,?,?,?)",
+                        (cam_id, cam_name, fn, fp, sz,
+                         sa.isoformat() if sa else None,
+                         ea.isoformat() if ea else None,
+                         int(dur) if dur else None, "complete"),
+                    )
+                    added += 1
+                except Exception as exc:
+                    logger.debug("Insert skip %s: %s", fn, exc)
 
-                duration = self._probe_duration(filepath)
-
-                ended_at = None
-                if started_at and duration:
-                    ended_at = started_at + timedelta(seconds=int(duration))
-
-                cam = Camera.get_or_none(Camera.name == cam_name)
-                camera_id = cam.id if cam else None
-
-                new_segments.append({
-                    "camera": camera_id,
-                    "camera_name": cam_name,
-                    "filename": filename,
-                    "file_path": filepath,
-                    "file_size": stat.st_size,
-                    "started_at": started_at,
-                    "ended_at": ended_at,
-                    "duration_seconds": int(duration) if duration else None,
-                    "status": "complete",
-                })
-
-        # Insert new segments — use individual inserts instead of db.atomic()
-        # because SqliteQueueDatabase doesn't support atomic() transactions
-        inserted = 0
-        for seg in new_segments:
-            try:
-                Recording.create(**seg)
-                inserted += 1
-            except Exception as e:
-                logger.warning(f"Failed to insert segment {seg['filename']}: {e}")
-
-        logger.info(
-            f"Scan: {len(cam_dirs)} dirs, {scanned_files} files, "
-            f"{inserted} new, {skipped_known} known, "
-            f"{skipped_active} active, {skipped_small} small, "
-            f"{skipped_parse} unparseable"
-        )
+        if added:
+            logger.info("Scan: registered %d new segments", added)
 
     @staticmethod
-    def _parse_segment_time(filename: str) -> datetime | None:
-        """Parse datetime from segment filename like '2024-01-15_14-00-00.mp4'."""
-        stem = filename.replace(".mp4", "")
+    def _parse_ts(fn):
         try:
-            return datetime.strptime(stem, "%Y-%m-%d_%H-%M-%S")
+            return datetime.strptime(fn.replace(".mp4", ""), "%Y-%m-%d_%H-%M-%S")
         except ValueError:
             return None
 
     @staticmethod
-    def _probe_duration(filepath: str) -> float | None:
-        """Use ffprobe to get the duration of an MP4 file in seconds."""
+    def _probe_dur(fp):
         try:
-            result = subprocess.run(
-                [
-                    "ffprobe",
-                    "-v", "quiet",
-                    "-show_entries", "format=duration",
-                    "-of", "default=noprint_wrappers=1:nokey=1",
-                    filepath,
-                ],
-                capture_output=True,
-                text=True,
-                timeout=10,
+            r = subprocess.run(
+                ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+                 "-of", "default=noprint_wrappers=1:nokey=1", fp],
+                capture_output=True, text=True, timeout=10,
             )
-            if result.returncode == 0 and result.stdout.strip():
-                return float(result.stdout.strip())
+            if r.returncode == 0 and r.stdout.strip():
+                return float(r.stdout.strip())
         except Exception:
             pass
         return None
 
-    # ── Retention enforcement ─────────────────────────────────────────────
-
     def _enforce_retention(self):
-        """
-        Delete recordings that exceed retention policy.
-        Two policies (both enforced):
-          1. Age-based:   delete segments older than RETENTION_DAYS
-          2. Storage-cap: delete oldest segments until total < MAX_STORAGE_GB
-        """
-        from app.models import Recording
         from app.database import db
+        deleted = 0
 
-        deleted_count = 0
-
-        # ── Age-based retention ──
         if RETENTION_DAYS > 0:
-            cutoff = datetime.now() - timedelta(days=RETENTION_DAYS)
-            old_recordings = (
-                Recording.select()
-                .where(Recording.started_at < cutoff)
-                .order_by(Recording.started_at.asc())
-            )
+            cutoff = (datetime.now() - timedelta(days=RETENTION_DAYS)).isoformat()
+            try:
+                rows = db.execute_sql(
+                    "SELECT id, file_path FROM recording WHERE started_at < ?", (cutoff,)
+                ).fetchall()
+                for rid, fp in rows:
+                    try:
+                        if os.path.exists(fp):
+                            os.remove(fp)
+                        db.execute_sql("DELETE FROM recording WHERE id=?", (rid,))
+                        deleted += 1
+                    except Exception:
+                        pass
+            except Exception:
+                logger.exception("Age retention failed")
 
-            for rec in old_recordings:
-                if self._delete_recording_file(rec):
-                    deleted_count += 1
-
-        # ── Storage-cap retention ──
         if MAX_STORAGE_GB > 0:
-            max_bytes = MAX_STORAGE_GB * 1024 * 1024 * 1024
-            total_size = self._get_total_storage_bytes()
+            cap = MAX_STORAGE_GB * 1024 ** 3
+            total = self._disk_usage()
+            if total > cap:
+                try:
+                    rows = db.execute_sql(
+                        "SELECT id,file_path,file_size FROM recording ORDER BY started_at ASC"
+                    ).fetchall()
+                    freed = 0
+                    for rid, fp, sz in rows:
+                        if freed >= total - cap:
+                            break
+                        try:
+                            if os.path.exists(fp):
+                                os.remove(fp)
+                            db.execute_sql("DELETE FROM recording WHERE id=?", (rid,))
+                            freed += sz or 0
+                            deleted += 1
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
 
-            if total_size > max_bytes:
-                overage = total_size - max_bytes
-                freed = 0
-
-                # Delete oldest recordings first
-                oldest = (
-                    Recording.select()
-                    .order_by(Recording.started_at.asc())
-                )
-                for rec in oldest:
-                    if freed >= overage:
-                        break
-                    size = rec.file_size
-                    if self._delete_recording_file(rec):
-                        freed += size
-                        deleted_count += 1
-
-        # ── Orphan cleanup ──
-        # Delete DB records whose files no longer exist on disk
-        orphans = []
-        for rec in Recording.select():
-            if not os.path.exists(rec.file_path):
-                orphans.append(rec.id)
-
-        if orphans:
-            with db.atomic():
-                Recording.delete().where(Recording.id.in_(orphans)).execute()
-            logger.info(f"Cleaned up {len(orphans)} orphaned DB records")
-
-        # ── Empty directory cleanup ──
-        self._cleanup_empty_dirs()
-
-        if deleted_count:
-            logger.info(f"Retention: deleted {deleted_count} recording segments")
-
-    def _delete_recording_file(self, recording) -> bool:
-        """Delete the file from disk and remove the DB record."""
         try:
-            if os.path.exists(recording.file_path):
-                os.remove(recording.file_path)
-            recording.delete_instance()
-            return True
+            rows = db.execute_sql("SELECT id,file_path FROM recording").fetchall()
+            orphans = [r[0] for r in rows if not os.path.exists(r[1])]
+            if orphans:
+                ph = ",".join("?" * len(orphans))
+                db.execute_sql("DELETE FROM recording WHERE id IN (%s)" % ph, orphans)
+                logger.info("Cleaned %d orphan records", len(orphans))
         except Exception:
-            logger.exception(f"Failed to delete recording: {recording.file_path}")
-            return False
+            pass
 
-    def _get_total_storage_bytes(self) -> int:
-        """Calculate total bytes used by all recordings on disk."""
+        try:
+            for d in os.listdir(self.recordings_dir):
+                p = os.path.join(self.recordings_dir, d)
+                if os.path.isdir(p) and not os.listdir(p):
+                    os.rmdir(p)
+        except OSError:
+            pass
+
+        if deleted:
+            logger.info("Retention: deleted %d segments", deleted)
+
+    def _disk_usage(self):
         total = 0
         try:
-            for cam_dir_name in os.listdir(self.recordings_dir):
-                cam_dir = os.path.join(self.recordings_dir, cam_dir_name)
-                if not os.path.isdir(cam_dir):
+            for d in os.listdir(self.recordings_dir):
+                dp = os.path.join(self.recordings_dir, d)
+                if not os.path.isdir(dp):
                     continue
-                for f in os.listdir(cam_dir):
+                for f in os.listdir(dp):
                     if f.endswith(".mp4"):
                         try:
-                            total += os.path.getsize(os.path.join(cam_dir, f))
+                            total += os.path.getsize(os.path.join(dp, f))
                         except OSError:
                             pass
         except OSError:
             pass
         return total
 
-    def _cleanup_empty_dirs(self):
-        """Remove empty camera directories from the recordings folder."""
+    def test_rtsp(self, url, timeout=10):
+        res = {"url": url, "reachable": False, "error": None,
+               "video_codec": None, "resolution": None, "fps": None}
         try:
-            for d in os.listdir(self.recordings_dir):
-                cam_dir = os.path.join(self.recordings_dir, d)
-                if os.path.isdir(cam_dir) and not os.listdir(cam_dir):
-                    os.rmdir(cam_dir)
-        except OSError:
-            pass
-
-    # ── RTSP Diagnostics ──────────────────────────────────────────────────
-
-    def test_rtsp(self, rtsp_url: str, timeout: int = 10) -> dict:
-        """
-        Test an RTSP URL by running a short ffprobe against it.
-        Returns a diagnostic dict with connection status, codec info, etc.
-        Used by the /api/recordings/diagnose endpoint.
-        """
-        result = {
-            "url": rtsp_url,
-            "reachable": False,
-            "error": None,
-            "video_codec": None,
-            "resolution": None,
-            "fps": None,
-            "audio_codec": None,
-        }
-
-        try:
-            probe = subprocess.run(
-                [
-                    "ffprobe",
-                    "-v", "error",
-                    "-rtsp_transport", "tcp",
-                    "-rtsp_flags", "prefer_tcp",
-                    "-timeout", str(timeout * 1000000),
-                    "-show_streams",
-                    "-show_format",
-                    "-of", "json",
-                    rtsp_url,
-                ],
-                capture_output=True,
-                text=True,
-                timeout=timeout + 5,
+            p = subprocess.run(
+                ["ffprobe", "-v", "error", "-rtsp_transport", "tcp",
+                 "-timeout", str(timeout * 1000000),
+                 "-show_streams", "-show_format", "-of", "json", url],
+                capture_output=True, text=True, timeout=timeout + 5,
             )
-
-            if probe.returncode != 0:
-                result["error"] = probe.stderr.strip()[-300:] if probe.stderr else f"ffprobe exited with code {probe.returncode}"
-                return result
-
+            if p.returncode != 0:
+                res["error"] = (p.stderr or "").strip()[-300:]
+                return res
             import json
-            data = json.loads(probe.stdout)
-            result["reachable"] = True
-
-            for stream in data.get("streams", []):
-                if stream.get("codec_type") == "video":
-                    result["video_codec"] = stream.get("codec_name")
-                    result["resolution"] = f"{stream.get('width')}x{stream.get('height')}"
-                    # Parse FPS from various fields
-                    fps_str = stream.get("r_frame_rate", "0/1")
+            data = json.loads(p.stdout)
+            res["reachable"] = True
+            for s in data.get("streams", []):
+                if s.get("codec_type") == "video":
+                    res["video_codec"] = s.get("codec_name")
+                    res["resolution"] = "%sx%s" % (s.get("width"), s.get("height"))
                     try:
-                        num, den = fps_str.split("/")
-                        result["fps"] = round(int(num) / int(den), 1)
+                        n, d = s["r_frame_rate"].split("/")
+                        res["fps"] = round(int(n) / int(d), 1)
                     except Exception:
-                        result["fps"] = fps_str
-                elif stream.get("codec_type") == "audio":
-                    result["audio_codec"] = stream.get("codec_name")
-
+                        pass
         except subprocess.TimeoutExpired:
-            result["error"] = f"Connection timed out after {timeout}s — camera may be unreachable or RTSP URL is wrong"
-        except FileNotFoundError:
-            result["error"] = "ffprobe not found — FFmpeg is not installed in the container"
+            res["error"] = "Timed out (%ds)" % timeout
         except Exception as e:
-            result["error"] = str(e)
+            res["error"] = str(e)
+        return res
 
-        return result
-
-    # ── Status API (called by routes) ─────────────────────────────────────
-
-    def get_status(self) -> dict:
-        """Return current recording engine status for the API."""
+    def get_status(self):
         with self._lock:
-            processes = {}
-            shelved_cameras = []
-            for name, info in self._processes.items():
-                if info.get("shelved"):
-                    shelved_cameras.append({
-                        "name": name,
-                        "crash_count": info.get("crash_count", 0),
-                        "last_error": info.get("last_error"),
-                        "retry_after": datetime.fromtimestamp(
-                            info.get("retry_after", 0)
-                        ).isoformat() if info.get("retry_after") else None,
-                    })
+            active = {}
+            shelved_list = []
+            for name, p in self._procs.items():
+                if p.get("shelved"):
+                    shelved_list.append({"name": name, "crashes": p.get("crashes", 0),
+                                         "last_error": p.get("last_error")})
                     continue
-
-                proc = info["process"]
-                running = proc.poll() is None
-                processes[name] = {
-                    "pid": proc.pid,
-                    "running": running,
-                    "uptime_seconds": int(time.time() - info["started_at"]) if running else 0,
-                    "exit_code": proc.returncode if not running else None,
-                    "crash_count": info.get("crash_count", 0),
-                    "last_error": info.get("last_error"),
-                    "source_url": info.get("source_url", ""),
+                proc = p["process"]
+                alive = proc.poll() is None
+                active[name] = {
+                    "pid": proc.pid, "running": alive,
+                    "uptime_seconds": int(time.time() - p["started_at"]) if alive else 0,
+                    "exit_code": proc.returncode if not alive else None,
+                    "crashes": p.get("crashes", 0),
+                    "last_error": p.get("last_error"),
+                    "source": p.get("source", ""),
                 }
 
-        # Storage stats
-        total_bytes = self._get_total_storage_bytes()
-        disk = shutil.disk_usage(self.recordings_dir) if os.path.exists(self.recordings_dir) else None
+        tb = self._disk_usage()
+        disk = None
+        if os.path.exists(self.recordings_dir):
+            du = shutil.disk_usage(self.recordings_dir)
+            disk = {"total_gb": round(du.total / 1024**3, 2),
+                    "free_gb": round(du.free / 1024**3, 2),
+                    "percent_used": round(du.used / du.total * 100, 1)}
 
         return {
             "engine_running": self._running,
             "recording_mode": RECORDING_MODE,
-            "active_recordings": sum(1 for p in processes.values() if p["running"]),
-            "total_processes": len(processes),
-            "shelved_count": len(shelved_cameras),
-            "processes": processes,
-            "shelved": shelved_cameras,
-            "storage": {
-                "recordings_bytes": total_bytes,
-                "recordings_gb": round(total_bytes / (1024**3), 2),
-                "disk_total_gb": round(disk.total / (1024**3), 2) if disk else None,
-                "disk_free_gb": round(disk.free / (1024**3), 2) if disk else None,
-                "max_storage_gb": MAX_STORAGE_GB or None,
-            },
-            "config": {
-                "recording_mode": RECORDING_MODE,
-                "segment_minutes": SEGMENT_MINUTES,
-                "retention_days": RETENTION_DAYS,
-                "max_storage_gb": MAX_STORAGE_GB or None,
-                "poll_interval": POLL_INTERVAL,
-                "max_crash_before_shelve": MAX_CRASH_BEFORE_SHELVE,
-                "shelve_retry_minutes": SHELVE_RETRY_MINUTES,
-                "source": "go2rtc_relay" if GO2RTC_RTSP_URL else "direct_rtsp",
-            },
+            "active_recordings": sum(1 for v in active.values() if v["running"]),
+            "total_processes": len(active),
+            "shelved_count": len(shelved_list),
+            "processes": active,
+            "shelved": shelved_list,
+            "storage": {"recordings_gb": round(tb / 1024**3, 2),
+                        "max_storage_gb": MAX_STORAGE_GB or None, "disk": disk},
+            "config": {"mode": RECORDING_MODE, "segment_minutes": SEGMENT_MINUTES,
+                       "retention_days": RETENTION_DAYS,
+                       "source": "go2rtc_relay" if GO2RTC_RTSP_URL else "direct_rtsp",
+                       "stagger_seconds": STAGGER_DELAY,
+                       "shelve_after": MAX_CRASHES, "shelve_retry_min": SHELVE_RETRY_MIN},
         }
 
 
-# ── Module-level singleton ────────────────────────────────────────────────────
-# Initialized in create_app(), accessible everywhere via `from app.recorder import engine`
-
-engine: RecordingEngine | None = None
+engine = None

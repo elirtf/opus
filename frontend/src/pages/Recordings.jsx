@@ -1,1009 +1,927 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 
 // ── API helpers ──────────────────────────────────────────────────────────────
-
 const api = async (url, opts = {}) => {
-  const res = await fetch(url, { credentials: "include", ...opts });
+  const res = await fetch(url, {
+    headers: { "Content-Type": "application/json", ...opts.headers },
+    ...opts,
+  });
   const json = await res.json();
   if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
-  return json.data;
+  return json.data ?? json;
 };
 
-const formatBytes = (bytes) => {
+// ── Constants ────────────────────────────────────────────────────────────────
+const HOURS = Array.from({ length: 24 }, (_, i) => i);
+
+// ── Formatters ───────────────────────────────────────────────────────────────
+const fmtSize = (bytes) => {
   if (!bytes) return "0 B";
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(1) + " GB";
+  if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + " MB";
+  return (bytes / 1024).toFixed(0) + " KB";
 };
-
-const formatDuration = (seconds) => {
-  if (!seconds) return "--:--";
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = seconds % 60;
-  if (h > 0) return `${h}h ${m}m`;
-  return `${m}m ${s}s`;
+const fmtDur = (s) => {
+  if (!s) return "—";
+  const m = Math.floor(s / 60), sec = s % 60;
+  return `${m}:${String(sec).padStart(2, "0")}`;
 };
+const pad2 = (n) => String(n).padStart(2, "0");
+const toDateStr = (d) =>
+  `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 
-const formatTime = (timeStr) => {
-  if (!timeStr) return "";
-  const [h, m] = timeStr.split(":");
-  const hour = parseInt(h);
-  const ampm = hour >= 12 ? "PM" : "AM";
-  const h12 = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
-  return `${h12}:${m} ${ampm}`;
-};
-
-const todayISO = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-};
-
-const currentMonthISO = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-};
-
-
-// ── Icons (inline SVG to avoid external deps) ───────────────────────────────
-
-const Icon = ({ d, size = 18, className = "" }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
-    stroke="currentColor" strokeWidth="2" strokeLinecap="round"
-    strokeLinejoin="round" className={className}>
-    <path d={d} />
-  </svg>
-);
-
-const Icons = {
-  back: "M19 12H5M12 19l-7-7 7-7",
-  calendar: "M19 4H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V6a2 2 0 00-2-2zM16 2v4M8 2v4M3 10h18",
-  play: "M5 3l14 9-14 9V3z",
-  pause: "M6 4h4v16H6zM14 4h4v16h-4z",
-  download: "M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3",
-  chevLeft: "M15 18l-6-6 6-6",
-  chevRight: "M9 18l6-6-6-6",
-  alert: "M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z",
-  refresh: "M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15",
-  x: "M18 6L6 18M6 6l12 12",
-  server: "M2 2h20v8H2zM2 14h20v8H2zM6 6h.01M6 18h.01",
-};
-
-
-// ── Main Page Component ─────────────────────────────────────────────────────
-
+// ═══════════════════════════════════════════════════════════════════════════════
+// MAIN PAGE
+// ═══════════════════════════════════════════════════════════════════════════════
 export default function RecordingsPage() {
-  // State
+  const [tab, setTab] = useState("playback"); // playback | settings
   const [cameras, setCameras] = useState([]);
-  const [selectedCamera, setSelectedCamera] = useState(null);
-  const [selectedDate, setSelectedDate] = useState(todayISO());
-  const [currentMonth, setCurrentMonth] = useState(currentMonthISO());
-  const [availableDates, setAvailableDates] = useState([]);
+  const [selectedCam, setSelectedCam] = useState(null);
+  const [date, setDate] = useState(toDateStr(new Date()));
   const [timeline, setTimeline] = useState([]);
-  const [activeSegment, setActiveSegment] = useState(null);
+  const [segments, setSegments] = useState([]);
+  const [playing, setPlaying] = useState(null);
   const [engineStatus, setEngineStatus] = useState(null);
   const [storageStats, setStorageStats] = useState(null);
-  const [loading, setLoading] = useState({ cameras: true, timeline: false, dates: false });
-  const [error, setError] = useState(null);
-  const [showSidebar, setShowSidebar] = useState(true);
-  const [showEnginePanel, setShowEnginePanel] = useState(false);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [playerTime, setPlayerTime] = useState(0);
-  const [playerDuration, setPlayerDuration] = useState(0);
+  const [settings, setSettings] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState(null);
+  const [search, setSearch] = useState("");
   const videoRef = useRef(null);
 
-  // ── Load cameras ──────────────────────────────────────────────────────
-
-  useEffect(() => {
-    api("/api/cameras/")
-      .then((cams) => {
-        const mainCams = cams.filter(
-          (c) => c.active && (c.is_main || (!c.name.endsWith("-sub")))
-        );
-        setCameras(mainCams);
-        if (mainCams.length > 0 && !selectedCamera) {
-          setSelectedCamera(mainCams[0].name);
-        }
-        setLoading((p) => ({ ...p, cameras: false }));
-      })
-      .catch((e) => {
-        setError(`Failed to load cameras: ${e.message}`);
-        setLoading((p) => ({ ...p, cameras: false }));
-      });
+  const showToast = useCallback((msg, ok = true) => {
+    setToast({ msg, ok });
+    setTimeout(() => setToast(null), 3000);
   }, []);
 
-  // ── Load available dates when camera or month changes ─────────────────
-
+  // ── Load cameras ────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!selectedCamera) return;
-    setLoading((p) => ({ ...p, dates: true }));
-    api(`/api/recordings/dates?camera=${selectedCamera}&month=${currentMonth}`)
-      .then((data) => {
-        setAvailableDates(data.dates || []);
-        setLoading((p) => ({ ...p, dates: false }));
-      })
-      .catch(() => {
-        setAvailableDates([]);
-        setLoading((p) => ({ ...p, dates: false }));
-      });
-  }, [selectedCamera, currentMonth]);
-
-  // ── Load timeline when camera or date changes ─────────────────────────
-
-  useEffect(() => {
-    if (!selectedCamera || !selectedDate) return;
-    setLoading((p) => ({ ...p, timeline: true }));
-    setActiveSegment(null);
-
-    api(`/api/recordings/timeline?camera=${selectedCamera}&date=${selectedDate}`)
-      .then((data) => {
-        const segments = data.cameras?.[selectedCamera] || [];
-        setTimeline(segments);
-        setLoading((p) => ({ ...p, timeline: false }));
-      })
-      .catch(() => {
-        setTimeline([]);
-        setLoading((p) => ({ ...p, timeline: false }));
-      });
-  }, [selectedCamera, selectedDate]);
-
-  // ── Load engine status ────────────────────────────────────────────────
-
-  const loadEngineStatus = useCallback(() => {
-    Promise.all([
-      api("/api/recordings/engine/status").catch(() => null),
-      api("/api/recordings/storage").catch(() => null),
-    ]).then(([engine, storage]) => {
-      setEngineStatus(engine);
-      setStorageStats(storage);
-    });
+    api("/api/cameras/").then(setCameras).catch(() => {});
   }, []);
 
+  // ── Load engine status ──────────────────────────────────────────────────
   useEffect(() => {
-    loadEngineStatus();
-    const interval = setInterval(loadEngineStatus, 15000);
-    return () => clearInterval(interval);
-  }, [loadEngineStatus]);
-
-  // ── Video player handlers ─────────────────────────────────────────────
-
-  const playSegment = (segment) => {
-    setActiveSegment(segment);
-    setIsPlaying(true);
-  };
-
-  useEffect(() => {
-    if (!activeSegment || !videoRef.current) return;
-    const url = `/api/recordings/${selectedCamera}/${activeSegment.filename}`;
-    videoRef.current.src = url;
-    videoRef.current.load();
-    videoRef.current.play().catch(() => {});
-  }, [activeSegment, selectedCamera]);
-
-  const handleTimeUpdate = () => {
-    if (videoRef.current) {
-      setPlayerTime(videoRef.current.currentTime);
-      setPlayerDuration(videoRef.current.duration || 0);
-    }
-  };
-
-  const handleVideoEnd = () => {
-    if (!activeSegment) return;
-    const idx = timeline.findIndex((s) => s.filename === activeSegment.filename);
-    if (idx >= 0 && idx < timeline.length - 1) {
-      playSegment(timeline[idx + 1]);
-    } else {
-      setIsPlaying(false);
-    }
-  };
-
-  const togglePlayPause = () => {
-    if (!videoRef.current) return;
-    if (videoRef.current.paused) {
-      videoRef.current.play();
-      setIsPlaying(true);
-    } else {
-      videoRef.current.pause();
-      setIsPlaying(false);
-    }
-  };
-
-  const seekTo = (e) => {
-    if (!videoRef.current || !playerDuration) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const pct = (e.clientX - rect.left) / rect.width;
-    videoRef.current.currentTime = pct * playerDuration;
-  };
-
-  const downloadSegment = (segment) => {
-    const a = document.createElement("a");
-    a.href = `/api/recordings/${selectedCamera}/${segment.filename}`;
-    a.download = `${selectedCamera}_${segment.filename}`;
-    a.click();
-  };
-
-  // ── Calendar helpers ──────────────────────────────────────────────────
-
-  const [calYear, calMonth] = currentMonth.split("-").map(Number);
-
-  const prevMonth = () => {
-    const d = new Date(calYear, calMonth - 2, 1);
-    setCurrentMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
-  };
-
-  const nextMonth = () => {
-    const d = new Date(calYear, calMonth, 1);
-    setCurrentMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
-  };
-
-  const daysInMonth = new Date(calYear, calMonth, 0).getDate();
-  const firstDow = new Date(calYear, calMonth - 1, 1).getDay();
-  const calendarDays = [];
-  for (let i = 0; i < firstDow; i++) calendarDays.push(null);
-  for (let d = 1; d <= daysInMonth; d++) calendarDays.push(d);
-
-  const monthName = new Date(calYear, calMonth - 1).toLocaleString("default", { month: "long" });
-
-  // ── Timeline visualization ────────────────────────────────────────────
-
-  const hours = Array.from({ length: 24 }, (_, i) => i);
-
-  const getSegmentPosition = (segment) => {
-    if (!segment.start) return null;
-    const [h, m, s] = segment.start.split(":").map(Number);
-    const startMin = h * 60 + m + s / 60;
-    let durationMin = (segment.duration || 900) / 60;
-    return {
-      left: `${(startMin / 1440) * 100}%`,
-      width: `${Math.max((durationMin / 1440) * 100, 0.3)}%`,
+    const load = () => {
+      api("/api/recordings/engine/status").then(setEngineStatus).catch(() => {});
+      api("/api/recordings/storage").then(setStorageStats).catch(() => {});
     };
+    load();
+    const iv = setInterval(load, 15000);
+    return () => clearInterval(iv);
+  }, []);
+
+  // ── Load timeline when camera/date changes ─────────────────────────────
+  useEffect(() => {
+    if (!selectedCam) { setTimeline([]); setSegments([]); return; }
+    api(`/api/recordings/timeline?camera=${encodeURIComponent(selectedCam)}&date=${date}`)
+      .then((d) => {
+        const segs = d.cameras?.[selectedCam] || [];
+        setTimeline(segs);
+        setSegments(segs);
+      })
+      .catch(() => { setTimeline([]); setSegments([]); });
+  }, [selectedCam, date]);
+
+  // ── Load settings ───────────────────────────────────────────────────────
+  useEffect(() => {
+    if (tab === "settings") {
+      api("/api/recordings/settings/").then(setSettings).catch(() => {});
+    }
+  }, [tab]);
+
+  // ── Toggle recording on a camera ───────────────────────────────────────
+  const toggleRecording = async (cam) => {
+    try {
+      await api(`/api/cameras/${cam.id}/recording`, {
+        method: "POST",
+        body: JSON.stringify({ enabled: !cam.recording_enabled }),
+      });
+      setCameras((prev) =>
+        prev.map((c) =>
+          c.id === cam.id ? { ...c, recording_enabled: !c.recording_enabled } : c
+        )
+      );
+      showToast(`Recording ${!cam.recording_enabled ? "enabled" : "disabled"} for ${cam.display_name}`);
+    } catch (e) {
+      showToast(e.message, false);
+    }
   };
 
+  // ── Save settings ──────────────────────────────────────────────────────
+  const saveSettings = async () => {
+    setSaving(true);
+    try {
+      await api("/api/recordings/settings/", {
+        method: "PUT",
+        body: JSON.stringify(settings),
+      });
+      showToast("Settings saved");
+    } catch (e) {
+      showToast(e.message, false);
+    }
+    setSaving(false);
+  };
 
-  // ── Render ────────────────────────────────────────────────────────────
+  // ── Restart engine ─────────────────────────────────────────────────────
+  const restartEngine = async () => {
+    try {
+      await api("/api/recordings/settings/engine/restart", { method: "POST" });
+      showToast("Engine restarting...");
+    } catch (e) {
+      showToast(e.message, false);
+    }
+  };
+
+  // ── Play a segment ─────────────────────────────────────────────────────
+  const playSeg = (seg) => {
+    const url = `/api/recordings/${encodeURIComponent(selectedCam)}/${seg.filename}`;
+    setPlaying({ ...seg, url });
+    if (videoRef.current) {
+      videoRef.current.src = url;
+      videoRef.current.play().catch(() => {});
+    }
+  };
+
+  // ── Auto-advance to next segment ──────────────────────────────────────
+  const onVideoEnded = () => {
+    if (!playing || !segments.length) return;
+    const idx = segments.findIndex((s) => s.filename === playing.filename);
+    if (idx >= 0 && idx < segments.length - 1) {
+      playSeg(segments[idx + 1]);
+    }
+  };
+
+  // ── Filter cameras ─────────────────────────────────────────────────────
+  const filtered = cameras.filter(
+    (c) =>
+      c.active &&
+      (c.display_name.toLowerCase().includes(search.toLowerCase()) ||
+        c.name.toLowerCase().includes(search.toLowerCase()))
+  );
+  const recordingCams = filtered.filter((c) => c.recording_enabled);
+  const availableCams = filtered.filter((c) => !c.recording_enabled);
+
+  // ── Date navigation ────────────────────────────────────────────────────
+  const shiftDate = (days) => {
+    const d = new Date(date + "T00:00:00");
+    d.setDate(d.getDate() + days);
+    setDate(toDateStr(d));
+  };
 
   return (
-    <div style={{
-      minHeight: "100vh",
-      backgroundColor: "#0a0e17",
-      color: "#c8cdd8",
-      fontFamily: "'JetBrains Mono', 'SF Mono', 'Fira Code', 'Cascadia Code', monospace",
-      display: "flex",
-      flexDirection: "column",
-    }}>
-
-      {/* ── Top Bar ─────────────────────────────────────────────────────── */}
-      <header style={{
-        height: 52,
-        backgroundColor: "#0d1220",
-        borderBottom: "1px solid #1a2236",
-        display: "flex",
-        alignItems: "center",
-        padding: "0 16px",
-        gap: 12,
-        flexShrink: 0,
-        zIndex: 20,
-      }}>
-        <a href="/" style={{
-          color: "#64748b",
-          textDecoration: "none",
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-          fontSize: 13,
-          transition: "color 0.15s",
-        }}
-          onMouseEnter={(e) => e.currentTarget.style.color = "#94a3b8"}
-          onMouseLeave={(e) => e.currentTarget.style.color = "#64748b"}
-        >
-          <Icon d={Icons.back} size={16} />
-          <span>Live View</span>
-        </a>
-
-        <div style={{ width: 1, height: 24, backgroundColor: "#1a2236" }} />
-
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <div style={{
-            width: 8, height: 8, borderRadius: "50%",
-            backgroundColor: engineStatus?.engine_running ? "#22c55e" : "#ef4444",
-            boxShadow: engineStatus?.engine_running
-              ? "0 0 8px rgba(34,197,94,0.5)"
-              : "0 0 8px rgba(239,68,68,0.5)",
-          }} />
-          <span style={{ fontSize: 14, fontWeight: 600, color: "#e2e8f0", letterSpacing: "0.02em" }}>
-            RECORDINGS
-          </span>
+    <div style={S.page}>
+      {/* ── Toast ── */}
+      {toast && (
+        <div style={{ ...S.toast, background: toast.ok ? "#059669" : "#dc2626" }}>
+          {toast.msg}
         </div>
+      )}
 
-        <div style={{ flex: 1 }} />
-
-        {engineStatus && (
-          <button
-            onClick={() => setShowEnginePanel(!showEnginePanel)}
-            style={{
-              display: "flex", alignItems: "center", gap: 6,
-              padding: "4px 10px",
-              backgroundColor: showEnginePanel ? "#1e293b" : "transparent",
-              border: "1px solid #1a2236", borderRadius: 6,
-              color: "#94a3b8", fontSize: 11, cursor: "pointer",
-              transition: "all 0.15s",
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = "#1e293b";
-              e.currentTarget.style.borderColor = "#2d3a52";
-            }}
-            onMouseLeave={(e) => {
-              if (!showEnginePanel) {
-                e.currentTarget.style.backgroundColor = "transparent";
-                e.currentTarget.style.borderColor = "#1a2236";
-              }
-            }}
-          >
-            <Icon d={Icons.server} size={13} />
-            <span>{engineStatus.active_recordings} recording</span>
-            {storageStats && (
-              <span style={{ color: "#64748b" }}>· {storageStats.total_gb} GB</span>
-            )}
-          </button>
-        )}
-      </header>
-
-      <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-
-        {/* ── Sidebar ───────────────────────────────────────────────────── */}
-        <aside style={{
-          width: showSidebar ? 280 : 0,
-          backgroundColor: "#0d1220",
-          borderRight: showSidebar ? "1px solid #1a2236" : "none",
-          overflow: "hidden",
-          transition: "width 0.2s ease",
-          flexShrink: 0,
-          display: "flex",
-          flexDirection: "column",
-        }}>
-          <div style={{ padding: 16, overflowY: "auto", flex: 1 }}>
-
-            {/* Camera selector */}
-            <div style={{ marginBottom: 20 }}>
-              <label style={{
-                fontSize: 10, fontWeight: 700, letterSpacing: "0.08em",
-                color: "#64748b", textTransform: "uppercase",
-                display: "block", marginBottom: 8,
-              }}>Camera</label>
-              <div style={{
-                display: "flex", flexDirection: "column", gap: 2,
-                maxHeight: 200, overflowY: "auto",
-              }}>
-                {loading.cameras ? (
-                  <div style={{ color: "#475569", fontSize: 12, padding: 8 }}>Loading cameras...</div>
-                ) : cameras.length === 0 ? (
-                  <div style={{ color: "#475569", fontSize: 12, padding: 8 }}>No cameras found</div>
-                ) : cameras.map((cam) => {
-                  const isSelected = cam.name === selectedCamera;
-                  const isRecording = engineStatus?.processes?.[cam.name]?.running;
-                  return (
-                    <button
-                      key={cam.id}
-                      onClick={() => setSelectedCamera(cam.name)}
-                      style={{
-                        display: "flex", alignItems: "center", gap: 8,
-                        padding: "8px 10px",
-                        backgroundColor: isSelected ? "#1e293b" : "transparent",
-                        border: "none", borderRadius: 6,
-                        color: isSelected ? "#e2e8f0" : "#94a3b8",
-                        fontSize: 12, cursor: "pointer", textAlign: "left",
-                        transition: "all 0.1s",
-                        borderLeft: isSelected ? "2px solid #3b82f6" : "2px solid transparent",
-                      }}
-                      onMouseEnter={(e) => {
-                        if (!isSelected) e.currentTarget.style.backgroundColor = "#111827";
-                      }}
-                      onMouseLeave={(e) => {
-                        if (!isSelected) e.currentTarget.style.backgroundColor = "transparent";
-                      }}
-                    >
-                      {isRecording && (
-                        <div style={{
-                          width: 6, height: 6, borderRadius: "50%",
-                          backgroundColor: "#ef4444", flexShrink: 0,
-                          animation: "pulse 2s ease-in-out infinite",
-                        }} />
-                      )}
-                      <span style={{
-                        overflow: "hidden", textOverflow: "ellipsis",
-                        whiteSpace: "nowrap", flex: 1,
-                      }}>{cam.display_name}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Calendar */}
-            <div>
-              <label style={{
-                fontSize: 10, fontWeight: 700, letterSpacing: "0.08em",
-                color: "#64748b", textTransform: "uppercase",
-                display: "block", marginBottom: 8,
-              }}>Date</label>
-
-              <div style={{
-                display: "flex", alignItems: "center",
-                justifyContent: "space-between", marginBottom: 8,
-              }}>
-                <button onClick={prevMonth} style={{
-                  background: "none", border: "none", color: "#64748b",
-                  cursor: "pointer", padding: 4, borderRadius: 4,
-                  display: "flex", alignItems: "center",
-                }}><Icon d={Icons.chevLeft} size={16} /></button>
-                <span style={{ fontSize: 12, color: "#94a3b8", fontWeight: 600 }}>
-                  {monthName} {calYear}
-                </span>
-                <button onClick={nextMonth} style={{
-                  background: "none", border: "none", color: "#64748b",
-                  cursor: "pointer", padding: 4, borderRadius: 4,
-                  display: "flex", alignItems: "center",
-                }}><Icon d={Icons.chevRight} size={16} /></button>
-              </div>
-
-              <div style={{
-                display: "grid", gridTemplateColumns: "repeat(7, 1fr)",
-                gap: 1, marginBottom: 4,
-              }}>
-                {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((d) => (
-                  <div key={d} style={{
-                    textAlign: "center", fontSize: 9, color: "#475569",
-                    fontWeight: 600, padding: "4px 0",
-                    textTransform: "uppercase", letterSpacing: "0.05em",
-                  }}>{d}</div>
-                ))}
-              </div>
-
-              <div style={{
-                display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 1,
-              }}>
-                {calendarDays.map((day, i) => {
-                  if (day === null) return <div key={`empty-${i}`} />;
-                  const dateStr = `${calYear}-${String(calMonth).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-                  const hasRecording = availableDates.includes(dateStr);
-                  const isSelected = dateStr === selectedDate;
-                  const isToday = dateStr === todayISO();
-                  return (
-                    <button
-                      key={day}
-                      onClick={() => hasRecording && setSelectedDate(dateStr)}
-                      disabled={!hasRecording}
-                      style={{
-                        width: "100%", aspectRatio: "1",
-                        display: "flex", flexDirection: "column",
-                        alignItems: "center", justifyContent: "center",
-                        gap: 2, fontSize: 11,
-                        fontWeight: isSelected ? 700 : 400,
-                        borderRadius: 6,
-                        border: isToday ? "1px solid #1e3a5f" : "1px solid transparent",
-                        backgroundColor: isSelected ? "#1e40af" : "transparent",
-                        color: isSelected ? "#fff" : hasRecording ? "#e2e8f0" : "#2d3748",
-                        cursor: hasRecording ? "pointer" : "default",
-                        transition: "all 0.1s",
-                        position: "relative",
-                      }}
-                      onMouseEnter={(e) => {
-                        if (hasRecording && !isSelected) e.currentTarget.style.backgroundColor = "#1e293b";
-                      }}
-                      onMouseLeave={(e) => {
-                        if (hasRecording && !isSelected) e.currentTarget.style.backgroundColor = "transparent";
-                      }}
-                    >
-                      {day}
-                      {hasRecording && !isSelected && (
-                        <div style={{
-                          width: 4, height: 4, borderRadius: "50%",
-                          backgroundColor: "#3b82f6",
-                          position: "absolute", bottom: 3,
-                        }} />
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Storage stats */}
-            {storageStats && (
-              <div style={{
-                marginTop: 20, padding: 12,
-                backgroundColor: "#111827", borderRadius: 8,
-                border: "1px solid #1a2236",
-              }}>
-                <div style={{
-                  fontSize: 10, fontWeight: 700, letterSpacing: "0.08em",
-                  color: "#64748b", textTransform: "uppercase", marginBottom: 8,
-                }}>Storage</div>
-                <div style={{ fontSize: 20, fontWeight: 700, color: "#e2e8f0", marginBottom: 4 }}>
-                  {storageStats.total_gb} <span style={{ fontSize: 12, color: "#64748b" }}>GB</span>
-                </div>
-                <div style={{ fontSize: 11, color: "#64748b" }}>
-                  {storageStats.total_segments} segments · {storageStats.cameras?.length || 0} cameras
-                </div>
-                {storageStats.disk && (
-                  <>
-                    <div style={{
-                      marginTop: 8, height: 4,
-                      backgroundColor: "#1e293b", borderRadius: 2, overflow: "hidden",
-                    }}>
-                      <div style={{
-                        height: "100%",
-                        width: `${storageStats.disk.percent_used}%`,
-                        backgroundColor: storageStats.disk.percent_used > 90 ? "#ef4444" :
-                          storageStats.disk.percent_used > 70 ? "#f59e0b" : "#3b82f6",
-                        borderRadius: 2, transition: "width 0.3s ease",
-                      }} />
-                    </div>
-                    <div style={{ fontSize: 10, color: "#475569", marginTop: 4 }}>
-                      {storageStats.disk.free_gb} GB free of {storageStats.disk.total_gb} GB
-                    </div>
-                  </>
-                )}
-              </div>
-            )}
-          </div>
-        </aside>
-
-        {/* ── Main content ──────────────────────────────────────────────── */}
-        <main style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-
-          {/* Sidebar toggle */}
-          <button
-            onClick={() => setShowSidebar(!showSidebar)}
-            style={{
-              position: "absolute",
-              left: showSidebar ? 280 : 0, top: 64, zIndex: 10,
-              width: 20, height: 40,
-              backgroundColor: "#1e293b",
-              border: "1px solid #2d3a52", borderLeft: "none",
-              borderRadius: "0 6px 6px 0",
-              color: "#64748b", cursor: "pointer",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              transition: "left 0.2s ease",
-            }}
-          >
-            <Icon d={showSidebar ? Icons.chevLeft : Icons.chevRight} size={14} />
-          </button>
-
-          {/* Error banner */}
-          {error && (
-            <div style={{
-              padding: "10px 16px",
-              backgroundColor: "#1c1017",
-              borderBottom: "1px solid #3b1520",
-              color: "#fca5a5", fontSize: 12,
-              display: "flex", alignItems: "center", gap: 8,
+      {/* ── Header ── */}
+      <div style={S.header}>
+        <div style={S.headerLeft}>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#f43f5e" strokeWidth="2">
+            <circle cx="12" cy="12" r="10" />
+            <circle cx="12" cy="12" r="3" fill="#f43f5e" />
+          </svg>
+          <h1 style={S.title}>Recordings</h1>
+          {engineStatus && (
+            <span style={{
+              ...S.badge,
+              background: engineStatus.engine_running ? "rgba(16,185,129,0.15)" : "rgba(239,68,68,0.15)",
+              color: engineStatus.engine_running ? "#10b981" : "#ef4444",
             }}>
-              <Icon d={Icons.alert} size={14} />
-              <span>{error}</span>
-              <button onClick={() => setError(null)} style={{
-                marginLeft: "auto", background: "none",
-                border: "none", color: "#fca5a5", cursor: "pointer",
-              }}><Icon d={Icons.x} size={14} /></button>
-            </div>
+              {engineStatus.active_recordings || 0} recording
+            </span>
           )}
-
-          {/* Video player area */}
-          <div style={{
-            flex: 1, display: "flex", flexDirection: "column",
-            alignItems: "center", justifyContent: "center",
-            backgroundColor: "#000", position: "relative", minHeight: 0,
-          }}>
-            {activeSegment ? (
-              <>
-                <video
-                  ref={videoRef}
-                  onTimeUpdate={handleTimeUpdate}
-                  onEnded={handleVideoEnd}
-                  onPlay={() => setIsPlaying(true)}
-                  onPause={() => setIsPlaying(false)}
-                  onClick={togglePlayPause}
-                  style={{
-                    maxWidth: "100%", maxHeight: "100%",
-                    objectFit: "contain", cursor: "pointer",
-                  }}
-                />
-
-                {/* Top-left info overlay */}
-                <div style={{
-                  position: "absolute", top: 12, left: 16,
-                  display: "flex", alignItems: "center", gap: 8,
-                  padding: "4px 10px",
-                  backgroundColor: "rgba(0,0,0,0.7)",
-                  borderRadius: 6, backdropFilter: "blur(8px)",
-                }}>
-                  <div style={{
-                    width: 6, height: 6, borderRadius: "50%",
-                    backgroundColor: "#3b82f6",
-                  }} />
-                  <span style={{ fontSize: 11, color: "#e2e8f0" }}>{selectedCamera}</span>
-                  <span style={{ fontSize: 11, color: "#64748b" }}>
-                    {selectedDate} · {activeSegment.start}
-                  </span>
-                </div>
-
-                {/* Download button */}
-                <button
-                  onClick={() => downloadSegment(activeSegment)}
-                  style={{
-                    position: "absolute", top: 12, right: 16,
-                    padding: "6px 12px",
-                    backgroundColor: "rgba(0,0,0,0.7)",
-                    border: "1px solid rgba(255,255,255,0.1)",
-                    borderRadius: 6, color: "#94a3b8", fontSize: 11,
-                    cursor: "pointer", display: "flex", alignItems: "center", gap: 6,
-                    backdropFilter: "blur(8px)", transition: "all 0.15s",
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.color = "#e2e8f0";
-                    e.currentTarget.style.borderColor = "rgba(255,255,255,0.2)";
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.color = "#94a3b8";
-                    e.currentTarget.style.borderColor = "rgba(255,255,255,0.1)";
-                  }}
-                >
-                  <Icon d={Icons.download} size={13} />
-                  Download
-                </button>
-
-                {/* Progress bar */}
-                <div style={{
-                  position: "absolute", bottom: 0, left: 0, right: 0,
-                  padding: "8px 16px",
-                  background: "linear-gradient(transparent, rgba(0,0,0,0.8))",
-                }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    <button onClick={togglePlayPause} style={{
-                      background: "none", border: "none", color: "#e2e8f0",
-                      cursor: "pointer", padding: 4, display: "flex",
-                    }}>
-                      <Icon d={isPlaying ? Icons.pause : Icons.play} size={18} />
-                    </button>
-
-                    <div
-                      onClick={seekTo}
-                      style={{
-                        flex: 1, height: 6,
-                        backgroundColor: "rgba(255,255,255,0.15)",
-                        borderRadius: 3, cursor: "pointer",
-                        position: "relative", overflow: "hidden",
-                      }}
-                    >
-                      <div style={{
-                        height: "100%",
-                        width: playerDuration ? `${(playerTime / playerDuration) * 100}%` : "0%",
-                        backgroundColor: "#3b82f6",
-                        borderRadius: 3, transition: "width 0.1s linear",
-                      }} />
-                    </div>
-
-                    <span style={{ fontSize: 11, color: "#94a3b8", minWidth: 80, textAlign: "right" }}>
-                      {Math.floor(playerTime / 60)}:{String(Math.floor(playerTime % 60)).padStart(2, "0")}
-                      {" / "}
-                      {Math.floor(playerDuration / 60)}:{String(Math.floor(playerDuration % 60)).padStart(2, "0")}
-                    </span>
-                  </div>
-                </div>
-              </>
-            ) : (
-              <div style={{
-                display: "flex", flexDirection: "column",
-                alignItems: "center", gap: 12, color: "#334155",
-              }}>
-                <Icon d={Icons.play} size={48} />
-                <span style={{ fontSize: 13 }}>
-                  {loading.timeline
-                    ? "Loading recordings..."
-                    : timeline.length > 0
-                      ? "Select a segment below to start playback"
-                      : selectedCamera
-                        ? "No recordings found for this date"
-                        : "Select a camera to get started"
-                  }
-                </span>
-              </div>
-            )}
-          </div>
-
-          {/* ── Timeline bar ──────────────────────────────────────────────── */}
-          <div style={{
-            backgroundColor: "#0d1220",
-            borderTop: "1px solid #1a2236",
-            flexShrink: 0,
-          }}>
-            {/* 24-hour visual timeline */}
-            <div style={{ padding: "12px 16px 4px" }}>
-              <div style={{ position: "relative", height: 32, marginBottom: 4 }}>
-                {/* Hour grid lines */}
-                {hours.map((h) => (
-                  <div key={h} style={{
-                    position: "absolute",
-                    left: `${(h / 24) * 100}%`, top: 0, bottom: 0, width: 1,
-                    backgroundColor: h % 6 === 0 ? "#1e293b" : "#141c2e",
-                  }} />
-                ))}
-
-                {/* Recording segments on the timeline */}
-                {timeline.map((seg, i) => {
-                  const pos = getSegmentPosition(seg);
-                  if (!pos) return null;
-                  const isActive = activeSegment?.filename === seg.filename;
-                  return (
-                    <button
-                      key={i}
-                      onClick={() => playSegment(seg)}
-                      title={`${formatTime(seg.start)} — ${formatDuration(seg.duration)}`}
-                      style={{
-                        position: "absolute", top: 4, bottom: 4,
-                        left: pos.left, width: pos.width, minWidth: 4,
-                        backgroundColor: isActive ? "#3b82f6" : "#1e40af",
-                        borderRadius: 3,
-                        border: isActive ? "1px solid #60a5fa" : "1px solid transparent",
-                        cursor: "pointer",
-                        transition: "background-color 0.15s, border-color 0.15s",
-                        zIndex: 1,
-                      }}
-                      onMouseEnter={(e) => {
-                        if (!isActive) e.currentTarget.style.backgroundColor = "#2563eb";
-                      }}
-                      onMouseLeave={(e) => {
-                        if (!isActive) e.currentTarget.style.backgroundColor = "#1e40af";
-                      }}
-                    />
-                  );
-                })}
-
-                {/* "Now" marker for today */}
-                {selectedDate === todayISO() && (() => {
-                  const now = new Date();
-                  const pct = ((now.getHours() * 60 + now.getMinutes()) / 1440) * 100;
-                  return (
-                    <div style={{
-                      position: "absolute",
-                      left: `${pct}%`, top: 0, bottom: -4,
-                      width: 2, backgroundColor: "#ef4444",
-                      zIndex: 2, borderRadius: 1,
-                    }}>
-                      <div style={{
-                        position: "absolute", top: -3, left: -3,
-                        width: 8, height: 8, borderRadius: "50%",
-                        backgroundColor: "#ef4444",
-                      }} />
-                    </div>
-                  );
-                })()}
-              </div>
-
-              {/* Hour labels */}
-              <div style={{ position: "relative", height: 16 }}>
-                {hours.filter((h) => h % 3 === 0).map((h) => (
-                  <span key={h} style={{
-                    position: "absolute",
-                    left: `${(h / 24) * 100}%`,
-                    transform: "translateX(-50%)",
-                    fontSize: 9, color: "#475569", fontWeight: 500,
-                  }}>
-                    {h === 0 ? "12a" : h < 12 ? `${h}a` : h === 12 ? "12p" : `${h - 12}p`}
-                  </span>
-                ))}
-              </div>
-            </div>
-
-            {/* Segment pill list */}
-            {timeline.length > 0 && (
-              <div style={{
-                display: "flex", gap: 4,
-                padding: "4px 16px 12px",
-                overflowX: "auto",
-              }}>
-                {timeline.map((seg, i) => {
-                  const isActive = activeSegment?.filename === seg.filename;
-                  return (
-                    <button
-                      key={i}
-                      onClick={() => playSegment(seg)}
-                      style={{
-                        display: "flex", alignItems: "center", gap: 6,
-                        padding: "6px 10px",
-                        backgroundColor: isActive ? "#1e3a5f" : "#111827",
-                        border: isActive ? "1px solid #2563eb" : "1px solid #1a2236",
-                        borderRadius: 6,
-                        color: isActive ? "#93c5fd" : "#94a3b8",
-                        fontSize: 11, cursor: "pointer",
-                        whiteSpace: "nowrap", flexShrink: 0,
-                        transition: "all 0.1s",
-                      }}
-                      onMouseEnter={(e) => {
-                        if (!isActive) {
-                          e.currentTarget.style.backgroundColor = "#1e293b";
-                          e.currentTarget.style.borderColor = "#2d3a52";
-                        }
-                      }}
-                      onMouseLeave={(e) => {
-                        if (!isActive) {
-                          e.currentTarget.style.backgroundColor = "#111827";
-                          e.currentTarget.style.borderColor = "#1a2236";
-                        }
-                      }}
-                    >
-                      <Icon d={isActive && isPlaying ? Icons.pause : Icons.play} size={12} />
-                      <span>{formatTime(seg.start)}</span>
-                      <span style={{ color: "#475569" }}>{formatDuration(seg.duration)}</span>
-                      <span style={{ color: "#334155" }}>{seg.size_mb}MB</span>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </main>
-
-        {/* ── Engine status panel ────────────────────────────────────────── */}
-        {showEnginePanel && engineStatus && (
-          <aside style={{
-            width: 320,
-            backgroundColor: "#0d1220",
-            borderLeft: "1px solid #1a2236",
-            overflowY: "auto", flexShrink: 0,
-          }}>
-            <div style={{ padding: 16 }}>
-              <div style={{
-                display: "flex", alignItems: "center",
-                justifyContent: "space-between", marginBottom: 16,
-              }}>
-                <span style={{
-                  fontSize: 12, fontWeight: 700, color: "#e2e8f0",
-                  letterSpacing: "0.02em",
-                }}>ENGINE STATUS</span>
-                <button onClick={() => setShowEnginePanel(false)} style={{
-                  background: "none", border: "none", color: "#64748b",
-                  cursor: "pointer", display: "flex",
-                }}><Icon d={Icons.x} size={16} /></button>
-              </div>
-
-              {/* Config card */}
-              <div style={{
-                padding: 12, backgroundColor: "#111827",
-                borderRadius: 8, border: "1px solid #1a2236", marginBottom: 12,
-              }}>
-                <div style={{
-                  fontSize: 10, fontWeight: 700, letterSpacing: "0.08em",
-                  color: "#64748b", textTransform: "uppercase", marginBottom: 8,
-                }}>Config</div>
-                {[
-                  ["Segment length", `${engineStatus.config?.segment_minutes} min`],
-                  ["Retention", `${engineStatus.config?.retention_days} days`],
-                  ["Storage cap", engineStatus.config?.max_storage_gb ? `${engineStatus.config.max_storage_gb} GB` : "Unlimited"],
-                  ["Source", engineStatus.config?.source === "go2rtc_relay" ? "go2rtc relay" : "Direct RTSP"],
-                ].map(([label, value]) => (
-                  <div key={label} style={{
-                    display: "flex", justifyContent: "space-between",
-                    fontSize: 11, padding: "3px 0",
-                    borderBottom: "1px solid #141c2e",
-                  }}>
-                    <span style={{ color: "#64748b" }}>{label}</span>
-                    <span style={{ color: "#94a3b8" }}>{value}</span>
-                  </div>
-                ))}
-              </div>
-
-              {/* Processes card */}
-              <div style={{
-                padding: 12, backgroundColor: "#111827",
-                borderRadius: 8, border: "1px solid #1a2236", marginBottom: 12,
-              }}>
-                <div style={{
-                  fontSize: 10, fontWeight: 700, letterSpacing: "0.08em",
-                  color: "#64748b", textTransform: "uppercase", marginBottom: 8,
-                }}>
-                  Processes ({engineStatus.active_recordings}/{engineStatus.total_processes})
-                </div>
-                {Object.entries(engineStatus.processes || {}).length === 0 ? (
-                  <div style={{ fontSize: 11, color: "#475569" }}>No active recordings</div>
-                ) : Object.entries(engineStatus.processes || {}).map(([name, proc]) => (
-                  <div key={name} style={{
-                    display: "flex", alignItems: "center", gap: 8,
-                    padding: "6px 0", borderBottom: "1px solid #141c2e",
-                  }}>
-                    <div style={{
-                      width: 6, height: 6, borderRadius: "50%",
-                      backgroundColor: proc.running ? "#22c55e" : "#ef4444",
-                      flexShrink: 0,
-                    }} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{
-                        fontSize: 11, color: "#e2e8f0",
-                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                      }}>{name}</div>
-                      <div style={{ fontSize: 10, color: "#475569" }}>
-                        PID {proc.pid}
-                        {proc.running && ` · ${formatDuration(proc.uptime_seconds)}`}
-                        {!proc.running && ` · exit ${proc.exit_code}`}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Storage breakdown */}
-              {storageStats?.cameras && (
-                <div style={{
-                  padding: 12, backgroundColor: "#111827",
-                  borderRadius: 8, border: "1px solid #1a2236",
-                }}>
-                  <div style={{
-                    fontSize: 10, fontWeight: 700, letterSpacing: "0.08em",
-                    color: "#64748b", textTransform: "uppercase", marginBottom: 8,
-                  }}>Storage by Camera</div>
-                  {storageStats.cameras.map((cam) => (
-                    <div key={cam.camera_name} style={{
-                      display: "flex", justifyContent: "space-between",
-                      alignItems: "center", padding: "5px 0",
-                      borderBottom: "1px solid #141c2e",
-                    }}>
-                      <div style={{ minWidth: 0, flex: 1 }}>
-                        <div style={{
-                          fontSize: 11, color: "#94a3b8",
-                          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                        }}>{cam.camera_name}</div>
-                        <div style={{ fontSize: 10, color: "#475569" }}>
-                          {cam.segment_count} segments
-                        </div>
-                      </div>
-                      <span style={{ fontSize: 11, color: "#e2e8f0", fontWeight: 600, flexShrink: 0 }}>
-                        {cam.total_gb} GB
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <button
-                onClick={loadEngineStatus}
-                style={{
-                  width: "100%", marginTop: 12, padding: "8px 0",
-                  backgroundColor: "#111827",
-                  border: "1px solid #1a2236", borderRadius: 6,
-                  color: "#64748b", fontSize: 11, cursor: "pointer",
-                  display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-                  transition: "all 0.15s",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.borderColor = "#2d3a52";
-                  e.currentTarget.style.color = "#94a3b8";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.borderColor = "#1a2236";
-                  e.currentTarget.style.color = "#64748b";
-                }}
-              >
-                <Icon d={Icons.refresh} size={13} />
-                Refresh
-              </button>
-            </div>
-          </aside>
-        )}
+        </div>
+        <div style={S.tabs}>
+          {["playback", "settings"].map((t) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              style={{
+                ...S.tab,
+                ...(tab === t ? S.tabActive : {}),
+              }}
+            >
+              {t === "playback" ? "Playback" : "Settings"}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {/* Global styles */}
-      <style>{`
-        @keyframes pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.3; }
-        }
-        ::-webkit-scrollbar { width: 6px; height: 6px; }
-        ::-webkit-scrollbar-track { background: #0a0e17; }
-        ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 3px; }
-        ::-webkit-scrollbar-thumb:hover { background: #2d3a52; }
-        * { box-sizing: border-box; }
-      `}</style>
+      {tab === "playback" ? (
+        <div style={S.body}>
+          {/* ── Sidebar ── */}
+          <div style={S.sidebar}>
+            <input
+              style={S.search}
+              placeholder="Search cameras..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+
+            {recordingCams.length > 0 && (
+              <>
+                <div style={S.sideLabel}>Recording ({recordingCams.length})</div>
+                {recordingCams.map((c) => (
+                  <CamItem
+                    key={c.id}
+                    cam={c}
+                    selected={selectedCam === c.name}
+                    onSelect={() => setSelectedCam(c.name)}
+                    engineStatus={engineStatus}
+                  />
+                ))}
+              </>
+            )}
+
+            {availableCams.length > 0 && (
+              <>
+                <div style={{ ...S.sideLabel, marginTop: 16 }}>
+                  Not Recording ({availableCams.length})
+                </div>
+                {availableCams.slice(0, 10).map((c) => (
+                  <CamItem
+                    key={c.id}
+                    cam={c}
+                    selected={selectedCam === c.name}
+                    onSelect={() => setSelectedCam(c.name)}
+                    engineStatus={engineStatus}
+                  />
+                ))}
+                {availableCams.length > 10 && (
+                  <div style={S.moreLabel}>+{availableCams.length - 10} more</div>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* ── Main content ── */}
+          <div style={S.main}>
+            {!selectedCam ? (
+              <div style={S.empty}>
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#475569" strokeWidth="1.5">
+                  <rect x="2" y="4" width="20" height="16" rx="2" />
+                  <path d="M7 15l3-3 2 2 4-4 4 4" />
+                </svg>
+                <p style={{ color: "#94a3b8", marginTop: 12 }}>Select a camera to view recordings</p>
+              </div>
+            ) : (
+              <>
+                {/* ── Video player ── */}
+                <div style={S.playerWrap}>
+                  {playing ? (
+                    <video
+                      ref={videoRef}
+                      controls
+                      autoPlay
+                      onEnded={onVideoEnded}
+                      style={S.video}
+                    >
+                      <source src={playing.url} type="video/mp4" />
+                    </video>
+                  ) : (
+                    <div style={S.playerPlaceholder}>
+                      <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="#475569" strokeWidth="1.5">
+                        <polygon points="5,3 19,12 5,21" fill="#334155" />
+                      </svg>
+                      <p style={{ color: "#64748b", marginTop: 8 }}>
+                        Click a segment on the timeline to play
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {/* ── Date nav ── */}
+                <div style={S.dateNav}>
+                  <button style={S.dateBtn} onClick={() => shiftDate(-1)}>◀</button>
+                  <input
+                    type="date"
+                    value={date}
+                    onChange={(e) => setDate(e.target.value)}
+                    style={S.dateInput}
+                  />
+                  <button style={S.dateBtn} onClick={() => shiftDate(1)}>▶</button>
+                  <button
+                    style={S.dateBtn}
+                    onClick={() => setDate(toDateStr(new Date()))}
+                  >
+                    Today
+                  </button>
+                  <span style={S.segCount}>
+                    {segments.length} segment{segments.length !== 1 ? "s" : ""}
+                  </span>
+                </div>
+
+                {/* ── Timeline ── */}
+                <Timeline
+                  segments={timeline}
+                  playing={playing}
+                  onPlay={playSeg}
+                  date={date}
+                />
+
+                {/* ── Segment list ── */}
+                <div style={S.segList}>
+                  {segments.length === 0 ? (
+                    <div style={{ padding: 20, textAlign: "center", color: "#64748b" }}>
+                      No recordings for this date
+                    </div>
+                  ) : (
+                    segments.map((seg) => (
+                      <button
+                        key={seg.filename}
+                        onClick={() => playSeg(seg)}
+                        style={{
+                          ...S.segItem,
+                          ...(playing?.filename === seg.filename ? S.segActive : {}),
+                        }}
+                      >
+                        <span style={S.segTime}>{seg.start || "—"}</span>
+                        <span style={S.segDur}>{fmtDur(seg.duration)}</span>
+                        <span style={S.segSize}>{fmtSize((seg.size_mb || 0) * 1048576)}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      ) : (
+        // ═══════════════════════════════════════════════════════════════════════
+        // SETTINGS TAB
+        // ═══════════════════════════════════════════════════════════════════════
+        <div style={S.settingsBody}>
+          <div style={S.settingsGrid}>
+            {/* ── Recording Config ── */}
+            <div style={S.card}>
+              <h3 style={S.cardTitle}>Recording Configuration</h3>
+              {settings ? (
+                <div style={S.form}>
+                  <label style={S.label}>
+                    Segment Duration (minutes)
+                    <input
+                      type="number" min="1" max="60"
+                      value={settings.segment_minutes || 1}
+                      onChange={(e) => setSettings({ ...settings, segment_minutes: parseInt(e.target.value) || 1 })}
+                      style={S.input}
+                    />
+                    <span style={S.hint}>How long each recording file will be</span>
+                  </label>
+                  <label style={S.label}>
+                    Retention (days)
+                    <input
+                      type="number" min="1" max="3650"
+                      value={settings.retention_days || 90}
+                      onChange={(e) => setSettings({ ...settings, retention_days: parseInt(e.target.value) || 90 })}
+                      style={S.input}
+                    />
+                    <span style={S.hint}>Auto-delete recordings older than this</span>
+                  </label>
+                  <label style={S.label}>
+                    Max Storage (GB)
+                    <input
+                      type="number" min="0" step="10"
+                      value={settings.max_storage_gb || 0}
+                      onChange={(e) => setSettings({ ...settings, max_storage_gb: parseFloat(e.target.value) || 0 })}
+                      style={S.input}
+                    />
+                    <span style={S.hint}>0 = unlimited. Oldest recordings deleted first when exceeded</span>
+                  </label>
+                  <label style={S.label}>
+                    Recordings Directory
+                    <input
+                      type="text"
+                      value={settings.recordings_dir || "/recordings"}
+                      onChange={(e) => setSettings({ ...settings, recordings_dir: e.target.value })}
+                      style={S.input}
+                    />
+                    <span style={S.hint}>Absolute path inside the container where recordings are stored</span>
+                  </label>
+                  <label style={S.label}>
+                    Stagger Delay (seconds)
+                    <input
+                      type="number" min="0" max="30"
+                      value={settings.stagger_seconds || 2}
+                      onChange={(e) => setSettings({ ...settings, stagger_seconds: parseInt(e.target.value) || 0 })}
+                      style={S.input}
+                    />
+                    <span style={S.hint}>Delay between starting each camera's FFmpeg process</span>
+                  </label>
+                  <div style={S.btnRow}>
+                    <button style={S.btnPrimary} onClick={saveSettings} disabled={saving}>
+                      {saving ? "Saving..." : "Save Settings"}
+                    </button>
+                    <button style={S.btnSecondary} onClick={restartEngine}>
+                      Restart Engine
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <p style={{ color: "#64748b" }}>Loading settings...</p>
+              )}
+            </div>
+
+            {/* ── Camera Recording Toggles ── */}
+            <div style={S.card}>
+              <h3 style={S.cardTitle}>Camera Recording</h3>
+              <p style={S.hint}>Toggle which cameras should record continuously</p>
+              <div style={S.camToggleList}>
+                {cameras
+                  .filter((c) => c.active)
+                  .sort((a, b) => a.display_name.localeCompare(b.display_name))
+                  .map((cam) => (
+                    <div key={cam.id} style={S.camToggleRow}>
+                      <div>
+                        <div style={{ color: "#e2e8f0", fontSize: 13 }}>{cam.display_name}</div>
+                        <div style={{ color: "#64748b", fontSize: 11 }}>{cam.name}</div>
+                      </div>
+                      <button
+                        onClick={() => toggleRecording(cam)}
+                        style={{
+                          ...S.toggle,
+                          background: cam.recording_enabled ? "#059669" : "#334155",
+                        }}
+                      >
+                        <div
+                          style={{
+                            ...S.toggleDot,
+                            transform: cam.recording_enabled
+                              ? "translateX(18px)"
+                              : "translateX(2px)",
+                          }}
+                        />
+                      </button>
+                    </div>
+                  ))}
+              </div>
+            </div>
+
+            {/* ── Storage Stats ── */}
+            <div style={S.card}>
+              <h3 style={S.cardTitle}>Storage</h3>
+              {storageStats ? (
+                <>
+                  {storageStats.disk && (
+                    <div style={S.storageBar}>
+                      <div style={S.storageBarTrack}>
+                        <div
+                          style={{
+                            ...S.storageBarFill,
+                            width: `${Math.min(storageStats.disk.percent_used, 100)}%`,
+                            background:
+                              storageStats.disk.percent_used > 90
+                                ? "#ef4444"
+                                : storageStats.disk.percent_used > 70
+                                ? "#f59e0b"
+                                : "#10b981",
+                          }}
+                        />
+                      </div>
+                      <div style={S.storageLabels}>
+                        <span>{storageStats.total_gb} GB recordings</span>
+                        <span>
+                          {storageStats.disk.free_gb} GB free / {storageStats.disk.total_gb} GB total
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                  <div style={{ marginTop: 12 }}>
+                    <div style={S.statRow}>
+                      <span style={S.statLabel}>Total Segments</span>
+                      <span style={S.statVal}>{storageStats.total_segments?.toLocaleString()}</span>
+                    </div>
+                    <div style={S.statRow}>
+                      <span style={S.statLabel}>Cameras Recording</span>
+                      <span style={S.statVal}>{storageStats.cameras?.length || 0}</span>
+                    </div>
+                  </div>
+                  {storageStats.cameras?.length > 0 && (
+                    <div style={{ marginTop: 12 }}>
+                      <div style={{ ...S.hint, marginBottom: 6 }}>Per Camera</div>
+                      {storageStats.cameras.map((c) => (
+                        <div key={c.camera_name} style={S.cameraStat}>
+                          <span style={{ color: "#cbd5e1", fontSize: 12 }}>{c.camera_name}</span>
+                          <span style={{ color: "#94a3b8", fontSize: 12 }}>
+                            {c.segment_count} segs · {c.total_gb} GB
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <p style={{ color: "#64748b" }}>Loading storage stats...</p>
+              )}
+            </div>
+
+            {/* ── Engine Status ── */}
+            <div style={S.card}>
+              <h3 style={S.cardTitle}>Engine Status</h3>
+              {engineStatus ? (
+                <>
+                  <div style={S.statRow}>
+                    <span style={S.statLabel}>Status</span>
+                    <span style={{
+                      ...S.statVal,
+                      color: engineStatus.engine_running ? "#10b981" : "#ef4444",
+                    }}>
+                      {engineStatus.engine_running ? "Running" : "Stopped"}
+                    </span>
+                  </div>
+                  <div style={S.statRow}>
+                    <span style={S.statLabel}>Active Processes</span>
+                    <span style={S.statVal}>{engineStatus.active_recordings}</span>
+                  </div>
+                  <div style={S.statRow}>
+                    <span style={S.statLabel}>Total Tracked</span>
+                    <span style={S.statVal}>{engineStatus.total_processes}</span>
+                  </div>
+                  {engineStatus.config && (
+                    <>
+                      <div style={S.statRow}>
+                        <span style={S.statLabel}>Source</span>
+                        <span style={S.statVal}>{engineStatus.config.source}</span>
+                      </div>
+                      <div style={S.statRow}>
+                        <span style={S.statLabel}>Segment Length</span>
+                        <span style={S.statVal}>{engineStatus.config.segment_minutes} min</span>
+                      </div>
+                    </>
+                  )}
+                  {engineStatus.processes && Object.keys(engineStatus.processes).length > 0 && (
+                    <div style={{ marginTop: 12, maxHeight: 200, overflowY: "auto" }}>
+                      <div style={{ ...S.hint, marginBottom: 6 }}>Processes</div>
+                      {Object.entries(engineStatus.processes).map(([name, p]) => (
+                        <div key={name} style={S.processRow}>
+                          <span style={{
+                            width: 6, height: 6, borderRadius: 3,
+                            background: p.running ? "#10b981" : "#ef4444",
+                            flexShrink: 0,
+                          }} />
+                          <span style={{ color: "#cbd5e1", fontSize: 11, flex: 1, overflow: "hidden", textOverflow: "ellipsis" }}>
+                            {name}
+                          </span>
+                          <span style={{ color: "#64748b", fontSize: 11 }}>
+                            {p.running ? `${Math.floor(p.uptime_seconds / 60)}m` : `exit ${p.exit_code}`}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <p style={{ color: "#64748b" }}>Loading...</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TIMELINE COMPONENT
+// ═══════════════════════════════════════════════════════════════════════════════
+function Timeline({ segments, playing, onPlay, date }) {
+  const ref = useRef(null);
+
+  // Map segments to pixel positions
+  const segRects = segments.map((seg) => {
+    const [h, m] = (seg.start || "00:00:00").split(":").map(Number);
+    const startMin = h * 60 + m;
+    const dur = seg.duration || 60;
+    return { ...seg, startMin, dur };
+  });
+
+  const handleClick = (e) => {
+    if (!ref.current || !segments.length) return;
+    const rect = ref.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const totalMin = 1440;
+    const clickMin = (x / rect.width) * totalMin;
+
+    // Find the segment closest to where we clicked
+    let best = null, bestDist = Infinity;
+    for (const seg of segRects) {
+      const segMid = seg.startMin + seg.dur / 120;
+      const dist = Math.abs(clickMin - segMid);
+      if (dist < bestDist) { bestDist = dist; best = seg; }
+    }
+    if (best && bestDist < 30) onPlay(best);
+  };
+
+  return (
+    <div style={S.timeline}>
+      {/* Hour labels */}
+      <div style={S.hourLabels}>
+        {HOURS.map((h) => (
+          <span key={h} style={S.hourLabel}>
+            {h === 0 ? "12a" : h < 12 ? `${h}a` : h === 12 ? "12p" : `${h - 12}p`}
+          </span>
+        ))}
+      </div>
+      {/* Track */}
+      <div ref={ref} style={S.timelineTrack} onClick={handleClick}>
+        {/* Hour gridlines */}
+        {HOURS.map((h) => (
+          <div
+            key={h}
+            style={{
+              position: "absolute",
+              left: `${(h / 24) * 100}%`,
+              top: 0, bottom: 0, width: 1,
+              background: "rgba(100,116,139,0.2)",
+            }}
+          />
+        ))}
+        {/* Segments */}
+        {segRects.map((seg) => {
+          const left = (seg.startMin / 1440) * 100;
+          const width = Math.max((seg.dur / 86400) * 100, 0.15);
+          const isActive = playing?.filename === seg.filename;
+          return (
+            <div
+              key={seg.filename}
+              title={`${seg.start} — ${fmtDur(seg.duration)}`}
+              style={{
+                position: "absolute",
+                left: `${left}%`,
+                width: `${width}%`,
+                top: 2, bottom: 2,
+                background: isActive ? "#f43f5e" : "#3b82f6",
+                borderRadius: 2,
+                cursor: "pointer",
+                opacity: isActive ? 1 : 0.7,
+                transition: "opacity 0.15s",
+              }}
+            />
+          );
+        })}
+        {/* Now indicator */}
+        {date === toDateStr(new Date()) && (
+          <div
+            style={{
+              position: "absolute",
+              left: `${((new Date().getHours() * 60 + new Date().getMinutes()) / 1440) * 100}%`,
+              top: 0, bottom: 0, width: 2,
+              background: "#f43f5e",
+              zIndex: 2,
+            }}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CAMERA SIDEBAR ITEM
+// ═══════════════════════════════════════════════════════════════════════════════
+function CamItem({ cam, selected, onSelect, engineStatus }) {
+  const proc = engineStatus?.processes?.[cam.name];
+  const running = proc?.running;
+
+  return (
+    <button
+      onClick={onSelect}
+      style={{
+        ...S.camItem,
+        ...(selected ? S.camItemActive : {}),
+      }}
+    >
+      <span style={{
+        width: 7, height: 7, borderRadius: 4,
+        background: running ? "#10b981" : cam.recording_enabled ? "#f59e0b" : "#475569",
+        flexShrink: 0,
+      }} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={S.camName}>{cam.display_name}</div>
+        {running && proc?.uptime_seconds > 0 && (
+          <div style={{ fontSize: 10, color: "#64748b" }}>
+            {Math.floor(proc.uptime_seconds / 60)}m uptime
+          </div>
+        )}
+      </div>
+    </button>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STYLES
+// ═══════════════════════════════════════════════════════════════════════════════
+const S = {
+  page: {
+    minHeight: "100vh",
+    background: "#0f172a",
+    color: "#e2e8f0",
+    fontFamily: "'JetBrains Mono', 'Fira Code', 'SF Mono', monospace",
+  },
+  header: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "14px 20px",
+    borderBottom: "1px solid #1e293b",
+    background: "#0f172a",
+    position: "sticky",
+    top: 0,
+    zIndex: 20,
+  },
+  headerLeft: { display: "flex", alignItems: "center", gap: 10 },
+  title: { fontSize: 18, fontWeight: 700, margin: 0, color: "#f8fafc" },
+  badge: {
+    fontSize: 11, padding: "3px 8px", borderRadius: 12,
+    fontWeight: 600, letterSpacing: 0.3,
+  },
+  tabs: { display: "flex", gap: 2 },
+  tab: {
+    padding: "6px 16px", borderRadius: 6, border: "none",
+    background: "transparent", color: "#94a3b8", cursor: "pointer",
+    fontSize: 13, fontWeight: 500, fontFamily: "inherit",
+    transition: "all 0.15s",
+  },
+  tabActive: { background: "#1e293b", color: "#f8fafc" },
+  toast: {
+    position: "fixed", top: 16, right: 16, zIndex: 999,
+    padding: "10px 18px", borderRadius: 8, color: "#fff",
+    fontSize: 13, fontWeight: 500, boxShadow: "0 4px 20px rgba(0,0,0,0.4)",
+    fontFamily: "'JetBrains Mono', monospace",
+  },
+
+  // ── Layout ──
+  body: { display: "flex", height: "calc(100vh - 53px)" },
+  sidebar: {
+    width: 240, borderRight: "1px solid #1e293b", overflowY: "auto",
+    padding: "8px 0", flexShrink: 0, background: "#0b1120",
+  },
+  main: { flex: 1, overflowY: "auto", display: "flex", flexDirection: "column" },
+  empty: {
+    flex: 1, display: "flex", flexDirection: "column",
+    alignItems: "center", justifyContent: "center",
+  },
+
+  // ── Search ──
+  search: {
+    width: "calc(100% - 16px)", margin: "4px 8px 8px", padding: "7px 10px",
+    background: "#1e293b", border: "1px solid #334155", borderRadius: 6,
+    color: "#e2e8f0", fontSize: 12, outline: "none", fontFamily: "inherit",
+  },
+  sideLabel: {
+    padding: "6px 12px", fontSize: 10, fontWeight: 700,
+    color: "#64748b", textTransform: "uppercase", letterSpacing: 0.8,
+  },
+  moreLabel: {
+    padding: "4px 12px", fontSize: 11, color: "#475569", fontStyle: "italic",
+  },
+
+  // ── Camera item ──
+  camItem: {
+    width: "100%", display: "flex", alignItems: "center", gap: 8,
+    padding: "8px 12px", border: "none", background: "transparent",
+    cursor: "pointer", textAlign: "left", fontFamily: "inherit",
+    transition: "background 0.1s",
+  },
+  camItemActive: { background: "#1e293b" },
+  camName: {
+    fontSize: 12, color: "#cbd5e1", whiteSpace: "nowrap",
+    overflow: "hidden", textOverflow: "ellipsis",
+  },
+
+  // ── Player ──
+  playerWrap: {
+    background: "#000", aspectRatio: "16/9", maxHeight: "55vh",
+    display: "flex", alignItems: "center", justifyContent: "center",
+    position: "relative", flexShrink: 0,
+  },
+  video: { width: "100%", height: "100%", background: "#000" },
+  playerPlaceholder: {
+    display: "flex", flexDirection: "column", alignItems: "center",
+  },
+
+  // ── Date nav ──
+  dateNav: {
+    display: "flex", alignItems: "center", gap: 8, padding: "10px 16px",
+    borderBottom: "1px solid #1e293b",
+  },
+  dateBtn: {
+    padding: "5px 10px", background: "#1e293b", border: "1px solid #334155",
+    borderRadius: 5, color: "#94a3b8", cursor: "pointer", fontSize: 12,
+    fontFamily: "inherit",
+  },
+  dateInput: {
+    padding: "5px 10px", background: "#1e293b", border: "1px solid #334155",
+    borderRadius: 5, color: "#e2e8f0", fontSize: 12, fontFamily: "inherit",
+    colorScheme: "dark",
+  },
+  segCount: { marginLeft: "auto", color: "#64748b", fontSize: 12 },
+
+  // ── Timeline ──
+  timeline: { padding: "8px 16px 4px", borderBottom: "1px solid #1e293b" },
+  hourLabels: {
+    display: "flex", justifyContent: "space-between", marginBottom: 2,
+  },
+  hourLabel: { fontSize: 9, color: "#475569", width: `${100 / 24}%`, textAlign: "center" },
+  timelineTrack: {
+    position: "relative", height: 28, background: "#1e293b",
+    borderRadius: 4, overflow: "hidden", cursor: "pointer",
+  },
+
+  // ── Segment list ──
+  segList: { flex: 1, overflowY: "auto", padding: "0 16px 16px" },
+  segItem: {
+    width: "100%", display: "flex", alignItems: "center", gap: 12,
+    padding: "8px 12px", border: "none", borderBottom: "1px solid #1e293b",
+    background: "transparent", cursor: "pointer", fontFamily: "inherit",
+    textAlign: "left", transition: "background 0.1s",
+  },
+  segActive: { background: "rgba(244,63,94,0.1)" },
+  segTime: { color: "#e2e8f0", fontSize: 13, fontWeight: 600, width: 80 },
+  segDur: { color: "#94a3b8", fontSize: 12, width: 50 },
+  segSize: { color: "#64748b", fontSize: 12 },
+
+  // ── Settings ──
+  settingsBody: { padding: 20, overflowY: "auto", height: "calc(100vh - 53px)" },
+  settingsGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fill, minmax(380px, 1fr))",
+    gap: 16,
+    maxWidth: 1200,
+  },
+  card: {
+    background: "#1e293b", borderRadius: 10, padding: 20,
+    border: "1px solid #334155",
+  },
+  cardTitle: {
+    fontSize: 15, fontWeight: 700, margin: "0 0 14px",
+    color: "#f8fafc",
+  },
+  form: { display: "flex", flexDirection: "column", gap: 14 },
+  label: {
+    display: "flex", flexDirection: "column", gap: 4,
+    fontSize: 12, color: "#94a3b8", fontWeight: 600,
+  },
+  input: {
+    padding: "8px 10px", background: "#0f172a", border: "1px solid #334155",
+    borderRadius: 6, color: "#e2e8f0", fontSize: 13, fontFamily: "inherit",
+    outline: "none",
+  },
+  hint: { fontSize: 11, color: "#475569", fontWeight: 400 },
+  btnRow: { display: "flex", gap: 10, marginTop: 4 },
+  btnPrimary: {
+    padding: "8px 20px", background: "#3b82f6", border: "none",
+    borderRadius: 6, color: "#fff", fontSize: 13, fontWeight: 600,
+    cursor: "pointer", fontFamily: "inherit",
+  },
+  btnSecondary: {
+    padding: "8px 20px", background: "#334155", border: "1px solid #475569",
+    borderRadius: 6, color: "#e2e8f0", fontSize: 13, fontWeight: 600,
+    cursor: "pointer", fontFamily: "inherit",
+  },
+
+  // ── Camera toggle list ──
+  camToggleList: { maxHeight: 360, overflowY: "auto", marginTop: 8 },
+  camToggleRow: {
+    display: "flex", alignItems: "center", justifyContent: "space-between",
+    padding: "8px 0", borderBottom: "1px solid rgba(51,65,85,0.5)",
+  },
+  toggle: {
+    width: 40, height: 22, borderRadius: 11, border: "none",
+    cursor: "pointer", position: "relative", transition: "background 0.2s",
+    flexShrink: 0,
+  },
+  toggleDot: {
+    width: 18, height: 18, borderRadius: 9, background: "#fff",
+    position: "absolute", top: 2, transition: "transform 0.2s",
+  },
+
+  // ── Storage ──
+  storageBar: { marginBottom: 8 },
+  storageBarTrack: {
+    height: 10, background: "#0f172a", borderRadius: 5,
+    overflow: "hidden", marginBottom: 4,
+  },
+  storageBarFill: { height: "100%", borderRadius: 5, transition: "width 0.3s" },
+  storageLabels: {
+    display: "flex", justifyContent: "space-between",
+    fontSize: 11, color: "#64748b",
+  },
+  statRow: {
+    display: "flex", justifyContent: "space-between",
+    padding: "5px 0", borderBottom: "1px solid rgba(51,65,85,0.3)",
+  },
+  statLabel: { fontSize: 12, color: "#94a3b8" },
+  statVal: { fontSize: 12, color: "#e2e8f0", fontWeight: 600 },
+  cameraStat: {
+    display: "flex", justifyContent: "space-between",
+    padding: "4px 0", borderBottom: "1px solid rgba(51,65,85,0.2)",
+  },
+  processRow: {
+    display: "flex", alignItems: "center", gap: 6,
+    padding: "3px 0",
+  },
+};

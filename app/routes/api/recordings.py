@@ -413,56 +413,78 @@ def bulk_delete():
 
 @bp.route("/storage", methods=["GET"])
 @login_required_api
-@admin_required
 def storage_stats():
     """
-    Returns storage statistics: per-camera usage, totals, disk info.
+    Returns storage statistics using the FILESYSTEM as source of truth.
+    Walks the recordings directory to get accurate file counts and sizes,
+    regardless of whether the DB scanner has caught up.
     """
-    from peewee import fn
     import shutil
 
-    # Per-camera storage from DB
-    per_camera = (
-        Recording.select(
-            Recording.camera_name,
-            fn.COUNT(Recording.id).alias("segment_count"),
-            fn.SUM(Recording.file_size).alias("total_bytes"),
-            fn.MIN(Recording.started_at).alias("oldest"),
-            fn.MAX(Recording.started_at).alias("newest"),
-        )
-        .where(Recording.status == "complete")
-        .group_by(Recording.camera_name)
-        .dicts()
-    )
-
+    recordings_dir = os.environ.get("RECORDINGS_DIR", RECORDINGS_DIR)
     cameras = []
     total_bytes = 0
     total_segments = 0
 
-    for row in per_camera:
-        bytes_used = row["total_bytes"] or 0
-        count = row["segment_count"] or 0
-        cameras.append({
-            "camera_name":   row["camera_name"],
-            "segment_count": count,
-            "total_gb":      round(bytes_used / (1024**3), 2),
-            "total_bytes":   bytes_used,
-            "oldest":        _to_iso(row["oldest"]),
-            "newest":        _to_iso(row["newest"]),
-        })
-        total_bytes += bytes_used
-        total_segments += count
+    # ── Scan filesystem directly ──────────────────────────────────────────
+    if os.path.exists(recordings_dir):
+        try:
+            for cam_name in sorted(os.listdir(recordings_dir)):
+                cam_dir = os.path.join(recordings_dir, cam_name)
+                if not os.path.isdir(cam_dir):
+                    continue
 
-    # Disk usage
+                cam_bytes = 0
+                cam_count = 0
+                oldest_file = None
+                newest_file = None
+
+                try:
+                    files = sorted(f for f in os.listdir(cam_dir) if f.endswith(".mp4"))
+                except OSError:
+                    continue
+
+                for fn in files:
+                    fp = os.path.join(cam_dir, fn)
+                    try:
+                        sz = os.path.getsize(fp)
+                    except OSError:
+                        continue
+                    if sz < 1024:  # skip tiny/empty files
+                        continue
+                    cam_bytes += sz
+                    cam_count += 1
+                    if oldest_file is None:
+                        oldest_file = fn
+                    newest_file = fn
+
+                if cam_count > 0:
+                    cameras.append({
+                        "camera_name":   cam_name,
+                        "segment_count": cam_count,
+                        "total_gb":      round(cam_bytes / (1024**3), 2),
+                        "total_bytes":   cam_bytes,
+                        "oldest":        oldest_file,
+                        "newest":        newest_file,
+                    })
+                    total_bytes += cam_bytes
+                    total_segments += cam_count
+        except OSError:
+            pass
+
+    # ── Disk usage ────────────────────────────────────────────────────────
     disk = None
-    if os.path.exists(RECORDINGS_DIR):
-        usage = shutil.disk_usage(RECORDINGS_DIR)
-        disk = {
-            "total_gb": round(usage.total / (1024**3), 2),
-            "used_gb":  round(usage.used / (1024**3), 2),
-            "free_gb":  round(usage.free / (1024**3), 2),
-            "percent_used": round(usage.used / usage.total * 100, 1),
-        }
+    if os.path.exists(recordings_dir):
+        try:
+            usage = shutil.disk_usage(recordings_dir)
+            disk = {
+                "total_gb": round(usage.total / (1024**3), 2),
+                "used_gb":  round(usage.used / (1024**3), 2),
+                "free_gb":  round(usage.free / (1024**3), 2),
+                "percent_used": round(usage.used / usage.total * 100, 1),
+            }
+        except OSError:
+            pass
 
     return api_response({
         "cameras":         cameras,
@@ -477,7 +499,6 @@ def storage_stats():
 
 @bp.route("/engine/status", methods=["GET"])
 @login_required_api
-@admin_required
 def engine_status():
     """Returns the current status of the recording engine (processes, storage, config)."""
     from app.recorder import engine

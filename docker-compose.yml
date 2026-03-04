@@ -20,14 +20,15 @@ services:
     env_file:
       - .env
     environment:
-      # ── Recording Engine Configuration ──
-      # Override any of these in your .env file
+      - TZ=America/Chicago
+      # ── Recording Engine Configuration ── Override any of these in your .env file
       - RECORDINGS_DIR=/recordings
       - RECORDING_MODE=all                    # "all" = record every active camera (default)
-      # "selective" = only record cameras you toggle on
-      - RECORDING_SEGMENT_MINUTES=1          # Length of each MP4 segment
+                                              # "selective" = only record cameras you toggle on
+      - RECORDING_SEGMENT_MINUTES=15          # Length of each MP4 segment
       - RECORDING_RETENTION_DAYS=90           # Auto-delete recordings older than this
-      - RECORDING_MAX_STORAGE_GB=0            # 0 = unlimited; set to cap disk usage
+      - RECORDING_MAX_STORAGE_GB=25            # 0 = unlimited; set to cap disk usage
+      - RECORDING_STAGGER_SECONDS=2
       # - GO2RTC_RTSP_URL=rtsp://go2rtc:8554  # Uncomment to record via go2rtc relay
     volumes:
       - ./instance:/app/instance
@@ -43,6 +44,8 @@ services:
     restart: always
     env_file:
       - .env
+    environment:
+      - TZ=America/Chicago
     volumes:
       - ./go2rtc:/config
       - recordings:/recordings

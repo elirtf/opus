@@ -1,10 +1,16 @@
 import re
 import time
 import requests as http
-from flask import Blueprint, request, current_app, Response
+from flask import Blueprint, request, current_app
 from flask_login import current_user
+
 from app.models import Camera, NVR
-from app.routes.api.utils import api_response, api_error, login_required_api, admin_required
+from app.routes.api.utils import (
+    api_response,
+    api_error,
+    login_required_api,
+    admin_required,
+)
 from app.go2rtc import stream_sync, stream_delete
 
 bp = Blueprint("api_cameras", __name__, url_prefix="/api/cameras")
@@ -13,12 +19,13 @@ bp = Blueprint("api_cameras", __name__, url_prefix="/api/cameras")
 
 _CRED_RE = re.compile(r"(rtsp://)([^@]+)@", re.IGNORECASE)
 
-# State cache (in-memory)
+# Fast in-memory stream health cache to avoid hammering go2rtc when the UI refreshes.
 _STATE_TTL_SECONDS = 2.0
 _state_cache = {
     "ts": 0.0,
     "health": {},  # { stream_name: bool }
 }
+
 
 def _mask_rtsp(url: str):
     """Strip credentials from rtsp://user:pass@host/... → rtsp://***:***@host/..."""
@@ -26,13 +33,18 @@ def _mask_rtsp(url: str):
         return url
     return _CRED_RE.sub(r"\1***:***@", url)
 
+
 def _is_original_admin():
-    """Original admin = first user ever created (id 1). Only they control recording."""
+    """
+    Restrict certain sensitive operations to the original admin account.
+    (Matches your existing design: admin + user id == 1)
+    """
     return (
             current_user.is_authenticated
             and current_user.is_admin
             and current_user.id == 1
     )
+
 
 def _fetch_go2rtc_streams():
     """
@@ -44,6 +56,7 @@ def _fetch_go2rtc_streams():
         timeout=3,
     )
     return res.json()
+
 
 def _get_stream_health_cached():
     """
@@ -66,8 +79,9 @@ def _get_stream_health_cached():
         return health
     except Exception as e:
         current_app.logger.warning(f"go2rtc health fetch failed: {e}")
-        # Don't blow up the page; return last known cache or empty
+        # Don’t blow up the UI—return the last known cache or empty.
         return _state_cache.get("health", {}) or {}
+
 
 def camera_to_dict(cam, nvr_map=None, health_map=None):
     nvr_name = None
@@ -80,23 +94,24 @@ def camera_to_dict(cam, nvr_map=None, health_map=None):
         online = health_map.get(cam.name)
 
     return {
-        "id":                cam.id,
-        "name":              cam.name,
-        "display_name":      cam.display_name,
-        "rtsp_url":          _mask_rtsp(cam.rtsp_url),
-        "nvr_id":            cam.nvr,
-        "nvr_name":          nvr_name,
-        "active":            cam.active,
+        "id": cam.id,
+        "name": cam.name,
+        "display_name": cam.display_name,
+        "rtsp_url": _mask_rtsp(cam.rtsp_url),
+        "nvr_id": cam.nvr,
+        "nvr_name": nvr_name,
+        "active": cam.active,
         "recording_enabled": cam.recording_enabled,
-        "is_main":           cam.name.endswith("-main"),
-        "is_sub":            cam.name.endswith("-sub"),
-        # keep your existing stream_url for compatibility
-        "stream_url":        f"/go2rtc/stream.html?src={cam.name}&mode=mse",
-        # Runtime field (optional for frontend)
-        "online":            online,
+        "is_main": cam.name.endswith("-main"),
+        "is_sub": cam.name.endswith("-sub"),
+        # Keep for compatibility with any existing frontend usage:
+        "stream_url": f"/go2rtc/stream.html?src={cam.name}&mode=mse",
+        # Optional runtime field for UI badges:
+        "online": online,
     }
 
-# ── Configuration Endpoints (Your existing API, kept intact) ─────────────────
+
+# ── Configuration endpoints ──────────────────────────────────────────────────
 
 @bp.route("/", methods=["GET"])
 @login_required_api
@@ -117,17 +132,17 @@ def list_cameras():
 @login_required_api
 @admin_required
 def create_camera():
-    data         = request.get_json(silent=True) or {}
-    name         = (data.get("name") or "").strip()
+    data = request.get_json(silent=True) or {}
+    name = (data.get("name") or "").strip()
     display_name = (data.get("display_name") or "").strip()
-    rtsp_url     = (data.get("rtsp_url") or "").strip()
+    rtsp_url = (data.get("rtsp_url") or "").strip()
 
     if not name or not display_name or not rtsp_url:
         return api_error("name, display_name, and rtsp_url are required.")
     if Camera.select().where(Camera.name == name).exists():
         return api_error(f'Stream name "{name}" is already taken.')
 
-    # Main streams always auto-record
+    # Main streams auto-record by default.
     auto_record = name.endswith("-main")
 
     cam = Camera.create(
@@ -138,7 +153,9 @@ def create_camera():
         active=data.get("active", True),
         recording_enabled=auto_record,
     )
+
     stream_sync(cam)
+
     nvr_map = {nvr.id: nvr for nvr in NVR.select()}
     return api_response(camera_to_dict(cam, nvr_map), message="Camera created.", status=201)
 
@@ -152,16 +169,21 @@ def update_camera(cam_id):
     except Camera.DoesNotExist:
         return api_error("Camera not found.", 404)
 
-    data     = request.get_json(silent=True) or {}
+    data = request.get_json(silent=True) or {}
     old_name = cam.name
 
-    if "name"              in data: cam.name              = (data["name"] or "").strip()
-    if "display_name"      in data: cam.display_name      = (data["display_name"] or "").strip()
-    if "rtsp_url"          in data: cam.rtsp_url          = (data["rtsp_url"] or "").strip()
-    if "nvr_id"            in data: cam.nvr               = data["nvr_id"] or None
-    if "active"            in data: cam.active            = bool(data["active"])
+    if "name" in data:
+        cam.name = (data["name"] or "").strip()
+    if "display_name" in data:
+        cam.display_name = (data["display_name"] or "").strip()
+    if "rtsp_url" in data:
+        cam.rtsp_url = (data["rtsp_url"] or "").strip()
+    if "nvr_id" in data:
+        cam.nvr = data["nvr_id"] or None
+    if "active" in data:
+        cam.active = bool(data["active"])
 
-    # Only the original administrator can change recording state
+    # Recording enable/disable is restricted and only allowed on main streams.
     if "recording_enabled" in data:
         if not _is_original_admin():
             return api_error("Only the original administrator can change recording settings.", 403)
@@ -182,7 +204,7 @@ def update_camera(cam_id):
 @bp.route("/<int:cam_id>/recording", methods=["POST"], strict_slashes=False)
 @login_required_api
 def toggle_recording(cam_id):
-    """Toggle recording — ONLY the original administrator (user id=1) can do this."""
+    """Enable/disable recording for a camera (restricted)."""
     if not _is_original_admin():
         return api_error("Only the original administrator can change recording settings.", 403)
 
@@ -223,14 +245,15 @@ def delete_camera(cam_id):
     cam.delete_instance()
     return api_response(message=f'Camera "{name}" deleted.')
 
-# ── Runtime Endpoints ───────────────────────────
+
+# ── Runtime endpoints ─────────────────────────────────────────────────────────
 
 @bp.route("/summary", methods=["GET"])
 @login_required_api
 def cameras_summary():
     """
-    One request to power the entire dashboard grid.
-    Includes runtime online status (cached).
+    Returns all cameras the user can access plus current online/offline state.
+    Best endpoint for powering the live dashboard.
     """
     allowed = current_user.allowed_nvr_ids()
 
@@ -249,10 +272,9 @@ def cameras_summary():
 @bp.route("/<string:name>/status", methods=["GET"])
 @login_required_api
 def camera_status(name: str):
-    """
-    Status: online + recording flag + metadata.
-    """
+    """Returns status + metadata for a single camera."""
     allowed = current_user.allowed_nvr_ids()
+
     try:
         cam = Camera.get(Camera.name == name)
     except Camera.DoesNotExist:
@@ -277,9 +299,11 @@ def camera_status(name: str):
 @login_required_api
 def camera_streams(name: str):
     """
-    Stream endpoints so the frontend doesn't hardcode URLs.
+    Stream endpoints so the frontend can choose the best playback method
+    without hardcoding URLs.
     """
     allowed = current_user.allowed_nvr_ids()
+
     try:
         cam = Camera.get(Camera.name == name)
     except Camera.DoesNotExist:
@@ -294,42 +318,3 @@ def camera_streams(name: str):
         "hls": f"/go2rtc/stream.m3u8?src={name}",
         "html": f"/go2rtc/stream.html?src={name}&mode=mse",
     })
-
-
-@bp.route("/<string:name>/snapshot", methods=["GET"])
-@login_required_api
-def camera_snapshot(name: str):
-    """
-    Snapshot.
-    We proxy go2rtc's frame endpoint (if available) so the browser can fetch
-    via Opus auth/session.
-
-    NOTE: go2rtc commonly supports /api/frame.jpg?src=<name>.
-    If your go2rtc build uses a different path, tell me and I'll adjust.
-    """
-    allowed = current_user.allowed_nvr_ids()
-    try:
-        cam = Camera.get(Camera.name == name)
-    except Camera.DoesNotExist:
-        return api_error("Camera not found.", 404)
-
-    if allowed is not None and (cam.nvr not in allowed):
-        return api_error("Forbidden.", 403)
-
-    try:
-        url = f"{current_app.config['GO2RTC_URL']}/api/frame.jpg"
-        res = http.get(url, params={"src": name}, timeout=3)
-        if res.status_code != 200 or not res.content:
-            return api_error("Snapshot unavailable.", 404)
-
-        return Response(
-            res.content,
-            status=200,
-            mimetype=res.headers.get("Content-Type", "image/jpeg"),
-            headers={
-                "Cache-Control": "no-store",
-            },
-        )
-    except Exception as e:
-        current_app.logger.warning(f"snapshot proxy failed for {name}: {e}")
-        return api_error("Snapshot unavailable.", 404)

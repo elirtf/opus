@@ -2,13 +2,119 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Scrollbar styling */
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: #111827; }
-::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: #4B5563; }
+/* ------------------------------------------------ */
+/* Base Layout (Frigate-style stability) */
+/* ------------------------------------------------ */
 
-/* optional global tweaks */
-html, body, #root {
+html,
+body,
+#root {
   height: 100%;
+  margin: 0;
+}
+
+body {
+  background-color: #020617; /* darker than Tailwind slate-950 */
+  color: #e5e7eb;
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Roboto,
+    sans-serif;
+}
+
+/* Prevent layout shifts on camera pages */
+* {
+  box-sizing: border-box;
+}
+
+/* ------------------------------------------------ */
+/* Video Elements */
+/* ------------------------------------------------ */
+
+video {
+  max-width: 100%;
+  max-height: 100%;
+  outline: none;
+  background: black;
+}
+
+/* Prevent video stretching in flex layouts */
+video,
+img {
+  display: block;
+}
+
+/* ------------------------------------------------ */
+/* Scrollbar styling (your existing code) */
+/* ------------------------------------------------ */
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #111827;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #374151;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #4B5563;
+}
+
+/* ------------------------------------------------ */
+/* Selection styling */
+/* ------------------------------------------------ */
+
+::selection {
+  background: #6366f1;
+  color: white;
+}
+
+/* ------------------------------------------------ */
+/* Buttons (nice defaults for dashboards) */
+/* ------------------------------------------------ */
+
+button {
+  cursor: pointer;
+}
+
+/* Prevent text highlighting in control bars */
+button,
+svg {
+  user-select: none;
+}
+
+/* ------------------------------------------------ */
+/* Camera viewer helpers */
+/* ------------------------------------------------ */
+
+.camera-container {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+}
+
+.camera-video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* ------------------------------------------------ */
+/* Smooth UI transitions */
+/* ------------------------------------------------ */
+
+* {
+  transition-property: color, background-color, border-color, opacity;
+  transition-duration: 150ms;
 }

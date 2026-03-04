@@ -5,7 +5,11 @@
 <h1 align="center">Opus NVR</h1>
 
 <p align="center">
-  A lightweight, self-hosted camera streaming and management platform
+  A lightweight, self-hosted **camera streaming and management platform** designed for environments using IP cameras and/or NVRs.
+
+  Opus provides a clean web interface for viewing live feeds, managing cameras/NVRs, and controlling user access — all deployable with **Docker in minutes**.
+
+  Built with a focus on **simplicity, performance, and extensibility**, Opus aims to be a practical alternative to heavier NVR dashboards while remaining developer-friendly.
 </p>
 
 <p align="center">
@@ -17,18 +21,6 @@
 ![Repo Size](https://img.shields.io/github/repo-size/elirtf/opus)
 
 </p>
-
-<p align="center">
-  Built for simplicity, performance, and extensibility.
-</p>
-
-# Opus NVR
-
-A lightweight, self-hosted **camera streaming and management platform** designed for environments using IP cameras and/or NVRs.
-
-Opus provides a clean web interface for viewing live feeds, managing cameras/NVRs, and controlling user access — all deployable with **Docker in minutes**.
-
-Built with a focus on **simplicity, performance, and extensibility**, Opus aims to be a practical alternative to heavier NVR dashboards while remaining developer-friendly.
 
 ---
 

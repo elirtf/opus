@@ -1,217 +1,99 @@
-import { useState, useEffect } from 'react'
-import { camerasApi } from '../api/cameras'
-import { nvrsApi } from '../api/nvrs'
-import { healthApi } from '../api/health'
-import Modal from '../components/Modal'
-import ConfirmModal from '../components/ConfirmModal'
-import Spinner from '../components/Spinner'
-import { useToast, ToastList } from '../components/Toast'
-
-const HEALTH_POLL_MS = 30000
-
-function StatusDot({ online }) {
-  return (
-    <span title={online === true ? 'Online' : online === false ? 'Offline' : 'Unknown'}
-      className={`inline-block w-2 h-2 rounded-full shrink-0 ${
-        online === true  ? 'bg-green-400' :
-        online === false ? 'bg-red-500'   :
-        'bg-gray-600'
-      }`}
-    />
-  )
-}
-
-const EMPTY_FORM = { name: '', display_name: '', rtsp_url: '', nvr_id: '', active: true }
-
-function CameraForm({ initial = EMPTY_FORM, nvrs, onSubmit, onClose, submitLabel }) {
-  const [form, setForm]     = useState(initial)
-  const [error, setError]   = useState('')
-  const [saving, setSaving] = useState(false)
-
-  function set(field, value) { setForm(f => ({ ...f, [field]: value })) }
-
-  async function handleSubmit(e) {
-    e.preventDefault()
-    setSaving(true)
-    setError('')
-    try {
-      await onSubmit({ ...form, nvr_id: form.nvr_id || null })
-      onClose()
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const inputCls = "w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-
-  return (
-    <form onSubmit={handleSubmit} className="space-y-3">
-      {error && <div className="px-3 py-2 rounded text-sm bg-red-900/60 text-red-300 border border-red-700">{error}</div>}
-      <div>
-        <label className="block text-xs font-medium text-gray-400 mb-1">Stream Name (slug) *</label>
-        <input className={inputCls} value={form.name} onChange={e => set('name', e.target.value)} placeholder="front-door" required />
-      </div>
-      <div>
-        <label className="block text-xs font-medium text-gray-400 mb-1">Display Name *</label>
-        <input className={inputCls} value={form.display_name} onChange={e => set('display_name', e.target.value)} placeholder="Front Door" required />
-      </div>
-      <div>
-        <label className="block text-xs font-medium text-gray-400 mb-1">RTSP URL *</label>
-        <input className={`${inputCls} font-mono text-xs`} value={form.rtsp_url} onChange={e => set('rtsp_url', e.target.value)} placeholder="rtsp://user:pass@192.168.1.100:554/stream1" required />
-      </div>
-      <div>
-        <label className="block text-xs font-medium text-gray-400 mb-1">NVR (optional)</label>
-        <select className={inputCls} value={form.nvr_id} onChange={e => set('nvr_id', e.target.value)}>
-          <option value="">— Standalone —</option>
-          {nvrs.map(nvr => <option key={nvr.id} value={nvr.id}>{nvr.display_name}</option>)}
-        </select>
-      </div>
-      {initial.id && (
-        <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
-          <input type="checkbox" checked={form.active} onChange={e => set('active', e.target.checked)} />
-          Active
-        </label>
-      )}
-      <div className="flex gap-2 pt-2">
-        <button type="submit" disabled={saving}
-          className="flex-1 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white py-2 rounded-lg text-sm font-medium">
-          {saving ? 'Saving...' : submitLabel}
-        </button>
-        <button type="button" onClick={onClose}
-          className="flex-1 bg-gray-800 hover:bg-gray-700 text-gray-300 py-2 rounded-lg text-sm">
-          Cancel
-        </button>
-      </div>
-    </form>
-  )
-}
+import { useEffect, useState } from "react";
+import { camerasApi } from "../api/cameras";
+import Spinner from "../components/Spinner";
+import CameraTile from "../components/CameraTile";
 
 export default function Cameras() {
-  const [cameras, setCameras]   = useState([])
-  const [nvrs, setNvrs]         = useState([])
-  const [health, setHealth]     = useState({})
-  const [loading, setLoading]   = useState(true)
-  const [modal, setModal]       = useState(null)
-  const [confirm, setConfirm]   = useState(null)
-  const { toasts, success, error: toastError } = useToast()
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState(null);
+
+  // Optional: stats overlay support
+  const [statsEnabled] = useState(false);
+  const [statsMap, setStatsMap] = useState({}); // { [name]: stats }
 
   useEffect(() => {
-    Promise.all([camerasApi.list(), nvrsApi.list()])
-      .then(([cams, nvrs]) => { setCameras(cams); setNvrs(nvrs) })
-      .finally(() => setLoading(false))
-  }, [])
+    let alive = true;
 
+    (async () => {
+      try {
+        setLoading(true);
+        const cams = await camerasApi.summary();
+        if (!alive) return;
+        setItems(cams);
+        setErr(null);
+      } catch (e) {
+        if (!alive) return;
+        setErr(e.message || "Failed to load cameras");
+      } finally {
+        if (!alive) return;
+        setLoading(false);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // Optional stats fetch (keep off unless you need it)
   useEffect(() => {
-    function fetchHealth() {
-      healthApi.streams().then(setHealth).catch(() => {})
-    }
-    fetchHealth()
-    const interval = setInterval(fetchHealth, HEALTH_POLL_MS)
-    return () => clearInterval(interval)
-  }, [])
+    if (!statsEnabled || items.length === 0) return;
 
-  async function handleAdd(form) {
-    const created = await camerasApi.create(form)
-    setCameras(prev => [...prev, created])
-    success(`"${created.display_name}" added`)
+    let alive = true;
+
+    (async () => {
+      const next = {};
+      for (const cam of items) {
+        try {
+          next[cam.name] = await camerasApi.stats(cam.name);
+        } catch {
+          // ignore stats failures
+        }
+      }
+      if (!alive) return;
+      setStatsMap(next);
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [items, statsEnabled]);
+
+  if (loading) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <Spinner className="w-6 h-6" />
+      </div>
+    );
   }
 
-  async function handleEdit(form) {
-    const updated = await camerasApi.update(modal.id, form)
-    setCameras(prev => prev.map(c => c.id === updated.id ? updated : c))
-    success(`"${updated.display_name}" updated`)
-  }
-
-  async function handleDelete(cam) {
-    await camerasApi.delete(cam.id)
-    setCameras(prev => prev.filter(c => c.id !== cam.id))
-    success(`"${cam.display_name}" deleted`)
-    setConfirm(null)
+  if (err) {
+    return (
+      <div className="p-6 text-gray-300">
+        <div className="text-red-400 mb-2">Error</div>
+        <div className="text-sm">{err}</div>
+      </div>
+    );
   }
 
   return (
-    <div className="max-w-5xl mx-auto px-6 py-6 w-full">
-      <ToastList toasts={toasts} />
-
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-xl font-bold text-white">Camera Management</h2>
-        <button onClick={() => setModal('add')}
-          className="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
-          + Add Camera
-        </button>
+    <div className="p-4">
+      <div className="mb-4 flex items-baseline justify-between">
+        <h1 className="text-xl font-semibold text-white">Cameras</h1>
+        <div className="text-xs text-gray-400">{items.length} total</div>
       </div>
 
-      {loading ? (
-        <div className="flex justify-center py-20"><Spinner className="w-6 h-6" /></div>
-      ) : cameras.length === 0 ? (
-        <div className="text-center py-20 text-gray-500">
-          <div className="text-4xl mb-3">📷</div>
-          <p className="text-gray-400">No cameras added yet.</p>
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {cameras.map(cam => (
-            <div key={cam.id} className="bg-gray-900 border border-gray-800 rounded-xl px-5 py-4 flex items-center justify-between">
-              <div className="flex items-center gap-3 min-w-0">
-                <StatusDot online={health[cam.name]} />
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-white">{cam.display_name}</span>
-                    <span className={`text-xs px-1.5 py-0.5 rounded ${cam.active ? 'bg-green-900/60 text-green-400' : 'bg-gray-700 text-gray-400'}`}>
-                      {cam.active ? 'active' : 'disabled'}
-                    </span>
-                    <span className="text-xs px-1.5 py-0.5 rounded bg-gray-800 text-gray-400">
-                      {cam.is_main ? 'main' : cam.is_sub ? 'sub' : 'custom'}
-                    </span>
-                  </div>
-                  <div className="text-xs text-gray-500 mt-0.5 font-mono truncate max-w-xl">{cam.rtsp_url}</div>
-                  {cam.nvr_name && <div className="text-xs text-gray-500 mt-0.5">{cam.nvr_name}</div>}
-                </div>
-              </div>
-              <div className="flex items-center gap-2 shrink-0 ml-4">
-                <button onClick={() => setModal(cam)}
-                  className="text-sm text-gray-400 hover:text-white border border-gray-700 hover:border-gray-500 px-3 py-1.5 rounded-lg transition-colors">
-                  Edit
-                </button>
-                <button onClick={() => setConfirm(cam)}
-                  className="text-sm text-red-400 hover:text-red-300 border border-red-900 hover:border-red-700 px-3 py-1.5 rounded-lg transition-colors">
-                  Delete
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {modal === 'add' && (
-        <Modal title="Add Camera" onClose={() => setModal(null)}>
-          <CameraForm nvrs={nvrs} onSubmit={handleAdd} onClose={() => setModal(null)} submitLabel="Add Camera" />
-        </Modal>
-      )}
-      {modal && modal !== 'add' && (
-        <Modal title="Edit Camera" onClose={() => setModal(null)}>
-          <CameraForm
-            initial={{ ...modal, nvr_id: modal.nvr_id || '' }}
-            nvrs={nvrs}
-            onSubmit={handleEdit}
-            onClose={() => setModal(null)}
-            submitLabel="Save Changes"
+      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+        {items.map((cam) => (
+          <CameraTile
+            key={cam.id}
+            camera={cam}
+            showStats={statsEnabled}
+            stats={statsMap[cam.name]}
           />
-        </Modal>
-      )}
-
-      {confirm && (
-        <ConfirmModal
-          title="Delete Camera"
-          message={`Delete "${confirm.display_name}"? This cannot be undone.`}
-          confirmLabel="Delete"
-          danger
-          onConfirm={() => handleDelete(confirm)}
-          onClose={() => setConfirm(null)}
-        />
-      )}
+        ))}
+      </div>
     </div>
-  )
+  );
 }

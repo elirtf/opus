@@ -1,49 +1,33 @@
 # Opus NVR
 
-A lightweight, self-hosted camera streaming and management platform designed for environments with IP cameras and NVRs. 
-It provides a clean web interface for viewing live feeds, managing cameras/NVRs, and controlling user access - all deployable with Docker in minutes.
+A lightweight, self-hosted **camera streaming and management platform** designed for environments using IP cameras and/or NVRs.
 
-Built with a focus on simplicity, performance, and extensibility, Opus aims to be a practical alternative to heavier NVR dashboards while remaining developer-friendly.
+Opus provides a clean web interface for viewing live feeds, managing cameras/NVRs, and controlling user access — all deployable with **Docker in minutes**.
 
----
-
-## Features
-
-- **Live View** — Dynamic multi-camera grid (3×3 → 6×6 layouts with pagination)
-- **Lazy Loading** — Only the cameras currently visible on screen are streamed; go2rtc drops idle RTSP connections automatically
-- **Fullscreen Mode** — Click any camera tile to open it fullscreen in main stream quality
-- **NVR Management** — Add, edit, and delete NVRs with auto-import of all camera channels on add
-- **Camera Management** — Full CRUD for individual cameras; each synced to go2rtc as a named stream
-- **User Auth** — Login/logout with admin and viewer roles. Admins can add/edit/delete; viewers can only watch
+Built with a focus on **simplicity, performance, and extensibility**, Opus aims to be a practical alternative to heavier NVR dashboards while remaining developer-friendly.
 
 ---
 
-## Tech Stack
+# Features
+
+### Live Viewing
+### Streaming
+### Camera & NVR Management
+### Authentication & Access Control
+
+---
+
+# Tech Stack
 
 | Layer | Technology |
-|---|---|
-| Backend | [Flask](https://flask.palletsprojects.com/)
+|------|-------------|
+| Backend | [Flask](https://flask.palletsprojects.com/) |
 | Authentication | Flask-Login |
-| Database ORM | Flask-SQLAlchemy (SQLite) |
-| Stream server | [go2rtc](https://github.com/AlexxIT/go2rtc) |
-| Reverse proxy | nginx |
-| Frontend | Tailwind CSS + JS |
+| Database | Flask-SQLAlchemy (SQLite) |
+| Stream Server | [go2rtc](https://github.com/AlexxIT/go2rtc) |
+| Reverse Proxy | nginx |
+| Frontend | React + Tailwind CSS |
 | Containerization | Docker + Docker Compose |
-
----
-
-## Project Structure
-
-```
-opus/
-├── app/            # Flask backend
-├── frontend/       # React / frontend assets (in progress)
-├── nginx/          # Reverse proxy config
-├── Dockerfile
-├── docker-compose.yml
-├── run.py
-└── requirements.txt
-```
 
 ---
 
@@ -62,8 +46,10 @@ git clone https://github.com/elirtf/opus.git
 cd opus
 
 # 2. Create your environment file
-cp .env.example .env
 # Edit .env and set SECRET_KEY, and optionally GO2RTC_URL
+      # GO2RTC_URL=http://go2rtc:1984 (Default)
+      # GO2RTC_RTSP_URL=rtsp://go2rtc:8554 (Default)
+      # SECRET_KEY=secret-key
 
 # 3. Build and start
 docker compose up --build
@@ -78,17 +64,6 @@ The app will be available at **http://localhost**.
 | admin | admin | admin |
 
 > **Change this immediately** after first login.
-
----
-
-## Environment Variables
-
-Create a `.env` file in the project root:
-
-```env
-SECRET_KEY=change-me
-GO2RTC_URL=http://go2rtc:1984
-```
 
 ---
 
@@ -134,15 +109,6 @@ python run.py
 ```
 
 > You'll still need go2rtc running separately (or skip it — the app works without it, streams just won't load).
-
----
-
-## Roadmap / Known Issues
-
-- [ ] Recording + playback support
-- [ ] Playback browser for recorded footage
-- [ ] Alerting / motion detection alerts
-- [ ] Buffering on some streams depending on NVR and network conditions
 
 ---
 

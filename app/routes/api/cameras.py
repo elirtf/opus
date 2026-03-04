@@ -1,10 +1,35 @@
-from flask import Blueprint, request, current_app
+import os
+import re
+from app.services.camera_state import camera_state
+from app.services.stream_health import get_stream_health
+from flask import Blueprint, request, current_app, send_file
 from flask_login import current_user
 from app.models import Camera, NVR
 from app.routes.api.utils import api_response, api_error, login_required_api, admin_required
 from app.go2rtc import stream_sync, stream_delete
 
 bp = Blueprint("api_cameras", __name__, url_prefix="/api/cameras")
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+_CRED_RE = re.compile(r"(rtsp://)([^@]+)@", re.IGNORECASE)
+
+
+def _mask_rtsp(url):
+    """Strip credentials from rtsp://user:pass@host/... → rtsp://***:***@host/..."""
+    if not url:
+        return url
+    return _CRED_RE.sub(r"\1***:***@", url)
+
+
+def _is_original_admin():
+    """Original admin = first user ever created (id 1). Only they control recording."""
+    return (
+            current_user.is_authenticated
+            and current_user.is_admin
+            and current_user.id == 1
+    )
 
 
 def camera_to_dict(cam, nvr_map=None):
@@ -17,7 +42,7 @@ def camera_to_dict(cam, nvr_map=None):
         "id":                cam.id,
         "name":              cam.name,
         "display_name":      cam.display_name,
-        "rtsp_url":          cam.rtsp_url,
+        "rtsp_url":          _mask_rtsp(cam.rtsp_url),
         "nvr_id":            cam.nvr,
         "nvr_name":          nvr_name,
         "active":            cam.active,
@@ -57,13 +82,16 @@ def create_camera():
     if Camera.select().where(Camera.name == name).exists():
         return api_error(f'Stream name "{name}" is already taken.')
 
+    # Main streams always auto-record
+    auto_record = name.endswith("-main")
+
     cam = Camera.create(
         name=name,
         display_name=display_name,
         rtsp_url=rtsp_url,
         nvr=data.get("nvr_id") or None,
         active=data.get("active", True),
-        recording_enabled=data.get("recording_enabled", True),
+        recording_enabled=auto_record,
     )
     stream_sync(cam)
     nvr_map = {nvr.id: nvr for nvr in NVR.select()}
@@ -87,7 +115,15 @@ def update_camera(cam_id):
     if "rtsp_url"          in data: cam.rtsp_url          = data["rtsp_url"].strip()
     if "nvr_id"            in data: cam.nvr               = data["nvr_id"] or None
     if "active"            in data: cam.active            = bool(data["active"])
-    if "recording_enabled" in data: cam.recording_enabled = bool(data["recording_enabled"])
+
+    # Only the original administrator can change recording state
+    if "recording_enabled" in data:
+        if not _is_original_admin():
+            return api_error("Only the original administrator can change recording settings.", 403)
+        if bool(data["recording_enabled"]) and not cam.name.endswith("-main"):
+            return api_error("Recording is only supported on main streams.", 400)
+        cam.recording_enabled = bool(data["recording_enabled"])
+
     cam.save()
 
     if old_name != cam.name:
@@ -100,9 +136,11 @@ def update_camera(cam_id):
 
 @bp.route("/<int:cam_id>/recording", methods=["POST"], strict_slashes=False)
 @login_required_api
-@admin_required
 def toggle_recording(cam_id):
-    """Quick toggle — enable or disable recording for a camera."""
+    """Toggle recording — ONLY the original administrator (user id=1) can do this."""
+    if not _is_original_admin():
+        return api_error("Only the original administrator can change recording settings.", 403)
+
     try:
         cam = Camera.get_by_id(cam_id)
     except Camera.DoesNotExist:
@@ -111,6 +149,9 @@ def toggle_recording(cam_id):
     data = request.get_json(silent=True) or {}
     if "enabled" not in data:
         return api_error('"enabled" field is required.')
+
+    if bool(data["enabled"]) and not cam.name.endswith("-main"):
+        return api_error("Recording is only supported on main streams.", 400)
 
     cam.recording_enabled = bool(data["enabled"])
     cam.save()

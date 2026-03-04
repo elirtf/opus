@@ -26,7 +26,6 @@ SCAN_INTERVAL        = int(os.environ.get("RECORDING_SCAN_SECONDS", "30"))
 RETENTION_INTERVAL   = int(os.environ.get("RECORDING_RETENTION_SECONDS", "300"))
 FFMPEG_RESTART_DELAY = int(os.environ.get("FFMPEG_RESTART_DELAY_SECONDS", "5"))
 GO2RTC_RTSP_URL      = os.environ.get("GO2RTC_RTSP_URL", "")
-RECORDING_MODE       = os.environ.get("RECORDING_MODE", "all")
 MAX_CRASHES          = int(os.environ.get("RECORDING_MAX_CRASHES", "3"))
 SHELVE_RETRY_MIN     = int(os.environ.get("RECORDING_SHELVE_RETRY_MINUTES", "10"))
 STAGGER_DELAY        = float(os.environ.get("RECORDING_STAGGER_SECONDS", "2"))
@@ -44,8 +43,6 @@ class RecordingEngine:
         self._last_scan = 0.0
         self._last_retention = 0.0
         self._table_ok = False
-        self._stream_map = {}      # lowercase -> actual go2rtc name
-        self._stream_map_time = 0  # when we last fetched it
 
     def start(self):
         if self._running:
@@ -54,8 +51,8 @@ class RecordingEngine:
         self._thread = threading.Thread(target=self._loop, daemon=True, name="recorder")
         self._thread.start()
         logger.info(
-            "Recording engine started (mode=%s, seg=%smin, relay=%s, stagger=%ss)",
-            RECORDING_MODE, SEGMENT_MINUTES, "yes" if GO2RTC_RTSP_URL else "no", STAGGER_DELAY,
+            "Recording engine started (seg=%smin, relay=%s, stagger=%ss)",
+            SEGMENT_MINUTES, "yes" if GO2RTC_RTSP_URL else "no", STAGGER_DELAY,
         )
 
     def stop(self):
@@ -85,11 +82,10 @@ class RecordingEngine:
 
     def _desired(self):
         from app.models import Camera
-        if RECORDING_MODE == "selective":
-            qs = Camera.select().where((Camera.recording_enabled == True) & (Camera.active == True))
-        else:
-            qs = Camera.select().where(Camera.active == True)
-        return {c.name: c for c in qs if not c.name.endswith("-sub")}
+        qs = Camera.select().where(
+            (Camera.recording_enabled == True) & (Camera.active == True)
+        )
+        return {c.name: c for c in qs if c.name.endswith("-main")}
 
     def _sync(self):
         desired = self._desired()
@@ -162,33 +158,12 @@ class RecordingEngine:
                     self._procs[name]["crashes"] = cr
                 launches += 1
 
-    def _resolve_stream(self, camera_name):
-        """Map camera name to actual go2rtc stream name (handles case difference)."""
-        now = time.time()
-        if not self._stream_map or now - self._stream_map_time > 120:
-            try:
-                import json
-                import urllib.request
-                go2rtc_http = self.app.config.get("GO2RTC_URL", "http://go2rtc:1984")
-                data = urllib.request.urlopen(
-                    "%s/api/streams" % go2rtc_http, timeout=5
-                ).read()
-                streams = json.loads(data)
-                self._stream_map = {k.lower(): k for k in streams}
-                self._stream_map_time = now
-                logger.info("go2rtc streams: %d found", len(self._stream_map))
-            except Exception as e:
-                logger.warning("go2rtc API query failed: %s", e)
-                return camera_name
-        return self._stream_map.get(camera_name.lower(), camera_name)
-
     def _launch(self, camera):
         cam_dir = os.path.join(self.recordings_dir, camera.name)
         os.makedirs(cam_dir, exist_ok=True)
 
         if GO2RTC_RTSP_URL:
-            stream_name = self._resolve_stream(camera.name)
-            src = "%s/%s" % (GO2RTC_RTSP_URL, stream_name)
+            src = "%s/%s" % (GO2RTC_RTSP_URL, camera.name)
         else:
             src = camera.rtsp_url
 
@@ -525,7 +500,6 @@ class RecordingEngine:
 
         return {
             "engine_running": self._running,
-            "recording_mode": RECORDING_MODE,
             "active_recordings": sum(1 for v in active.values() if v["running"]),
             "total_processes": len(active),
             "shelved_count": len(shelved_list),
@@ -533,7 +507,7 @@ class RecordingEngine:
             "shelved": shelved_list,
             "storage": {"recordings_gb": round(tb / 1024**3, 2),
                         "max_storage_gb": MAX_STORAGE_GB or None, "disk": disk},
-            "config": {"mode": RECORDING_MODE, "segment_minutes": SEGMENT_MINUTES,
+            "config": {"segment_minutes": SEGMENT_MINUTES,
                        "retention_days": RETENTION_DAYS,
                        "source": "go2rtc_relay" if GO2RTC_RTSP_URL else "direct_rtsp",
                        "stagger_seconds": STAGGER_DELAY,

@@ -9,7 +9,7 @@ Built with a focus on simplicity, performance, and extensibility, Opus aims to b
 
 ## Features
 
-- **Live View** — Dynamic multi-camera grid (1×1 → 4×4 layouts with pagination)
+- **Live View** — Dynamic multi-camera grid (3×3 → 6×6 layouts with pagination)
 - **Lazy Loading** — Only the cameras currently visible on screen are streamed; go2rtc drops idle RTSP connections automatically
 - **Fullscreen Mode** — Click any camera tile to open it fullscreen in main stream quality
 - **NVR Management** — Add, edit, and delete NVRs with auto-import of all camera channels on add

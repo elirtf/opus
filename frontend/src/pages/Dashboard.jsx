@@ -5,7 +5,7 @@ import { healthApi } from '../api/health'
 import Spinner from '../components/Spinner'
 import { useAuth } from '../context/AuthContext'
 
-const GRID_SIZES = [1, 3, 4, 6]
+const GRID_SIZES = [3, 4, 6]
 const HEALTH_POLL_MS = 30000
 
 

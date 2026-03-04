@@ -318,3 +318,73 @@ def camera_streams(name: str):
         "hls": f"/go2rtc/stream.m3u8?src={name}",
         "html": f"/go2rtc/stream.html?src={name}&mode=mse",
     })
+
+@bp.route("/<string:name>/stats", methods=["GET"])
+@login_required_api
+def camera_stats(name: str):
+    """
+    Returns summarized runtime statistics for a camera stream.
+
+    This endpoint aggregates useful metrics from the stream engine
+    while hiding low-level internal fields. It is intended for UI
+    diagnostics, monitoring panels, and health indicators.
+    """
+
+    allowed = current_user.allowed_nvr_ids()
+
+    try:
+        cam = Camera.get(Camera.name == name)
+    except Camera.DoesNotExist:
+        return api_error("Camera not found.", 404)
+
+    if allowed is not None and (cam.nvr not in allowed):
+        return api_error("Forbidden.", 403)
+
+    try:
+        streams = _fetch_go2rtc_streams()
+        info = streams.get(name)
+
+        if not info:
+            return api_response({
+                "online": False,
+                "producers": 0,
+                "consumers": 0,
+                "codec": None,
+                "resolution": None,
+                "bitrate_kbps": None,
+                "fps": None,
+            })
+
+        producers = info.get("producers") or []
+        consumers = info.get("consumers") or []
+
+        codec = None
+        resolution = None
+        fps = None
+        bitrate = None
+
+        if producers:
+            video = producers[0].get("video") or {}
+
+            codec = video.get("codec")
+            width = video.get("width")
+            height = video.get("height")
+            fps = video.get("fps")
+            bitrate = video.get("bitrate")
+
+            if width and height:
+                resolution = f"{width}x{height}"
+
+        return api_response({
+            "online": len(producers) > 0,
+            "producers": len(producers),
+            "consumers": len(consumers),
+            "codec": codec,
+            "resolution": resolution,
+            "fps": fps,
+            "bitrate_kbps": bitrate,
+        })
+
+    except Exception as e:
+        current_app.logger.warning(f"camera stats fetch failed for {name}: {e}")
+        return api_error("Unable to retrieve stream stats.", 500)

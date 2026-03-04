@@ -1,3 +1,27 @@
+<p align="center">
+  <img src="docs/logo.png" width="180" alt="Opus Logo"/>
+</p>
+
+<h1 align="center">Opus NVR</h1>
+
+<p align="center">
+  A lightweight, self-hosted camera streaming and management platform
+</p>
+
+<p align="center">
+
+![License](https://img.shields.io/github/license/elirtf/opus)
+![Docker](https://img.shields.io/badge/docker-ready-blue)
+![Python](https://img.shields.io/badge/python-3.11+-blue)
+![Status](https://img.shields.io/badge/status-active-success)
+![Repo Size](https://img.shields.io/github/repo-size/elirtf/opus)
+
+</p>
+
+<p align="center">
+  Built for simplicity, performance, and extensibility.
+</p>
+
 # Opus NVR
 
 A lightweight, self-hosted **camera streaming and management platform** designed for environments using IP cameras and/or NVRs.

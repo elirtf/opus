@@ -11,6 +11,7 @@ Settings hierarchy: DB settings > env vars > defaults
 
 import os
 from flask import Blueprint, request
+from flask_login import current_user
 from app.routes.api.utils import api_response, api_error, login_required_api, admin_required
 from app.database import db
 
@@ -19,27 +20,26 @@ bp = Blueprint("api_recording_settings", __name__, url_prefix="/api/recordings/s
 # ── Defaults ──────────────────────────────────────────────────────────────────
 
 DEFAULTS = {
-    "segment_minutes":    "1",
+    "segment_minutes":    "15",
     "retention_days":     "90",
     "max_storage_gb":     "0",
     "recordings_dir":     "/recordings",
     "stagger_seconds":    "2",
-    "auto_record_new":    "false",
+    "setup_complete":     "false",
 }
 
 
 def _ensure_table():
     """Create setting table if it doesn't exist."""
     db.execute_sql("""
-                   CREATE TABLE IF NOT EXISTS setting (
-                                                          key   VARCHAR(100) PRIMARY KEY,
-                       value TEXT NOT NULL
-                       )
-                   """)
+        CREATE TABLE IF NOT EXISTS setting (
+            key   VARCHAR(100) PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+    """)
 
 
 def get_setting(key, default=None):
-    """Get a setting value: DB > env var > default."""
     try:
         _ensure_table()
         row = db.execute_sql(
@@ -49,8 +49,6 @@ def get_setting(key, default=None):
             return row[0]
     except Exception:
         pass
-
-    # Fall back to env var
     env_map = {
         "segment_minutes": "RECORDING_SEGMENT_MINUTES",
         "retention_days":  "RECORDING_RETENTION_DAYS",
@@ -61,16 +59,65 @@ def get_setting(key, default=None):
     env_key = env_map.get(key)
     if env_key and os.environ.get(env_key):
         return os.environ[env_key]
-
     return default if default is not None else DEFAULTS.get(key, "")
 
 
 def set_setting(key, value):
-    """Save a setting to the DB."""
     _ensure_table()
     db.execute_sql(
         "INSERT OR REPLACE INTO setting (key, value) VALUES (?, ?)",
         (key, str(value))
+    )
+
+
+def _is_original_admin():
+    return (
+            current_user.is_authenticated
+            and current_user.is_admin
+            and current_user.id == 1
+    )
+
+
+# ── Setup status ──────────────────────────────────────────────────────────────
+
+@bp.route("/setup-status", methods=["GET"])
+@login_required_api
+def setup_status():
+    """Check if first-run recording setup has been completed."""
+    _ensure_table()
+    complete = get_setting("setup_complete", "false") == "true"
+    return api_response({
+        "setup_complete":    complete,
+        "is_original_admin": _is_original_admin(),
+        "recordings_dir":    get_setting("recordings_dir", "/recordings"),
+    })
+
+
+# ── First-run setup ──────────────────────────────────────────────────────────
+
+@bp.route("/setup", methods=["POST"])
+@login_required_api
+def initial_setup():
+    """
+    First-run setup — only the original admin can complete this.
+    Body: { "recordings_dir": "/recordings" }
+    """
+    if not _is_original_admin():
+        return api_error("Only the original administrator can configure recording setup.", 403)
+
+    data = request.get_json(silent=True) or {}
+    recordings_dir = str(data.get("recordings_dir", "/recordings")).strip()
+
+    if not recordings_dir.startswith("/"):
+        return api_error("recordings_dir must be an absolute path.", 400)
+
+    set_setting("recordings_dir", recordings_dir)
+    set_setting("setup_complete", "true")
+    os.environ["RECORDINGS_DIR"] = recordings_dir
+
+    return api_response(
+        {"recordings_dir": recordings_dir, "setup_complete": True},
+        message="Recording setup complete. All main-stream cameras will begin recording."
     )
 
 
@@ -79,32 +126,22 @@ def set_setting(key, value):
 @bp.route("/", methods=["GET"])
 @login_required_api
 def get_settings():
-    """Return all recording configuration settings."""
     _ensure_table()
-
     settings = {}
     for key, default in DEFAULTS.items():
         settings[key] = get_setting(key, default)
 
-    # Cast numeric types for the frontend
-    try:
-        settings["segment_minutes"] = int(settings["segment_minutes"])
-    except (ValueError, TypeError):
-        settings["segment_minutes"] = 1
-    try:
-        settings["retention_days"] = int(settings["retention_days"])
-    except (ValueError, TypeError):
-        settings["retention_days"] = 90
-    try:
-        settings["max_storage_gb"] = float(settings["max_storage_gb"])
-    except (ValueError, TypeError):
-        settings["max_storage_gb"] = 0
-    try:
-        settings["stagger_seconds"] = int(settings["stagger_seconds"])
-    except (ValueError, TypeError):
-        settings["stagger_seconds"] = 2
+    try:    settings["segment_minutes"] = int(settings["segment_minutes"])
+    except: settings["segment_minutes"] = 15
+    try:    settings["retention_days"] = int(settings["retention_days"])
+    except: settings["retention_days"] = 90
+    try:    settings["max_storage_gb"] = float(settings["max_storage_gb"])
+    except: settings["max_storage_gb"] = 0
+    try:    settings["stagger_seconds"] = int(settings["stagger_seconds"])
+    except: settings["stagger_seconds"] = 2
 
-    settings["auto_record_new"] = settings.get("auto_record_new", "false") == "true"
+    settings["setup_complete"]    = settings.get("setup_complete", "false") == "true"
+    settings["is_original_admin"] = _is_original_admin()
 
     return api_response(settings)
 
@@ -113,31 +150,20 @@ def get_settings():
 
 @bp.route("/", methods=["PUT"])
 @login_required_api
-@admin_required
 def update_settings():
-    """
-    Update recording configuration.
-    Only provided keys are updated; missing keys keep their current values.
+    """Only the original administrator can update recording settings."""
+    if not _is_original_admin():
+        return api_error("Only the original administrator can change recording settings.", 403)
 
-    Body: {
-      "segment_minutes": 1,
-      "retention_days": 90,
-      "max_storage_gb": 500,
-      "recordings_dir": "/recordings",
-      "stagger_seconds": 2,
-      "auto_record_new": false
-    }
-    """
     data = request.get_json(silent=True) or {}
-
-    allowed_keys = set(DEFAULTS.keys())
+    allowed_keys = {"segment_minutes", "retention_days", "max_storage_gb",
+                    "recordings_dir", "stagger_seconds"}
     updated = []
 
     for key, value in data.items():
         if key not in allowed_keys:
             continue
 
-        # Validate
         if key == "segment_minutes":
             try:
                 v = int(value)
@@ -170,9 +196,6 @@ def update_settings():
             except (ValueError, TypeError):
                 return api_error("stagger_seconds must be a number.", 400)
 
-        elif key == "auto_record_new":
-            value = "true" if value else "false"
-
         elif key == "recordings_dir":
             value = str(value).strip()
             if not value.startswith("/"):
@@ -181,7 +204,6 @@ def update_settings():
         set_setting(key, value)
         updated.append(key)
 
-    # Also update the env vars so the running engine picks them up
     _sync_env_vars()
 
     return api_response(
@@ -191,7 +213,6 @@ def update_settings():
 
 
 def _sync_env_vars():
-    """Push DB settings into env vars so the running engine uses them."""
     env_map = {
         "segment_minutes": "RECORDING_SEGMENT_MINUTES",
         "retention_days":  "RECORDING_RETENTION_DAYS",
@@ -205,20 +226,15 @@ def _sync_env_vars():
             os.environ[env_key] = str(val)
 
 
-# ── Bulk toggle recording for cameras ────────────────────────────────────────
+# ── Bulk toggle (original admin only) ────────────────────────────────────────
 
 @bp.route("/bulk-toggle", methods=["POST"])
 @login_required_api
-@admin_required
 def bulk_toggle_recording():
-    """
-    Enable/disable recording for multiple cameras at once.
+    """Only the original administrator can bulk-toggle recording."""
+    if not _is_original_admin():
+        return api_error("Only the original administrator can change recording settings.", 403)
 
-    Body: {
-      "camera_ids": [1, 2, 3],
-      "enabled": true
-    }
-    """
     data = request.get_json(silent=True) or {}
     camera_ids = data.get("camera_ids", [])
     enabled = bool(data.get("enabled", False))
@@ -227,6 +243,16 @@ def bulk_toggle_recording():
         return api_error("camera_ids is required.", 400)
 
     from app.models import Camera
+
+    if enabled:
+        main_ids = [
+            c.id for c in Camera.select(Camera.id, Camera.name)
+            .where((Camera.id.in_(camera_ids)) & (Camera.name.endswith("-main")))
+        ]
+        if not main_ids:
+            return api_error("Recording is only supported on main streams.", 400)
+        camera_ids = main_ids
+
     count = (
         Camera.update(recording_enabled=enabled)
         .where(Camera.id.in_(camera_ids))
@@ -240,18 +266,17 @@ def bulk_toggle_recording():
     )
 
 
-# ── Engine control ────────────────────────────────────────────────────────────
+# ── Engine control (original admin only) ──────────────────────────────────────
 
 @bp.route("/engine/restart", methods=["POST"])
 @login_required_api
-@admin_required
 def restart_engine():
-    """Restart the recording engine to pick up new settings."""
+    if not _is_original_admin():
+        return api_error("Only the original administrator can restart the recording engine.", 403)
     try:
         from app.recorder import engine
         if engine:
             engine.stop()
-            # Re-sync env vars before restarting
             _sync_env_vars()
             engine.start()
             return api_response(message="Recording engine restarted.")

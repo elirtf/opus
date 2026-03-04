@@ -1,8 +1,13 @@
-import { api } from './client'
+import { api } from "./client";
 
 export const camerasApi = {
-  list:   ()           => api.get('/api/cameras/'),
-  create: (data)       => api.post('/api/cameras/', data),
-  update: (id, data)   => api.patch(`/api/cameras/${id}`, data),
-  delete: (id)         => api.delete(`/api/cameras/${id}`),
-}
+  list: () => api.get("/api/cameras/"),
+  summary: () => api.get("/api/cameras/summary"),
+  status: (name) => api.get(`/api/cameras/${encodeURIComponent(name)}/status`),
+  streams: (name) => api.get(`/api/cameras/${encodeURIComponent(name)}/streams`),
+  stats: (name) => api.get(`/api/cameras/${encodeURIComponent(name)}/stats`),
+  create: (payload) => api.post("/api/cameras/", payload),
+  update: (id, payload) => api.patch(`/api/cameras/${id}`, payload),
+  remove: (id) => api.delete(`/api/cameras/${id}`),
+  setRecording: (id, enabled) => api.post(`/api/cameras/${id}/recording`, { enabled }),
+};

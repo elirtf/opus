@@ -14,7 +14,7 @@
 
 <p align="center">
 
-![License](https://img.shields.io/github/license/elirtf/opus)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 ![Docker](https://img.shields.io/badge/docker-ready-blue)
 ![Python](https://img.shields.io/badge/python-3.11+-blue)
 ![Status](https://img.shields.io/badge/status-active-success)

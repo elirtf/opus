@@ -20,7 +20,7 @@ def nvr_to_dict(nvr, cam_count=None, admin=False):
         base.update({
             "name":         nvr.name,
             "ip_address":   nvr.ip_address,
-            "username":     nvr.username,
+            # Never expose username or password to any user
             "max_channels": nvr.max_channels,
         })
     return base
@@ -40,21 +40,29 @@ def stream_add(name, rtsp_url):
 
 
 def import_cameras(nvr):
-    """Generate main+sub stream cameras for every channel. Returns (created, skipped)."""
+    """Generate main+sub stream cameras for every channel. Returns (created, skipped).
+    Main streams are auto-enabled for recording."""
     created = 0
     skipped = 0
     base = f"rtsp://{nvr.username}:{nvr.password}@{nvr.ip_address}:554"
 
     for ch in range(1, nvr.max_channels + 1):
         streams = [
-            (f"{nvr.name}-ch{ch}-main", f"{nvr.display_name} — Ch {ch} Main", f"{base}/Streaming/Channels/{ch * 100 + 1}"),
-            (f"{nvr.name}-ch{ch}-sub",  f"{nvr.display_name} — Ch {ch} Sub",  f"{base}/Streaming/Channels/{ch * 100 + 2}"),
+            (f"{nvr.name}-ch{ch}-main", f"{nvr.display_name} — Ch {ch} Main", f"{base}/Streaming/Channels/{ch * 100 + 1}", True),
+            (f"{nvr.name}-ch{ch}-sub",  f"{nvr.display_name} — Ch {ch} Sub",  f"{base}/Streaming/Channels/{ch * 100 + 2}", False),
         ]
-        for name, display_name, rtsp_url in streams:
+        for name, display_name, rtsp_url, is_main in streams:
             if Camera.select().where(Camera.name == name).exists():
                 skipped += 1
                 continue
-            Camera.create(name=name, display_name=display_name, rtsp_url=rtsp_url, nvr=nvr.id, active=True)
+            Camera.create(
+                name=name,
+                display_name=display_name,
+                rtsp_url=rtsp_url,
+                nvr=nvr.id,
+                active=True,
+                recording_enabled=is_main,   # main streams auto-record
+            )
             stream_add(name, rtsp_url)
             created += 1
 

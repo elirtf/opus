@@ -21,20 +21,37 @@ services:
       - .env
     environment:
       - TZ=America/Chicago
-      # ── Recording Engine Configuration ── Override any of these in your .env file
-      - RECORDINGS_DIR=/recordings
-      - RECORDING_MODE=all                    # "all" = record every active camera (default)
-                                              # "selective" = only record cameras you toggle on
-      - RECORDING_SEGMENT_MINUTES=15          # Length of each MP4 segment
-      - RECORDING_RETENTION_DAYS=90           # Auto-delete recordings older than this
-      - RECORDING_MAX_STORAGE_GB=25            # 0 = unlimited; set to cap disk usage
-      - RECORDING_STAGGER_SECONDS=2
-      # - GO2RTC_RTSP_URL=rtsp://go2rtc:8554  # Uncomment to record via go2rtc relay
     volumes:
       - ./instance:/app/instance
       - ./go2rtc:/config
       - static_files:/app/app/static
       - recordings:/recordings
+    networks:
+      - opusnet
+
+  recorder:
+    build: .
+    container_name: opus-recorder
+    restart: always
+    env_file:
+      - .env
+    environment:
+      - TZ=America/Chicago
+      # ── Recording Engine Configuration ── Override any of these in your .env file
+      - RECORDINGS_DIR=/recordings
+      - RECORDING_MODE=all
+      - RECORDING_SEGMENT_MINUTES=15
+      - RECORDING_RETENTION_DAYS=90
+      - RECORDING_MAX_STORAGE_GB=25
+      - RECORDING_STAGGER_SECONDS=2
+      # - GO2RTC_RTSP_URL=rtsp://go2rtc:8554
+    volumes:
+      - ./instance:/app/instance
+      - ./go2rtc:/config
+      - recordings:/recordings
+    depends_on:
+      - go2rtc
+    command: ["python", "-m", "app.recording_service"]
     networks:
       - opusnet
 
@@ -74,9 +91,9 @@ networks:
 volumes:
   static_files:
   recordings:
-    # For production with large storage, consider binding to a dedicated disk:
-    # driver: local
-    # driver_opts:
-    #   type: none
-    #   o: bind
-    #   device: /mnt/storage/recordings
+  # For production with large storage, consider binding to a dedicated disk:
+  # driver: local
+  # driver_opts:
+  #   type: none
+  #   o: bind
+  #   device: /mnt/storage/recordings

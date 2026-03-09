@@ -5,9 +5,6 @@ instance/*
 .env
 .db
 frontend/node_modules
-frontend/dist
-frontend/build
-frontend/coverage
 !/frontend/**/*.ts
 .DS_Store
 Thumbs.db
@@ -28,8 +25,4 @@ core
 .idea/*
 .ipynb_checkpoints
 /shelf/
-/workspace.xml
 /queries/
-/dataSources/
-/dataSources.local.xml
-/httpRequests/

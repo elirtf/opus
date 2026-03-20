@@ -85,11 +85,17 @@ def create_app():
 
 
     # ── Seed default admin if no users exist ─────────────────────────────────
+    # Recorder/processor/opus may start in parallel on a shared DB; only one insert wins.
+    from peewee import IntegrityError
+
     if User.select().count() == 0:
-        admin = User(username="admin", role="admin")
-        admin.set_password("admin")
-        admin.save(force_insert=True)
-        print("Default admin created — username: admin / password: admin")
+        try:
+            admin = User(username="admin", role="admin")
+            admin.set_password("admin")
+            admin.save(force_insert=True)
+            print("Default admin created — username: admin / password: admin")
+        except IntegrityError:
+            pass
 
     # ── SPA catch-all ────────────────────────────────────────────────────────
     register_spa_catchall(app)

@@ -17,11 +17,30 @@ from datetime import datetime, timedelta
 from flask import Blueprint, request, current_app, send_from_directory
 from flask_login import current_user
 from app.models import Recording, Camera
-from app.routes.api.utils import api_response, api_error, login_required_api, admin_required
+from app.routes.api.utils import (
+    api_response,
+    api_error,
+    login_required_api,
+    admin_required,
+    accessible_camera_names,
+)
 
 bp = Blueprint("api_recordings", __name__, url_prefix="/api/recordings")
 
 RECORDINGS_DIR = os.environ.get("RECORDINGS_DIR", "/recordings")
+
+
+@bp.before_request
+def _recordings_perm():
+    if request.method == "OPTIONS":
+        return None
+    if not current_user.is_authenticated:
+        return None
+    if current_user.is_admin:
+        return None
+    if getattr(current_user, "can_view_recordings", True):
+        return None
+    return api_error("Recorded footage access is disabled for this account.", 403)
 
 
 def _to_iso(val):
@@ -51,19 +70,8 @@ def recording_to_dict(rec: Recording) -> dict:
 
 
 def _get_allowed_camera_names() -> set | None:
-    """
-    Returns a set of camera names the current user can access,
-    or None if the user is an admin (no restriction).
-    """
-    allowed_nvrs = current_user.allowed_nvr_ids()
-    if allowed_nvrs is None:
-        return None  # admin — no restriction
-
-    if not allowed_nvrs:
-        return set()  # no NVRs assigned → no cameras
-
-    cameras = Camera.select(Camera.name).where(Camera.nvr.in_(allowed_nvrs))
-    return {cam.name for cam in cameras}
+    """Set of camera names, or None for admin (no restriction)."""
+    return accessible_camera_names(current_user)
 
 
 # ── List recordings ──────────────────────────────────────────────────────────
@@ -430,6 +438,8 @@ def storage_stats():
     if os.path.exists(recordings_dir):
         try:
             for cam_name in sorted(os.listdir(recordings_dir)):
+                if cam_name == "clips":
+                    continue
                 cam_dir = os.path.join(recordings_dir, cam_name)
                 if not os.path.isdir(cam_dir):
                     continue
@@ -527,7 +537,7 @@ def force_rescan():
 
     # Force a scan
     try:
-        engine._scan_completed_segments()
+        engine._scan_segments()
     except Exception as e:
         return api_error(f"Scan failed: {str(e)}", 500)
 

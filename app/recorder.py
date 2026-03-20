@@ -20,6 +20,7 @@ logger = logging.getLogger("opus.recorder")
 RECORDINGS_DIR       = os.environ.get("RECORDINGS_DIR", "/recordings")
 SEGMENT_MINUTES      = int(os.environ.get("RECORDING_SEGMENT_MINUTES", "15"))
 RETENTION_DAYS       = int(os.environ.get("RECORDING_RETENTION_DAYS", "90"))
+CLIP_RETENTION_DAYS  = int(os.environ.get("CLIP_RETENTION_DAYS", "90"))
 MAX_STORAGE_GB       = float(os.environ.get("RECORDING_MAX_STORAGE_GB", "0"))
 POLL_INTERVAL        = int(os.environ.get("RECORDING_POLL_SECONDS", "10"))
 SCAN_INTERVAL        = int(os.environ.get("RECORDING_SCAN_SECONDS", "30"))
@@ -29,6 +30,8 @@ GO2RTC_RTSP_URL      = os.environ.get("GO2RTC_RTSP_URL", "")
 MAX_CRASHES          = int(os.environ.get("RECORDING_MAX_CRASHES", "3"))
 SHELVE_RETRY_MIN     = int(os.environ.get("RECORDING_SHELVE_RETRY_MINUTES", "10"))
 STAGGER_DELAY        = float(os.environ.get("RECORDING_STAGGER_SECONDS", "2"))
+# Rolling segment buffer for events_only cameras (hours); older segments are purged first.
+EVENTS_ONLY_BUFFER_HOURS = int(os.environ.get("EVENTS_ONLY_BUFFER_HOURS", "48"))
 
 
 class RecordingEngine:
@@ -83,7 +86,9 @@ class RecordingEngine:
     def _desired(self):
         from app.models import Camera
         qs = Camera.select().where(
-            (Camera.recording_enabled == True) & (Camera.active == True)
+            (Camera.recording_enabled == True)
+            & (Camera.active == True)
+            & (Camera.recording_policy != "off")
         )
         return {c.name: c for c in qs if c.name.endswith("-main")}
 
@@ -170,11 +175,14 @@ class RecordingEngine:
         seg = SEGMENT_MINUTES * 60
         pat = os.path.join(cam_dir, "%Y-%m-%d_%H-%M-%S.mp4")
 
+        from app.ffmpeg_config import hwaccel_input_args
+
         # Frigate preset-rtsp-generic input + preset-record-generic output
         cmd = [
             "ffmpeg",
             "-hide_banner",
             "-loglevel", "error",
+            *hwaccel_input_args(),
             # input (Frigate preset-rtsp-generic)
             "-avoid_negative_ts", "make_zero",
             "-fflags", "+genpts+discardcorrupt",
@@ -422,6 +430,74 @@ class RecordingEngine:
         if deleted:
             logger.info("Retention: deleted %d segments", deleted)
 
+        if CLIP_RETENTION_DAYS > 0:
+            self._purge_old_clips()
+
+        # Short buffer for events_only: keep recent segments for pre-roll context only.
+        if EVENTS_ONLY_BUFFER_HOURS > 0:
+            self._purge_events_only_buffer()
+
+    def _purge_old_clips(self):
+        """Delete motion/AI clip rows and files past CLIP_RETENTION_DAYS."""
+        from app.database import db
+
+        cutoff = (datetime.now() - timedelta(days=CLIP_RETENTION_DAYS)).isoformat()
+        removed = 0
+        try:
+            rows = db.execute_sql(
+                "SELECT id, file_path FROM recording_event WHERE started_at < ?",
+                (cutoff,),
+            ).fetchall()
+            for rid, fp in rows:
+                try:
+                    if fp and os.path.exists(fp):
+                        os.remove(fp)
+                    db.execute_sql("DELETE FROM recording_event WHERE id=?", (rid,))
+                    removed += 1
+                except Exception:
+                    pass
+        except Exception:
+            logger.exception("Clip retention failed")
+        if removed:
+            logger.info("Clip retention: deleted %d event clips", removed)
+
+    def _purge_events_only_buffer(self):
+        from app.database import db
+        from app.models import Camera
+
+        try:
+            names = [
+                c.name
+                for c in Camera.select(Camera.name).where(
+                    (Camera.recording_policy == "events_only") & (Camera.active == True)
+                )
+            ]
+        except Exception:
+            logger.exception("events_only buffer: camera query failed")
+            return
+        if not names:
+            return
+        cutoff = (datetime.now() - timedelta(hours=EVENTS_ONLY_BUFFER_HOURS)).isoformat()
+        deleted = 0
+        try:
+            for cam_name in names:
+                rows = db.execute_sql(
+                    "SELECT id, file_path FROM recording WHERE camera_name = ? AND started_at < ?",
+                    (cam_name, cutoff),
+                ).fetchall()
+                for rid, fp in rows:
+                    try:
+                        if fp and os.path.exists(fp):
+                            os.remove(fp)
+                        db.execute_sql("DELETE FROM recording WHERE id=?", (rid,))
+                        deleted += 1
+                    except Exception:
+                        pass
+        except Exception:
+            logger.exception("events_only buffer purge failed")
+        if deleted:
+            logger.info("events_only buffer: removed %d old segments", deleted)
+
     def _disk_usage(self):
         total = 0
         try:
@@ -509,6 +585,8 @@ class RecordingEngine:
                         "max_storage_gb": MAX_STORAGE_GB or None, "disk": disk},
             "config": {"segment_minutes": SEGMENT_MINUTES,
                        "retention_days": RETENTION_DAYS,
+                       "clip_retention_days": CLIP_RETENTION_DAYS,
+                       "events_only_buffer_hours": EVENTS_ONLY_BUFFER_HOURS,
                        "source": "go2rtc_relay" if GO2RTC_RTSP_URL else "direct_rtsp",
                        "stagger_seconds": STAGGER_DELAY,
                        "shelve_after": MAX_CRASHES, "shelve_retry_min": SHELVE_RETRY_MIN},

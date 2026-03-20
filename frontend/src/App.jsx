@@ -11,9 +11,18 @@ import Users from './pages/Users'
 import Recordings from './pages/Recordings'
 import Discovery from './pages/Discovery'
 
-function AppLayout({ children, adminOnly = false }) {
+function AppLayout({
+  children,
+  adminOnly = false,
+  requireLiveView = false,
+  requireRecordingsView = false,
+}) {
   return (
-    <ProtectedRoute adminOnly={adminOnly}>
+    <ProtectedRoute
+      adminOnly={adminOnly}
+      requireLiveView={requireLiveView}
+      requireRecordingsView={requireRecordingsView}
+    >
       <Layout>{children}</Layout>
     </ProtectedRoute>
   )
@@ -25,9 +34,9 @@ export default function App() {
       <AuthProvider>
         <Routes>
           <Route path="/login"           element={<Login />} />
-          <Route path="/"                element={<AppLayout><Dashboard /></AppLayout>} />
-          <Route path="/camera/:name"    element={<AppLayout><CameraView /></AppLayout>} />
-          <Route path="/recordings"      element={<AppLayout><Recordings /></AppLayout>} />
+          <Route path="/"                element={<AppLayout requireLiveView><Dashboard /></AppLayout>} />
+          <Route path="/camera/:name"    element={<AppLayout requireLiveView><CameraView /></AppLayout>} />
+          <Route path="/recordings"      element={<AppLayout requireRecordingsView><Recordings /></AppLayout>} />
           <Route path="/discovery"       element={<AppLayout adminOnly><Discovery /></AppLayout>} />
           <Route path="/nvrs"            element={<AppLayout adminOnly><NVRs /></AppLayout>} />
           <Route path="/cameras"         element={<AppLayout adminOnly><Cameras /></AppLayout>} />

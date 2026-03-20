@@ -7,4 +7,6 @@ export const usersApi = {
   delete: (id)         => api.delete(`/api/users/${id}`),
   getNvrs:    (id)            => api.get(`/api/users/${id}/nvrs`),
   setNvrs:    (id, nvr_ids)   => api.post(`/api/users/${id}/nvrs`, { nvr_ids }),
+  getCameras: (id)            => api.get(`/api/users/${id}/cameras`),
+  setCameras: (id, camera_ids) => api.post(`/api/users/${id}/cameras`, { camera_ids }),
 }

@@ -38,6 +38,57 @@ services:
     networks:
       - opusnet
 
+  recorder:
+    build: .
+    container_name: opus-recorder
+    restart: always
+    env_file:
+      - .env
+    environment:
+      - TZ=America/Chicago
+      # ── Recording Engine Configuration ── Override any of these in your .env file
+      - RECORDINGS_DIR=/recordings
+      - RECORDING_MODE=all
+      - RECORDING_SEGMENT_MINUTES=15
+      - RECORDING_RETENTION_DAYS=90
+      - RECORDING_MAX_STORAGE_GB=25
+      - RECORDING_STAGGER_SECONDS=2
+      # - GO2RTC_RTSP_URL=rtsp://go2rtc:8554
+    volumes:
+      - ./instance:/app/instance
+      - ./go2rtc:/config
+      - recordings:/recordings
+    depends_on:
+      - go2rtc
+    command: ["python", "-m", "app.recording_service"]
+    networks:
+      - opusnet
+
+  processor:
+    build: .
+    container_name: opus-processor
+    restart: always
+    env_file:
+      - .env
+    environment:
+      - TZ=America/Chicago
+      - RECORDINGS_DIR=/recordings
+      - PROCESSING_POLL_SECONDS=6
+      - CLIP_SECONDS=45
+      - MOTION_COOLDOWN_SECONDS=75
+      - MOTION_DETECTOR=opencv
+      - FFMPEG_HWACCEL=none
+      # Match recorder: relay RTSP through go2rtc (uncomment both here and on recorder)
+      # - GO2RTC_RTSP_URL=rtsp://go2rtc:8554
+    volumes:
+      - ./instance:/app/instance
+      - recordings:/recordings
+    depends_on:
+      - go2rtc
+    command: ["python", "-m", "app.processing_service"]
+    networks:
+      - opusnet
+
   go2rtc:
     image: alexxit/go2rtc
     container_name: go2rtc

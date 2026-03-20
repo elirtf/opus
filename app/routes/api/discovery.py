@@ -302,13 +302,15 @@ def add_cameras():
             skipped.append(name)
             continue
 
+        is_main = name.endswith("-main")
         cam = Camera.create(
             name=name,
             display_name=display_name,
             rtsp_url=rtsp_url,
             nvr=nvr.id if nvr else None,
             active=True,
-            recording_enabled=True,
+            recording_enabled=is_main,
+            recording_policy="continuous" if is_main else "off",
         )
         stream_sync(cam)
         created.append(name)

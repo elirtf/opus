@@ -1,5 +1,6 @@
 from flask import Blueprint, current_app
-from app.routes.api.utils import api_response, api_error, login_required_api
+from app.routes.api.utils import api_response, api_error, login_required_api, admin_required
+from app.services.host_diagnostics import collect_host_diagnostics
 import requests as http
 
 bp = Blueprint("api_health", __name__, url_prefix="/api/health")
@@ -30,3 +31,11 @@ def stream_health():
         health[name] = len(producers) > 0
 
     return api_response(health)
+
+
+@bp.route("/diagnostics", methods=["GET"])
+@login_required_api
+@admin_required
+def host_diagnostics():
+    """Admin-only host/container capability snapshot (see docs/hw-diagnostics-spec.md)."""
+    return api_response(collect_host_diagnostics())

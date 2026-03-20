@@ -103,6 +103,19 @@ IP Camera (RTSP)
 
 ---
 
+## Documentation
+
+| Doc | Topic |
+|-----|--------|
+| [docs/hardware-sizing.md](docs/hardware-sizing.md) | Bitrate → storage, tiers, filesystems, retention env vars |
+| [docs/streaming-playback.md](docs/streaming-playback.md) | HLS/DASH/WebRTC vs go2rtc + MP4, browser notes |
+| [docs/deployment-profiles.md](docs/deployment-profiles.md) | Pi / NUC / workstation / hosted env defaults |
+| [docs/hw-diagnostics-spec.md](docs/hw-diagnostics-spec.md) | Admin `GET /api/health/diagnostics` JSON schema |
+| [docs/nvr-replacement-lab.md](docs/nvr-replacement-lab.md) | Lab tracks and regression checklist |
+| [docs/hosted-ops-outline.md](docs/hosted-ops-outline.md) | Rented-appliance ops outline |
+
+---
+
 ## Development
 
 To run outside Docker for faster local iteration:

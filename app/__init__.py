@@ -9,27 +9,32 @@ def create_app():
     app = Flask(__name__)
     app.config["SECRET_KEY"]        = os.environ.get("SECRET_KEY", "change-me-in-production")
     app.config["DATABASE_PATH"]     = os.environ.get("DATABASE_PATH", "/app/instance/opus.db")
+    app.config["DATABASE_URL"]      = os.environ.get("DATABASE_URL")
     app.config["GO2RTC_URL"]        = os.environ.get("GO2RTC_URL", "http://go2rtc:1984")
     app.config["RECORDINGS_DIR"]    = os.environ.get("RECORDINGS_DIR", "/recordings")
 
     # ── Database - Peewee init ───────────────────────────────────────────────
-    from app.database import db
-    os.makedirs(os.path.dirname(app.config["DATABASE_PATH"]), exist_ok=True)
-    db.init(app.config["DATABASE_PATH"])
-    db.start()
-    db.connect(reuse_if_open=True)
+    from app.database import db, init_database
 
-    # Performance tuning
-    # WAL mode allows concurrent readers + one writer without locking.
-    # Critical for recording engine writing segments while users browse.
-    db.pragma("journal_mode", "wal")
-    db.pragma("busy_timeout", 5000)    # wait up to 5s on lock instead of failing
-    db.pragma("synchronous", "normal") # safe with WAL, much faster than "full"
+    # For SQLite, ensure the on-disk path exists. For DATABASE_URL (Postgres),
+    # DATABASE_PATH is ignored by init_database().
+    if not app.config["DATABASE_URL"]:
+        os.makedirs(os.path.dirname(app.config["DATABASE_PATH"]), exist_ok=True)
+
+    init_database(
+        database_path=app.config["DATABASE_PATH"],
+        database_url=app.config["DATABASE_URL"],
+    )
+    db.connect(reuse_if_open=True)
 
     # Run pending migrations before serving any requests.
     # Replaces db.create_tables() — migrations own the schema from here on.
-    from app.migrate import run_migrations
-    run_migrations(app.config["DATABASE_PATH"])
+    # NOTE: Current migration runner is SQLite-only. When DATABASE_URL is set
+    # (e.g. Postgres), migrations must be applied separately using a dedicated
+    # tool or future migration system.
+    if not app.config["DATABASE_URL"]:
+        from app.migrate import run_migrations
+        run_migrations(app.config["DATABASE_PATH"])
 
     # Per-request connection management
     @app.before_request
@@ -64,6 +69,8 @@ def create_app():
     from app.routes.api.recordings import bp as api_recordings_bp
     from app.routes.api.discovery   import bp as api_discovery_bp
     from app.routes.api.recording_settings import bp as api_rec_settings_bp
+    from app.routes.api.events import bp as api_events_bp
+    from app.routes.api.processing_api import bp as api_processing_bp
 
     app.register_blueprint(api_auth_bp)
     app.register_blueprint(api_nvrs_bp)
@@ -73,6 +80,8 @@ def create_app():
     app.register_blueprint(api_recordings_bp)
     app.register_blueprint(api_discovery_bp)
     app.register_blueprint(api_rec_settings_bp)
+    app.register_blueprint(api_events_bp)
+    app.register_blueprint(api_processing_bp)
 
 
     # ── Seed default admin if no users exist ─────────────────────────────────
@@ -81,23 +90,6 @@ def create_app():
         admin.set_password("admin")
         admin.save(force_insert=True)
         print("Default admin created — username: admin / password: admin")
-
-    # ── Re-register all streams with go2rtc on startup ───────────────────────
-    # go2rtc loses dynamic streams on restart — this restores them.
-    with app.app_context():
-        try:
-            from app.go2rtc import sync_all_on_startup
-            sync_all_on_startup()
-        except Exception as e:
-            app.logger.warning(f"go2rtc startup sync failed: {e}")
-
-    # ── Start Recording Engine ───────────────────────────────────────────────
-    # Runs in a background daemon thread — manages FFmpeg processes for all
-    # cameras that have recording_enabled=True.
-    import app.recorder as recorder_module
-    recorder_module.engine = recorder_module.RecordingEngine(app)
-    recorder_module.engine.start()
-    app.logger.info("Recording engine initialized and started")
 
     # ── SPA catch-all ────────────────────────────────────────────────────────
     register_spa_catchall(app)

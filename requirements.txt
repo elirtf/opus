@@ -6,3 +6,5 @@ pyyaml
 werkzeug
 onvif-zeep>=0.2.12
 wsdiscovery>=2.1.1
+psycopg2-binary
+opencv-python-headless>=4.9.0

@@ -1,8 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useLocation } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
 
 // ── API helpers ──────────────────────────────────────────────────────────────
 const api = async (url, opts = {}) => {
   const res = await fetch(url, {
+    credentials: "include",
     headers: { "Content-Type": "application/json", ...opts.headers },
     ...opts,
   });
@@ -42,6 +45,9 @@ const toDateStr = (d) =>
 // MAIN PAGE
 // ═══════════════════════════════════════════════════════════════════════════════
 export default function RecordingsPage() {
+  const location = useLocation();
+  const { user } = useAuth();
+  const showSettingsTab = user?.role === "admin";
   const [tab, setTab] = useState("playback");
   const [cameras, setCameras] = useState([]);
   const [selectedCam, setSelectedCam] = useState(null);
@@ -68,6 +74,20 @@ export default function RecordingsPage() {
 
   const isOriginalAdmin = setupStatus?.is_original_admin ?? false;
 
+  // ── Initialize from URL query (camera & date) ──────────────────────────────
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const camParam = params.get("camera");
+    const dateParam = params.get("date");
+
+    if (camParam) {
+      setSelectedCam(camParam);
+    }
+    if (dateParam) {
+      setDate(dateParam);
+    }
+  }, [location.search]);
+
   // ── Check setup status on mount ─────────────────────────────────────────
   useEffect(() => {
     api("/api/recordings/settings/setup-status")
@@ -91,19 +111,38 @@ export default function RecordingsPage() {
     return () => clearInterval(iv);
   }, []);
 
-  // ── Load timeline when camera/date changes ─────────────────────────────
+  // ── Load timeline when camera/date / tab changes ─────────────────────────
   useEffect(() => {
-    if (!selectedCam) { setTimeline([]); setSegments([]); return; }
-    api(`/api/recordings/timeline?camera=${encodeURIComponent(selectedCam)}&date=${date}`)
+    if (!selectedCam || (tab !== "playback" && tab !== "events")) {
+      setTimeline([]);
+      setSegments([]);
+      return;
+    }
+    const path =
+      tab === "events"
+        ? `/api/events/timeline?camera=${encodeURIComponent(selectedCam)}&date=${date}`
+        : `/api/recordings/timeline?camera=${encodeURIComponent(selectedCam)}&date=${date}`;
+    api(path)
       .then((d) => {
         const segs = d.cameras?.[selectedCam] || [];
         setTimeline(segs);
         setSegments(segs);
       })
-      .catch(() => { setTimeline([]); setSegments([]); });
-  }, [selectedCam, date]);
+      .catch(() => {
+        setTimeline([]);
+        setSegments([]);
+      });
+  }, [selectedCam, date, tab]);
+
+  useEffect(() => {
+    setPlaying(null);
+  }, [tab]);
 
   // ── Load settings ───────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!showSettingsTab && tab === "settings") setTab("playback");
+  }, [showSettingsTab, tab]);
+
   useEffect(() => {
     if (tab === "settings") {
       api("/api/recordings/settings/").then(setSettings).catch(() => {});
@@ -169,9 +208,11 @@ export default function RecordingsPage() {
     setSetupSaving(false);
   };
 
-  // ── Play a segment ─────────────────────────────────────────────────────
+  // ── Play a segment or event clip ─────────────────────────────────────────
   const playSeg = (seg) => {
-    const url = `/api/recordings/${encodeURIComponent(selectedCam)}/${seg.filename}`;
+    const base =
+      tab === "events" ? "/api/events/" : "/api/recordings/";
+    const url = `${base}${encodeURIComponent(selectedCam)}/${seg.filename}`;
     setPlaying({ ...seg, url });
     if (videoRef.current) {
       videoRef.current.src = url;
@@ -324,19 +365,23 @@ export default function RecordingsPage() {
           )}
         </div>
         <div style={S.tabs}>
-          {["playback", "settings"].map((t) => (
+          {[
+            { id: "playback", label: "Playback" },
+            { id: "events", label: "Event clips" },
+            ...(showSettingsTab ? [{ id: "settings", label: "Settings" }] : []),
+          ].map(({ id, label }) => (
             <button
-              key={t}
-              onClick={() => setTab(t)}
-              style={{ ...S.tab, ...(tab === t ? S.tabActive : {}) }}
+              key={id}
+              onClick={() => setTab(id)}
+              style={{ ...S.tab, ...(tab === id ? S.tabActive : {}) }}
             >
-              {t === "playback" ? "Playback" : "Settings"}
+              {label}
             </button>
           ))}
         </div>
       </div>
 
-      {tab === "playback" ? (
+      {tab === "playback" || tab === "events" ? (
         // ═════════════════════════════════════════════════════════════════════
         // PLAYBACK TAB
         // ═════════════════════════════════════════════════════════════════════

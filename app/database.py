@@ -1,17 +1,44 @@
+from peewee import DatabaseProxy
 from playhouse.sqliteq import SqliteQueueDatabase
 
-# SqliteQueueDatabase serializes all writes through a background thread.
-# This is critical for an NVR where multiple cameras/processes write simultaneously.
-# autostart=False so we start it manually inside create_app() after config is loaded.
-db = SqliteQueueDatabase(
-    None,                   # path set later via db.init()
-    pragmas={
-        "journal_mode": "wal",      # WAL mode allows concurrent reads during writes
-        "cache_size": -1024 * 32,   # 32MB page cache
-        "foreign_keys": 1,          # enforce FK constraints
-        "synchronous": "normal",    # safe + faster than "full"
-    },
-    autostart=False,
-    queue_max_size=64,      # max pending writes before blocking
-    results_timeout=5.0,    # seconds to wait for a write result
-)
+# Database proxy that will be bound to either:
+# - a SqliteQueueDatabase (default, small installs)
+# - or a Postgres database (via DATABASE_URL) for larger installs.
+db = DatabaseProxy()
+
+
+def init_database(database_path: str | None = None, database_url: str | None = None):
+    """
+    Initialize the global Peewee database.
+
+    - If DATABASE_URL is provided, we delegate to playhouse.db_url.connect()
+      so Postgres (or other backends) can be used.
+    - Otherwise, we fall back to SqliteQueueDatabase for simple/small installs.
+    """
+    if database_url:
+        from playhouse.db_url import connect
+
+        database = connect(database_url)
+    else:
+        if not database_path:
+            raise ValueError("database_path is required when DATABASE_URL is not set")
+
+        database = SqliteQueueDatabase(
+            database_path,
+            pragmas={
+                "journal_mode": "wal",       # allows concurrent reads during writes
+                "cache_size": -1024 * 32,    # 32MB page cache
+                "foreign_keys": 1,           # enforce FK constraints
+                "synchronous": "normal",     # safe + faster than 'full'
+                "busy_timeout": 5000,        # wait up to 5s on lock instead of failing
+            },
+            autostart=False,
+            queue_max_size=64,
+            results_timeout=5.0,
+        )
+        # Start the background write queue for SQLite.
+        database.start()
+
+    # Bind the concrete database instance to the proxy used by models.
+    db.initialize(database)
+    return database

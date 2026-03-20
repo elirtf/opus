@@ -10,7 +10,11 @@ export default defineConfig({
   server: {
     // During local dev, proxy API calls to Flask
     proxy: {
-      '/api': 'http://localhost:5000',
+      '/api': {
+        target: 'http://localhost:5000',
+        changeOrigin: true,
+        timeout: 600_000, // discovery scans can run for minutes
+      },
       '/go2rtc': 'http://localhost:80',
     }
   }

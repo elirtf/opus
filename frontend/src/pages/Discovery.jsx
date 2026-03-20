@@ -71,6 +71,9 @@ function Step1({ onDone }) {
         <p className="text-gray-400 text-sm mt-1">
           We'll run a multicast WS-Discovery scan first, then optionally scan a subnet range.
         </p>
+        <p className="text-amber-200/80 text-xs mt-3 max-w-sm mx-auto leading-relaxed">
+          Large subnet scans can take many minutes. Keep this page open until the request finishes — the server and reverse proxy are configured for long-running discovery.
+        </p>
       </div>
 
       {error && (

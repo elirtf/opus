@@ -192,13 +192,13 @@ export default function Dashboard() {
           </div>
           {user?.role === 'admin' && (
             <div className="flex gap-2 mt-1">
-              <Link to="/nvrs"
+              <Link to="/devices"
                 className="text-sm px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors">
-                Add NVR
+                Devices
               </Link>
-              <Link to="/cameras"
+              <Link to="/discovery"
                 className="text-sm px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg transition-colors">
-                Add Camera
+                Discovery
               </Link>
             </div>
           )}

@@ -12,14 +12,17 @@ export default function LivePlayer({
   cameraName,
   enabled = true,
   className = "",
+  /** Use -sub stream for *-main keys so fullscreen/single view matches the dashboard grid (often more browser-friendly). */
+  preferSubStream = true,
 }) {
   const src = useMemo(() => {
     if (!cameraName || !enabled) return null;
-    // Use go2rtc's HTML player with MSE mode so it selects the best playback path.
-    return `/go2rtc/stream.html?src=${encodeURIComponent(
-      cameraName
-    )}&mode=mse`;
-  }, [cameraName, enabled]);
+    const streamKey =
+      preferSubStream && cameraName.endsWith("-main")
+        ? cameraName.replace(/-main$/, "-sub")
+        : cameraName;
+    return `/go2rtc/stream.html?src=${encodeURIComponent(streamKey)}&mode=mse`;
+  }, [cameraName, enabled, preferSubStream]);
 
   return (
     <div className={`relative w-full h-full bg-black ${className}`}>

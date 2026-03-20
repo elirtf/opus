@@ -21,6 +21,8 @@ services:
       - .env
     environment:
       - TZ=America/Chicago
+      # Recorder runs in the `recorder` service — proxy status into the API for the dashboard.
+      - RECORDER_INTERNAL_STATUS_URL=http://recorder:5055/status
       # ── Recording Engine Configuration ── Override any of these in your .env file
       - RECORDINGS_DIR=/recordings
       - RECORDING_MODE=all                    # "all" = record every active camera (default)
@@ -46,6 +48,7 @@ services:
       - .env
     environment:
       - TZ=America/Chicago
+      - RECORDER_STATUS_PORT=5055
       # ── Recording Engine Configuration ── Override any of these in your .env file
       - RECORDINGS_DIR=/recordings
       - RECORDING_MODE=all

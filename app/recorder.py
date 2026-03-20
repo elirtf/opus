@@ -83,8 +83,20 @@ class RecordingEngine:
                 logger.exception("Supervisor error")
             time.sleep(POLL_INTERVAL)
 
+    def _setup_allows_recording(self):
+        """Recording FFmpeg processes only run after first-run setup in the Recordings UI."""
+        try:
+            from app.routes.api.recording_settings import get_setting
+
+            return get_setting("setup_complete", "false") == "true"
+        except Exception:
+            return False
+
     def _desired(self):
+        if not self._setup_allows_recording():
+            return {}
         from app.models import Camera
+
         qs = Camera.select().where(
             (Camera.recording_enabled == True)
             & (Camera.active == True)
@@ -515,7 +527,8 @@ class RecordingEngine:
             pass
         return total
 
-    def test_rtsp(self, url, timeout=10):
+    @staticmethod
+    def test_rtsp(url, timeout=10):
         res = {"url": url, "reachable": False, "error": None,
                "video_codec": None, "resolution": None, "fps": None}
         try:
@@ -581,6 +594,7 @@ class RecordingEngine:
             "shelved_count": len(shelved_list),
             "processes": active,
             "shelved": shelved_list,
+            "setup_complete_gate": self._setup_allows_recording(),
             "storage": {"recordings_gb": round(tb / 1024**3, 2),
                         "max_storage_gb": MAX_STORAGE_GB or None, "disk": disk},
             "config": {"segment_minutes": SEGMENT_MINUTES,

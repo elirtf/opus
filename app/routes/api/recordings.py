@@ -13,6 +13,7 @@ Key improvements over the original:
 """
 
 import os
+import requests
 from datetime import datetime, timedelta
 from flask import Blueprint, request, current_app, send_from_directory
 from flask_login import current_user
@@ -28,6 +29,8 @@ from app.routes.api.utils import (
 bp = Blueprint("api_recordings", __name__, url_prefix="/api/recordings")
 
 RECORDINGS_DIR = os.environ.get("RECORDINGS_DIR", "/recordings")
+# Docker: set to http://recorder:5055/status so the API can show recorder process status.
+RECORDER_INTERNAL_STATUS_URL = os.environ.get("RECORDER_INTERNAL_STATUS_URL", "").strip()
 
 
 @bp.before_request
@@ -332,7 +335,7 @@ def serve_recording(camera_name, filename):
 
     cam_dir = os.path.join(RECORDINGS_DIR, camera_name)
     filepath = os.path.join(cam_dir, filename)
-    if not os.path.exists(filepath):
+    if not os.path.isfile(filepath):
         return api_error("Recording not found.", 404)
 
     return send_from_directory(
@@ -513,10 +516,50 @@ def engine_status():
     """Returns the current status of the recording engine (processes, storage, config)."""
     from app.recorder import engine
 
-    if engine is None:
-        return api_error("Recording engine is not initialized.", 503)
+    if engine is not None:
+        return api_response(engine.get_status())
 
-    return api_response(engine.get_status())
+    if RECORDER_INTERNAL_STATUS_URL:
+        try:
+            r = requests.get(RECORDER_INTERNAL_STATUS_URL, timeout=4)
+            if r.ok:
+                data = r.json()
+                if isinstance(data, dict):
+                    data.setdefault("status_source", "recorder_container")
+                    return api_response(data)
+        except Exception as exc:
+            current_app.logger.warning("Recorder status fetch failed: %s", exc)
+
+    return api_response({
+        "engine_running": False,
+        "active_recordings": 0,
+        "total_processes": 0,
+        "shelved_count": 0,
+        "processes": {},
+        "shelved": [],
+        "message": (
+            "Recording runs in a separate service. Set RECORDER_INTERNAL_STATUS_URL on the API "
+            "(e.g. http://recorder:5055/status) and ensure the recorder container is up."
+        ),
+        "status_source": "api_placeholder",
+    })
+
+
+@bp.route("/reconcile-storage", methods=["POST"])
+@login_required_api
+@admin_required
+def reconcile_storage():
+    """
+    Remove database rows for segment/event files that no longer exist on disk.
+    Use after wiping the recordings volume or restoring from backup.
+    """
+    from app.recording_reconcile import reconcile_storage_with_db
+
+    r, e = reconcile_storage_with_db()
+    return api_response(
+        {"removed_segments": r, "removed_events": e},
+        message=f"Reconciled: removed {r} segment row(s), {e} event row(s).",
+    )
 
 
 @bp.route("/engine/rescan", methods=["POST"])
@@ -530,7 +573,11 @@ def force_rescan():
     from app.recorder import engine
 
     if engine is None:
-        return api_error("Recording engine is not initialized.", 503)
+        return api_error(
+            "Segment scan runs inside the recorder container. Ensure opus-recorder is running, "
+            "or use the recorder service logs to verify FFmpeg.",
+            503,
+        )
 
     # Get counts before
     before_count = Recording.select().count()
@@ -588,27 +635,24 @@ def diagnose_camera(cam_id):
 
     Use this to debug why a camera isn't recording.
     """
-    from app.recorder import engine
-
-    if engine is None:
-        return api_error("Recording engine is not initialized.", 503)
+    from app.recorder import RecordingEngine, engine
 
     try:
         cam = Camera.get_by_id(cam_id)
     except Camera.DoesNotExist:
         return api_error("Camera not found.", 404)
 
-    result = engine.test_rtsp(cam.rtsp_url)
+    result = RecordingEngine.test_rtsp(cam.rtsp_url)
     result["camera_name"] = cam.name
     result["camera_display"] = cam.display_name
 
-    # Also check if there's a running FFmpeg process for this camera
-    status = engine.get_status()
-    proc_info = status.get("processes", {}).get(cam.name)
-    if proc_info:
+    if engine is not None:
+        status = engine.get_status()
+        proc_info = status.get("processes", {}).get(cam.name)
         result["recording_process"] = proc_info
     else:
         result["recording_process"] = None
+        result["note"] = "FFmpeg recording runs in the recorder container; process list is only available there."
 
     return api_response(result)
 
@@ -623,10 +667,7 @@ def diagnose_url():
 
     Body: { "rtsp_url": "rtsp://user:pass@192.168.1.100:554/stream" }
     """
-    from app.recorder import engine
-
-    if engine is None:
-        return api_error("Recording engine is not initialized.", 503)
+    from app.recorder import RecordingEngine
 
     data = request.get_json(silent=True) or {}
     rtsp_url = (data.get("rtsp_url") or "").strip()
@@ -637,7 +678,7 @@ def diagnose_url():
     if not rtsp_url.startswith("rtsp://"):
         return api_error("URL must start with rtsp://", 400)
 
-    result = engine.test_rtsp(rtsp_url)
+    result = RecordingEngine.test_rtsp(rtsp_url)
     return api_response(result)
 
 @bp.route("/timeline/<string:camera>", methods=["GET"])

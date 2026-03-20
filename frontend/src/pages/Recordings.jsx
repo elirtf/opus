@@ -156,9 +156,16 @@ export default function RecordingsPage() {
         method: "POST",
         body: JSON.stringify({ enabled: !cam.recording_enabled }),
       });
+      const on = !cam.recording_enabled;
       setCameras((prev) =>
         prev.map((c) =>
-          c.id === cam.id ? { ...c, recording_enabled: !c.recording_enabled } : c
+          c.id === cam.id
+            ? {
+                ...c,
+                recording_enabled: on,
+                recording_policy: on ? "continuous" : "off",
+              }
+            : c
         )
       );
       showToast(`Recording ${!cam.recording_enabled ? "enabled" : "disabled"} for ${cam.display_name}`);
@@ -187,6 +194,19 @@ export default function RecordingsPage() {
     try {
       await api("/api/recordings/settings/engine/restart", { method: "POST" });
       showToast("Engine restarting...");
+    } catch (e) {
+      showToast(e.message, false);
+    }
+  };
+
+  const reconcileStorage = async () => {
+    if (!isOriginalAdmin) return;
+    try {
+      const data = await api("/api/recordings/reconcile-storage", { method: "POST" });
+      showToast(
+        `Removed ${data.removed_segments ?? 0} stale segment(s), ${data.removed_events ?? 0} event(s) from the database.`
+      );
+      api("/api/recordings/storage").then(setStorageStats).catch(() => {});
     } catch (e) {
       showToast(e.message, false);
     }
@@ -605,6 +625,9 @@ export default function RecordingsPage() {
                       <button style={S.btnSecondary} onClick={restartEngine}>
                         Restart Engine
                       </button>
+                      <button style={S.btnSecondary} onClick={reconcileStorage} title="After deleting recording files or volumes, purge DB rows that point to missing files">
+                        Purge stale DB rows
+                      </button>
                     </div>
                   )}
                 </div>
@@ -617,9 +640,9 @@ export default function RecordingsPage() {
             <div style={S.card}>
               <h3 style={S.cardTitle}>Camera Recording</h3>
               <p style={S.hint}>
-                All main-stream cameras record by default.
+                Recording stays off until you turn it on here (main streams only), after completing recording setup.
                 {isOriginalAdmin
-                  ? " You can toggle individual cameras below."
+                  ? " Use the toggles below."
                   : " Only the original administrator can change these."}
               </p>
               <div style={S.camToggleList}>
@@ -715,6 +738,16 @@ export default function RecordingsPage() {
               <h3 style={S.cardTitle}>Engine Status</h3>
               {engineStatus ? (
                 <>
+                  {engineStatus.message && (
+                    <p style={{ color: "#94a3b8", fontSize: 12, marginBottom: 10, lineHeight: 1.45 }}>
+                      {engineStatus.message}
+                    </p>
+                  )}
+                  {engineStatus.setup_complete_gate === false && (
+                    <p style={{ color: "#f59e0b", fontSize: 12, marginBottom: 10 }}>
+                      Complete recording setup before the engine will write segments.
+                    </p>
+                  )}
                   <div style={S.statRow}>
                     <span style={S.statLabel}>Status</span>
                     <span style={{

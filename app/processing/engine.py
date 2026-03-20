@@ -81,6 +81,10 @@ class ProcessingEngine:
 
     def _tick(self):
         from app.models import Camera
+        from app.routes.api.recording_settings import get_setting
+
+        if get_setting("setup_complete", "false") != "true":
+            return
 
         qs = list(
             Camera.select().where(

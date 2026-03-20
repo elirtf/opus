@@ -1,7 +1,10 @@
+import os
 import time
 
 from . import create_app
-from .recorder import RecordingEngine, engine as global_engine
+from . import recorder as recorder_module
+from .recorder import RecordingEngine
+from .recorder_status_server import start_recorder_status_server
 
 
 def main():
@@ -17,9 +20,14 @@ def main():
     # We also assign it to the module-level `engine` so any existing
     # status endpoints that import `app.recorder.engine` continue to work.
     rec_engine = RecordingEngine(app)
-    global global_engine
-    global_engine = rec_engine
+    recorder_module.engine = rec_engine
     rec_engine.start()
+
+    status_port = int(os.environ.get("RECORDER_STATUS_PORT", "5055"))
+    start_recorder_status_server(rec_engine, port=status_port)
+    app.logger.info(
+        "Recorder status HTTP on 0.0.0.0:%s (path /status)", status_port
+    )
 
     app.logger.info("Recording service started and supervising FFmpeg processes")
 

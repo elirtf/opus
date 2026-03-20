@@ -134,7 +134,9 @@ def _ws_discovery() -> list[str]:
     Returns empty list if wsdiscovery is not available or times out.
     """
     try:
-        from wsdiscovery import WSDiscovery, ServiceFilter
+        # wsdiscovery>=2.x no longer exports ServiceFilter on the package root; we only need WSDiscovery.
+        from wsdiscovery import WSDiscovery
+
         wsd = WSDiscovery()
         wsd.start()
         services = wsd.searchServices(timeout=3)
@@ -302,15 +304,14 @@ def add_cameras():
             skipped.append(name)
             continue
 
-        is_main = name.endswith("-main")
         cam = Camera.create(
             name=name,
             display_name=display_name,
             rtsp_url=rtsp_url,
             nvr=nvr.id if nvr else None,
             active=True,
-            recording_enabled=is_main,
-            recording_policy="continuous" if is_main else "off",
+            recording_enabled=False,
+            recording_policy="off",
         )
         stream_sync(cam)
         created.append(name)

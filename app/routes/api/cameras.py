@@ -168,11 +168,9 @@ def create_camera():
     if Camera.select().where(Camera.name == name).exists():
         return api_error(f'Stream name "{name}" is already taken.')
 
-    # Main streams auto-record by default.
-    auto_record = name.endswith("-main")
     policy = (data.get("recording_policy") or "").strip().lower()
     if not policy:
-        policy = "continuous" if auto_record else "off"
+        policy = "off"
     if policy not in RECORDING_POLICIES:
         return api_error('recording_policy must be one of: off, continuous, events_only.')
     if policy != "off" and not name.endswith("-main"):

@@ -61,8 +61,8 @@ def import_cameras(nvr):
                 rtsp_url=rtsp_url,
                 nvr=nvr.id,
                 active=True,
-                recording_enabled=is_main,
-                recording_policy="continuous" if is_main else "off",
+                recording_enabled=False,
+                recording_policy="off",
             )
             stream_add(name, rtsp_url)
             created += 1

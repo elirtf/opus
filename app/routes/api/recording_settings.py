@@ -117,7 +117,7 @@ def initial_setup():
 
     return api_response(
         {"recordings_dir": recordings_dir, "setup_complete": True},
-        message="Recording setup complete. All main-stream cameras will begin recording."
+        message="Recording storage is configured. Enable recording per camera from the Recordings tab.",
     )
 
 
@@ -246,18 +246,25 @@ def bulk_toggle_recording():
 
     if enabled:
         main_ids = [
-            c.id for c in Camera.select(Camera.id, Camera.name)
-            .where((Camera.id.in_(camera_ids)) & (Camera.name.endswith("-main")))
+            c.id
+            for c in Camera.select(Camera.id, Camera.name).where(
+                (Camera.id.in_(camera_ids)) & (Camera.name.endswith("-main"))
+            )
         ]
         if not main_ids:
             return api_error("Recording is only supported on main streams.", 400)
         camera_ids = main_ids
-
-    count = (
-        Camera.update(recording_enabled=enabled)
-        .where(Camera.id.in_(camera_ids))
-        .execute()
-    )
+        count = (
+            Camera.update(recording_enabled=True, recording_policy="continuous")
+            .where(Camera.id.in_(camera_ids))
+            .execute()
+        )
+    else:
+        count = (
+            Camera.update(recording_enabled=False, recording_policy="off")
+            .where(Camera.id.in_(camera_ids))
+            .execute()
+        )
 
     status = "enabled" if enabled else "disabled"
     return api_response(
@@ -280,7 +287,10 @@ def restart_engine():
             _sync_env_vars()
             engine.start()
             return api_response(message="Recording engine restarted.")
-        else:
-            return api_error("Recording engine not initialized.", 503)
+        return api_error(
+            "Recording runs in the recorder container, not this API process. "
+            "Restart it with: docker restart opus-recorder (or your compose service name).",
+            503,
+        )
     except Exception as e:
         return api_error(f"Failed to restart engine: {e}", 500)

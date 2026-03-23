@@ -5,11 +5,9 @@
 <h1 align="center">Opus NVR</h1>
 
 <p align="center">
-  A lightweight, self-hosted **camera streaming and management platform** designed for environments using IP cameras and/or NVRs.
+  A lightweight, self-hosted **IP camera recorder and viewer**. For new installs, cameras send **RTSP directly to Opus** (live + continuous recording + timeline playback). A vendor NVR is <strong>optional</strong>—the UI still supports importing channels from an existing recorder for <strong>migration</strong> only.
 
-  Opus provides a clean web interface for viewing live feeds, managing cameras/NVRs, and controlling user access — all deployable with **Docker in minutes**.
-
-  Built with a focus on **simplicity, performance, and extensibility**, Opus aims to be a practical alternative to heavier NVR dashboards while remaining developer-friendly.
+  Deploy with <strong>Docker Compose</strong> on Linux (Ubuntu Server is the documented standard). Scope and non-goals for v1: <a href="docs/PRODUCT_SCOPE_V1.md">docs/PRODUCT_SCOPE_V1.md</a>.
 </p>
 
 <p align="center">
@@ -28,7 +26,9 @@
 
 ### Live Viewing
 ### Streaming
-### Camera & NVR Management
+### Devices & Configuration
+
+Sites (legacy NVR import), camera list, and **Configuration** (system info, diagnostics, per-site stream table with RTSP edit).
 ### Authentication & Access Control
 
 ---
@@ -39,7 +39,7 @@
 |------|-------------|
 | Backend | [Flask](https://flask.palletsprojects.com/) |
 | Authentication | Flask-Login |
-| Database | Flask-SQLAlchemy (SQLite) |
+| Database | SQLite via Peewee (migrations in `app/migrations/`) |
 | Stream Server | [go2rtc](https://github.com/AlexxIT/go2rtc) |
 | Reverse Proxy | nginx |
 | Frontend | React + Tailwind CSS |
@@ -88,18 +88,17 @@ The app will be available at **http://localhost**.
 ```
 IP Camera (RTSP)
       │
-      ▼
-  go2rtc (:1984)        ← Manages all RTSP connections, transcodes to MSE
-      │
-      ▼
-  nginx (:80)           ← /go2rtc/* proxied to go2rtc, / proxied to Flask
-      │
-      ▼
-  Opus UI               ← React
-      │
-      ▼
-  Browser               ← Receives MSE stream inside an iframe per camera tile
+      ├──────────────────────────────┐
+      ▼                              ▼
+ go2rtc (:1984)                 Recorder + FFmpeg
+ (live / MSE in browser)         (MP4 segments on disk)
+      │                              │
+      └────────── nginx (:80) ───────┘
+                      │
+                 Opus API + React UI
 ```
+
+**Recommended path:** one RTSP URL per camera (main for recording; optional substream for live tiles). **Migration path:** import channels from an existing NVR under Devices → Sites & migration.
 
 ---
 
@@ -107,11 +106,13 @@ IP Camera (RTSP)
 
 | Doc | Topic |
 |-----|--------|
+| [docs/PRODUCT_SCOPE_V1.md](docs/PRODUCT_SCOPE_V1.md) | v1 features, deployment assumptions, explicit non-goals |
+| [docs/certified-cameras.md](docs/certified-cameras.md) | Minimal certified list + short regression checklist |
 | [docs/hardware-sizing.md](docs/hardware-sizing.md) | Bitrate → storage, tiers, filesystems, retention env vars |
 | [docs/streaming-playback.md](docs/streaming-playback.md) | HLS/DASH/WebRTC vs go2rtc + MP4, browser notes |
 | [docs/deployment-profiles.md](docs/deployment-profiles.md) | Pi / NUC / workstation / hosted env defaults |
 | [docs/hw-diagnostics-spec.md](docs/hw-diagnostics-spec.md) | Admin `GET /api/health/diagnostics` JSON schema |
-| [docs/nvr-replacement-lab.md](docs/nvr-replacement-lab.md) | Lab tracks and regression checklist |
+| [docs/nvr-replacement-lab.md](docs/nvr-replacement-lab.md) | Lab tracks and migration validation |
 | [docs/hosted-ops-outline.md](docs/hosted-ops-outline.md) | Rented-appliance ops outline |
 
 ---

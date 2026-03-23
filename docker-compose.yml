@@ -25,8 +25,7 @@ services:
       - RECORDER_INTERNAL_STATUS_URL=http://recorder:5055/status
       # ── Recording Engine Configuration ── Override any of these in your .env file
       - RECORDINGS_DIR=/recordings
-      - RECORDING_MODE=all                    # "all" = record every active camera (default)
-                                              # "selective" = only record cameras you toggle on
+      # Which cameras record is controlled in the UI (per-camera toggles + first-run setup), not env.
       - RECORDING_SEGMENT_MINUTES=15          # Length of each MP4 segment
       - RECORDING_RETENTION_DAYS=90           # Auto-delete recordings older than this
       - RECORDING_MAX_STORAGE_GB=25            # 0 = unlimited; set to cap disk usage
@@ -51,7 +50,6 @@ services:
       - RECORDER_STATUS_PORT=5055
       # ── Recording Engine Configuration ── Override any of these in your .env file
       - RECORDINGS_DIR=/recordings
-      - RECORDING_MODE=all
       - RECORDING_SEGMENT_MINUTES=15
       - RECORDING_RETENTION_DAYS=90
       - RECORDING_MAX_STORAGE_GB=25

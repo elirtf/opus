@@ -52,8 +52,23 @@ function Step1({ onDone }) {
     setError('')
     setScanning(true)
     try {
-      const result = await discoveryApi.scan(username, password, subnet || undefined)
-      onDone({ result, username, password })
+      const { job_id: jobId } = await discoveryApi.startScan(username, password, subnet || undefined)
+      // Poll until background scan finishes (avoids proxy/upstream timeouts on /24 scans).
+      for (;;) {
+        const st = await discoveryApi.scanStatus(jobId)
+        if (st.status === 'running') {
+          await new Promise((r) => setTimeout(r, 1000))
+          continue
+        }
+        if (st.status === 'error') {
+          throw new Error(st.error || 'Scan failed')
+        }
+        if (st.status === 'complete' && st.result) {
+          onDone({ result: st.result, username, password })
+          return
+        }
+        throw new Error('Unexpected scan status')
+      }
     } catch (err) {
       setError(err.message)
     } finally {
@@ -72,7 +87,7 @@ function Step1({ onDone }) {
           We'll run a multicast WS-Discovery scan first, then optionally scan a subnet range.
         </p>
         <p className="text-amber-200/80 text-xs mt-3 max-w-sm mx-auto leading-relaxed">
-          Large subnet scans can take many minutes. Keep this page open until the request finishes — the server and reverse proxy are configured for long-running discovery.
+          Large subnet scans run in the background; this page polls until they finish (no single long HTTP request).
         </p>
       </div>
 
@@ -117,7 +132,7 @@ function Step1({ onDone }) {
           {scanning ? (
             <span className="flex items-center justify-center gap-2">
               <span className="animate-spin">⟳</span>
-              Scanning... (this may take 10–30 seconds)
+              Scanning… (multicast is quick; full /24 subnets can take several minutes)
             </span>
           ) : '🔍 Scan Network'}
         </button>

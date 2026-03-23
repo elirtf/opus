@@ -8,7 +8,8 @@ async function request(method, path, body) {
   const opts = {
     method,
     headers: { 'Content-Type': 'application/json' },
-    credentials: 'same-origin', // send session cookie
+    // Include cookies on localhost dev (Vite :5173) and behind nginx; matches Recordings page fetch.
+    credentials: 'include',
   }
   if (body !== undefined) {
     opts.body = JSON.stringify(body)

@@ -9,9 +9,19 @@ const api = async (url, opts = {}) => {
     headers: { "Content-Type": "application/json", ...opts.headers },
     ...opts,
   });
-  const json = await res.json();
-  if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
-  return json.data ?? json;
+  let json = {};
+  try {
+    const text = await res.text();
+    if (text) json = JSON.parse(text);
+  } catch {
+    json = {};
+  }
+  if (!res.ok) {
+    const err = new Error(json.error || `HTTP ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
+  return json.data !== undefined ? json.data : json;
 };
 
 // ── Constants & formatters ───────────────────────────────────────────────────
@@ -66,6 +76,7 @@ export default function RecordingsPage() {
   const [setupSaving, setSetupSaving] = useState(false);
   const [speed, setSpeed] = useState(1);
   const videoRef = useRef(null);
+  const [pollError, setPollError] = useState(null);
 
   const showToast = useCallback((msg, ok = true) => {
     setToast({ msg, ok });
@@ -102,9 +113,27 @@ export default function RecordingsPage() {
 
   // ── Load engine status periodically ─────────────────────────────────────
   useEffect(() => {
-    const load = () => {
-      api("/api/recordings/engine/status").then(setEngineStatus).catch(() => {});
-      api("/api/recordings/storage").then(setStorageStats).catch(() => {});
+    const load = async () => {
+      const [r1, r2] = await Promise.allSettled([
+        api("/api/recordings/engine/status"),
+        api("/api/recordings/storage"),
+      ]);
+      const authFail = (r) =>
+        r.status === "rejected" && (r.reason?.status === 401 || r.reason?.status === 403);
+      if (authFail(r1) || authFail(r2)) {
+        const st = r1.status === "rejected" ? r1.reason?.status : r2.reason?.status;
+        setPollError(
+          st === 401
+            ? "Session expired or not signed in — log in, then refresh this page."
+            : "You do not have permission to view recording status."
+        );
+        setEngineStatus(null);
+        setStorageStats(null);
+        return;
+      }
+      setPollError(null);
+      if (r1.status === "fulfilled") setEngineStatus(r1.value);
+      if (r2.status === "fulfilled") setStorageStats(r2.value);
     };
     load();
     const iv = setInterval(load, 15000);
@@ -309,9 +338,9 @@ export default function RecordingsPage() {
             </svg>
             <h2 style={S.setupTitle}>Recording Setup</h2>
             <p style={S.setupDesc}>
-              Welcome! Before recordings can begin, please configure where
-              recording files should be stored. All active main-stream cameras
-              will begin recording automatically once setup is complete.
+              Welcome! Configure where recording files are stored (absolute path
+              inside the server/container). Recording stays off until you enable
+              it per camera under Recordings → Settings after setup.
             </p>
             <label style={S.label}>
               Recordings Storage Path
@@ -336,9 +365,9 @@ export default function RecordingsPage() {
                 <span style={{ color: "#e2e8f0" }}>90 days</span>
               </div>
               <div style={S.setupInfoRow}>
-                <span style={{ color: "#94a3b8" }}>Cameras</span>
+                <span style={{ color: "#94a3b8" }}>Main streams</span>
                 <span style={{ color: "#e2e8f0" }}>
-                  {cameras.filter((c) => c.active && c.name.endsWith("-main")).length} main streams (auto-record)
+                  {cameras.filter((c) => c.active && c.name.endsWith("-main")).length} (enable recording per camera after setup)
                 </span>
               </div>
             </div>
@@ -347,7 +376,7 @@ export default function RecordingsPage() {
               onClick={completeSetup}
               disabled={setupSaving || !setupDir.startsWith("/")}
             >
-              {setupSaving ? "Saving..." : "Complete Setup & Start Recording"}
+              {setupSaving ? "Saving..." : "Complete setup"}
             </button>
           </div>
         </div>
@@ -363,6 +392,20 @@ export default function RecordingsPage() {
       {toast && (
         <div style={{ ...S.toast, background: toast.ok ? "#059669" : "#dc2626" }}>
           {toast.msg}
+        </div>
+      )}
+      {pollError && (
+        <div
+          style={{
+            ...S.permBanner,
+            margin: "0 20px 0",
+            borderRadius: 8,
+            justifyContent: "center",
+            color: "#fecaca",
+            borderColor: "rgba(248,113,113,0.35)",
+          }}
+        >
+          {pollError}
         </div>
       )}
 
@@ -728,6 +771,8 @@ export default function RecordingsPage() {
                     </div>
                   )}
                 </>
+              ) : pollError ? (
+                <p style={{ color: "#f87171", fontSize: 12 }}>Could not load (see notice above).</p>
               ) : (
                 <p style={{ color: "#64748b" }}>Loading storage stats...</p>
               )}
@@ -801,6 +846,8 @@ export default function RecordingsPage() {
                     </div>
                   )}
                 </>
+              ) : pollError ? (
+                <p style={{ color: "#f87171", fontSize: 12 }}>Could not load (see notice above).</p>
               ) : (
                 <p style={{ color: "#64748b" }}>Loading...</p>
               )}

@@ -3,6 +3,7 @@ go2rtc.yaml
 *.pyc
 instance/*
 .env
+compose.override.yml
 .db
 frontend/node_modules
 frontend/dist

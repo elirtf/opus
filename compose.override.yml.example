@@ -1,0 +1,11 @@
+# Copy to compose.override.yml (gitignored) for local tweaks.
+# Example: mount source for hot reload (adjust paths).
+#
+# services:
+#   opus:
+#     volumes:
+#       - ./app:/app/app:ro
+#     environment:
+#       - FLASK_DEBUG=1
+
+services: {}

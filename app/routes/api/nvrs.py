@@ -41,7 +41,7 @@ def stream_add(name, rtsp_url):
 
 def import_cameras(nvr):
     """Generate main+sub stream cameras for every channel. Returns (created, skipped).
-    Main streams are auto-enabled for recording."""
+    Recording is off until enabled per camera in the Recordings UI."""
     created = 0
     skipped = 0
     base = f"rtsp://{nvr.username}:{nvr.password}@{nvr.ip_address}:554"

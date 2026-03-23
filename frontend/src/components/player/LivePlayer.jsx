@@ -5,15 +5,17 @@ import { useMemo } from "react";
  * - `cameraName`: stream name in go2rtc (e.g. "FrontDoor-main")
  * - `enabled`: when false, player stays idle (used for lazy-loading in grids)
  *
- * This version uses go2rtc's built-in `stream.html` player inside an iframe.
- * go2rtc handles WebRTC/MSE/HLS negotiation and reconnection logic.
+ * Uses go2rtc `stream.html` in an iframe. HEVC: many browsers fail MSE on H.265 — use
+ * `playbackMode="webrtc"` for single views, or transcode in go2rtc (go2rtc/README-HEVC.md).
  */
 export default function LivePlayer({
   cameraName,
   enabled = true,
   className = "",
-  /** Use -sub stream for *-main keys so fullscreen/single view matches the dashboard grid (often more browser-friendly). */
+  /** Use -sub for *-main in grids (lower bitrate). */
   preferSubStream = true,
+  /** `mse` for tiles; `webrtc` often better for HEVC / dedicated camera page. */
+  playbackMode = "mse",
 }) {
   const src = useMemo(() => {
     if (!cameraName || !enabled) return null;
@@ -21,8 +23,9 @@ export default function LivePlayer({
       preferSubStream && cameraName.endsWith("-main")
         ? cameraName.replace(/-main$/, "-sub")
         : cameraName;
-    return `/go2rtc/stream.html?src=${encodeURIComponent(streamKey)}&mode=mse`;
-  }, [cameraName, enabled, preferSubStream]);
+    const mode = playbackMode === "webrtc" ? "webrtc" : "mse";
+    return `/go2rtc/stream.html?src=${encodeURIComponent(streamKey)}&mode=${encodeURIComponent(mode)}`;
+  }, [cameraName, enabled, preferSubStream, playbackMode]);
 
   return (
     <div className={`relative w-full h-full bg-black ${className}`}>

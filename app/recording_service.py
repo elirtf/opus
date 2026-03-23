@@ -16,6 +16,19 @@ def main():
     """
     app = create_app()
 
+    try:
+        from app.recording_reconcile import reconcile_storage_with_db
+
+        removed_r, removed_e = reconcile_storage_with_db()
+        if removed_r or removed_e:
+            app.logger.info(
+                "Startup storage reconcile: removed %s segment row(s), %s event row(s) with missing files",
+                removed_r,
+                removed_e,
+            )
+    except Exception:
+        app.logger.exception("Startup storage reconcile failed")
+
     # Create and start the recording engine for this process only.
     # We also assign it to the module-level `engine` so any existing
     # status endpoints that import `app.recorder.engine` continue to work.

@@ -130,8 +130,13 @@ export default function CameraView() {
         )}
       </div>
 
-      <div className="flex-1 bg-black">
-        <LivePlayer cameraName={cam.name} enabled={true} showControls={true} />
+      <div className="flex-1 bg-black min-h-0">
+        <LivePlayer
+          cameraName={cam.name}
+          enabled={true}
+          preferSubStream={false}
+          playbackMode="webrtc"
+        />
       </div>
     </div>
   );

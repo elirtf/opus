@@ -118,7 +118,9 @@ IP Camera (RTSP)
 
 ## Development
 
-To run outside Docker for faster local iteration:
+**Typical fast loop:** run **go2rtc** with Docker (`docker compose up go2rtc`), run **Flask** (`python run.py`), and run the **Vite** dev server (`cd frontend && npm install && npm run dev`). The frontend proxies `/api` to `localhost:5000` (see `frontend/vite.config.js`). Optional: copy `compose.override.yml.example` to `compose.override.yml` for local compose tweaks (file is gitignored).
+
+To run the backend alone:
 
 ```bash
 # Create a virtual environment
@@ -138,6 +140,8 @@ python run.py
 ```
 
 > You'll still need go2rtc running separately (or skip it — the app works without it, streams just won't load).
+
+**Quick smoke check:** log in, open dashboard live tile, run Discovery (subnet scan uses background job + polling), open Recordings and confirm engine status loads when the recorder service and `RECORDER_INTERNAL_STATUS_URL` are set.
 
 ---
 

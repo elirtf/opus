@@ -3,6 +3,8 @@ import { api } from "./client";
 export const camerasApi = {
   list: () => api.get("/api/cameras/"),
   summary: () => api.get("/api/cameras/summary"),
+  inventory: () => api.get("/api/cameras/inventory"),
+  source: (id) => api.get(`/api/cameras/${id}/source`),
   status: (name) => api.get(`/api/cameras/${encodeURIComponent(name)}/status`),
   streams: (name) => api.get(`/api/cameras/${encodeURIComponent(name)}/streams`),
   stats: (name) => api.get(`/api/cameras/${encodeURIComponent(name)}/stats`),

@@ -131,12 +131,12 @@ export default function CameraView() {
       </div>
 
       <div className="flex-1 bg-black min-h-0">
-        <LivePlayer
-          cameraName={cam.name}
-          enabled={true}
-          preferSubStream={false}
-          playbackMode="webrtc"
-        />
+        {/*
+          MSE over HTTP works through nginx; WebRTC often hits ICE failures behind Docker/NAT
+          unless go2rtc advertises reachable candidates or TURN is configured.
+          Substream live preview matches the dashboard (lower bitrate).
+        */}
+        <LivePlayer cameraName={cam.name} enabled={true} />
       </div>
     </div>
   );

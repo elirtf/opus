@@ -423,8 +423,11 @@ export default function Discovery() {
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="px-6 py-4 border-b border-gray-800 bg-gray-900 shrink-0">
-        <div className="flex items-center justify-between max-w-3xl mx-auto">
-          <h2 className="text-lg font-bold text-white">Camera Discovery</h2>
+        <div className="flex items-center justify-between max-w-3xl mx-auto gap-4">
+          <div>
+            <h2 className="text-lg font-bold text-white">Camera Discovery</h2>
+            <p className="text-xs text-gray-500 mt-0.5">Preferred way to add cameras: direct RTSP into Opus (no NVR required).</p>
+          </div>
           {/* Step indicator */}
           <div className="flex items-center gap-2">
             {STEPS.map((label, i) => (

@@ -219,7 +219,17 @@ function StreamEditForm({ cameraRow, source, onSubmit, onClose }) {
       </div>
       <div>
         <label className="block text-xs text-gray-400 mb-1">Substream RTSP (optional)</label>
-        <textarea className={`${inputCls} min-h-[56px]`} value={sub} onChange={(e) => setSub(e.target.value)} />
+        <textarea
+          className={`${inputCls} min-h-[56px]`}
+          value={sub}
+          onChange={(e) => setSub(e.target.value)}
+          placeholder="Lower-resolution URL for live tiles (recommended if main is 4K/HEVC)"
+        />
+        <p className="text-xs text-gray-500 mt-1">
+          For <span className="font-mono text-gray-400">…-main</span> cameras without a separate{' '}
+          <span className="font-mono text-gray-400">…-sub</span> row (e.g. NVR import has two rows), this URL is
+          registered in go2rtc as the paired sub stream so the dashboard and full-screen view use it automatically.
+        </p>
       </div>
       <p className="text-xs text-gray-500">Credentials stay on the server; list views show masked URLs.</p>
       <div className="flex gap-2 pt-2">

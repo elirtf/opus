@@ -39,6 +39,22 @@ def _mask_rtsp(url: str):
     return _CRED_RE.sub(r"\1***:***@", url)
 
 
+def _rtsp_hostname(url: str):
+    if not url:
+        return None
+    try:
+        from urllib.parse import urlparse
+
+        return urlparse(url).hostname
+    except Exception:
+        return None
+
+
+def _guess_channel_from_name(name: str):
+    m = re.search(r"-ch(\d+)-", name or "")
+    return int(m.group(1)) if m else None
+
+
 def _cameras_query_for_user():
     """Ordered camera query scoped by NVR + optional UserCamera rows. None = no access."""
     allowed_nvrs = current_user.allowed_nvr_ids()
@@ -109,6 +125,13 @@ def _get_stream_health_cached():
         return _state_cache.get("health", {}) or {}
 
 
+def _health_lookup_stream_name(cam_name: str) -> str:
+    """Live tiles treat paired -sub as the health signal for -main streams when both exist."""
+    if cam_name.endswith("-main"):
+        return cam_name.replace("-main", "-sub", 1)
+    return cam_name
+
+
 def camera_to_dict(cam, nvr_map=None, health_map=None):
     nvr_name = None
     if cam.nvr and nvr_map:
@@ -117,7 +140,10 @@ def camera_to_dict(cam, nvr_map=None, health_map=None):
 
     online = None
     if health_map is not None:
-        online = health_map.get(cam.name)
+        key = _health_lookup_stream_name(cam.name)
+        online = health_map.get(key)
+        if online is None and key != cam.name:
+            online = health_map.get(cam.name)
 
     sub = getattr(cam, "rtsp_substream_url", None)
     return {
@@ -321,6 +347,48 @@ def cameras_summary():
     return api_response([camera_to_dict(c, nvr_map, health) for c in query])
 
 
+@bp.route("/inventory", methods=["GET"])
+@login_required_api
+@admin_required
+def cameras_inventory():
+    """
+    Admin-only extended list for Configuration → Camera management:
+    channel hint, source host, suggested camera web UI URL (heuristic :8000).
+    """
+    nvr_map = {nvr.id: nvr for nvr in NVR.select()}
+    health = _get_stream_health_cached()
+    rows = []
+    for c in Camera.select().order_by(Camera.name):
+        d = camera_to_dict(c, nvr_map, health)
+        host = _rtsp_hostname(c.rtsp_url)
+        d["channel"] = _guess_channel_from_name(c.name)
+        d["source_host"] = host
+        d["management_url"] = f"http://{host}:8000" if host else None
+        d["protocol"] = "RTSP"
+        rows.append(d)
+    return api_response(rows)
+
+
+@bp.route("/<int:cam_id>/source", methods=["GET"])
+@login_required_api
+@admin_required
+def camera_source_secrets(cam_id):
+    """Full RTSP URLs for editing (admin only)."""
+    try:
+        cam = Camera.get_by_id(cam_id)
+    except Camera.DoesNotExist:
+        return api_error("Camera not found.", 404)
+    sub = getattr(cam, "rtsp_substream_url", None)
+    return api_response(
+        {
+            "id": cam.id,
+            "name": cam.name,
+            "rtsp_url": cam.rtsp_url,
+            "rtsp_substream_url": sub or "",
+        }
+    )
+
+
 @bp.route("/<string:name>/status", methods=["GET"])
 @login_required_api
 @live_playback_allowed
@@ -337,6 +405,10 @@ def camera_status(name: str):
         return api_error("Forbidden.", 403)
 
     health = _get_stream_health_cached()
+    hkey = _health_lookup_stream_name(cam.name)
+    online = health.get(hkey)
+    if online is None and hkey != cam.name:
+        online = health.get(cam.name)
 
     return api_response({
         "name": cam.name,
@@ -345,7 +417,7 @@ def camera_status(name: str):
         "active": cam.active,
         "recording_enabled": cam.recording_enabled,
         "recording_policy": getattr(cam, "recording_policy", None) or "continuous",
-        "online": health.get(cam.name),
+        "online": online,
     })
 
 

@@ -322,6 +322,11 @@ def delete_camera(cam_id):
         return api_error("Camera not found.", 404)
 
     stream_delete(cam.name)
+    # Remove virtual go2rtc sub stream if this main row owned it (no separate *-sub Camera).
+    if cam.name.endswith("-main"):
+        sub_name = cam.name[: -len("-main")] + "-sub"
+        if not Camera.select().where(Camera.name == sub_name).exists():
+            stream_delete(sub_name)
     name = cam.display_name
     cam.delete_instance()
     return api_response(message=f'Camera "{name}" deleted.')

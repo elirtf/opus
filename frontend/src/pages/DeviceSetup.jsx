@@ -214,7 +214,13 @@ export default function DeviceSetup() {
       <ToastList toasts={toasts} />
 
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
-        <h2 className="text-xl font-bold text-white">Devices</h2>
+        <div>
+          <h2 className="text-xl font-bold text-white">Devices</h2>
+          <p className="text-sm text-gray-500 mt-1 max-w-xl">
+            <strong className="text-gray-400">Recommended:</strong> add cameras with a direct RTSP URL (Discovery or manual). Use{' '}
+            <strong className="text-gray-400">Sites &amp; migration</strong> only when pulling channels from an existing NVR during transition.
+          </p>
+        </div>
         <div className="flex rounded-lg bg-gray-800 p-0.5 self-start">
           <button
             type="button"
@@ -223,7 +229,7 @@ export default function DeviceSetup() {
               tab === 'nvrs' ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-white'
             }`}
           >
-            NVRs
+            Sites &amp; migration
           </button>
           <button
             type="button"
@@ -242,7 +248,7 @@ export default function DeviceSetup() {
           <div className="flex items-center justify-end mb-4">
             <button onClick={() => setModal('add')}
               className="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
-              + Add NVR
+              + Add site (NVR import)
             </button>
           </div>
 
@@ -251,8 +257,8 @@ export default function DeviceSetup() {
           ) : nvrs.length === 0 ? (
             <div className="text-center py-20 text-gray-500">
               <div className="text-4xl mb-3">🖥️</div>
-              <p className="text-gray-400">No NVRs added yet.</p>
-              <p className="text-sm text-gray-500 mt-2">Use Discovery to find ONVIF devices, or add an NVR manually.</p>
+              <p className="text-gray-400">No legacy NVR / site groups yet.</p>
+              <p className="text-sm text-gray-500 mt-2">For new installs, add cameras via Discovery first. Use this tab only to import channels from an existing recorder.</p>
             </div>
           ) : (
             <div className="space-y-2">
@@ -302,7 +308,7 @@ export default function DeviceSetup() {
           {camLoading ? (
             <div className="flex justify-center py-16"><Spinner className="w-6 h-6" /></div>
           ) : mains.length === 0 ? (
-            <div className="text-center py-16 text-gray-500 text-sm">No main-stream cameras yet. Add an NVR or run Discovery.</div>
+            <div className="text-center py-16 text-gray-500 text-sm">No main-stream cameras yet. Run Discovery or add a site import.</div>
           ) : (
             <div className="overflow-x-auto rounded-xl border border-gray-800">
               <table className="w-full text-sm">
@@ -356,8 +362,8 @@ export default function DeviceSetup() {
       )}
 
       {modal === 'add' && (
-        <Modal title="Add NVR" onClose={() => setModal(null)}>
-          <NVRForm onSubmit={handleAdd} onClose={() => setModal(null)} submitLabel="Add NVR" />
+        <Modal title="Add site (NVR import)" onClose={() => setModal(null)}>
+          <NVRForm onSubmit={handleAdd} onClose={() => setModal(null)} submitLabel="Add and import channels" />
         </Modal>
       )}
 

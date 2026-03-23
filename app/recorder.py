@@ -32,6 +32,8 @@ SHELVE_RETRY_MIN     = int(os.environ.get("RECORDING_SHELVE_RETRY_MINUTES", "10"
 STAGGER_DELAY        = float(os.environ.get("RECORDING_STAGGER_SECONDS", "2"))
 # Rolling segment buffer for events_only cameras (hours); older segments are purged first.
 EVENTS_ONLY_BUFFER_HOURS = int(os.environ.get("EVENTS_ONLY_BUFFER_HOURS", "48"))
+# Do not start new FFmpeg writers when free space on the recordings volume drops below this (0 = disabled).
+MIN_FREE_GB = float(os.environ.get("RECORDING_MIN_FREE_GB", "1") or "0")
 
 
 class RecordingEngine:
@@ -104,8 +106,31 @@ class RecordingEngine:
         )
         return {c.name: c for c in qs if c.name.endswith("-main")}
 
+    def _recordings_free_gb(self):
+        """Free space on the filesystem that holds RECORDINGS_DIR (None if unknown)."""
+        try:
+            if not os.path.exists(self.recordings_dir):
+                os.makedirs(self.recordings_dir, exist_ok=True)
+            du = shutil.disk_usage(self.recordings_dir)
+            return round(du.free / 1024**3, 3)
+        except OSError:
+            return None
+
+    def _disk_pressure(self):
+        """
+        True when free disk is below MIN_FREE_GB (new recordings should not start).
+        Existing FFmpeg processes are left running until they exit or desired set changes.
+        """
+        if MIN_FREE_GB <= 0:
+            return False
+        free = self._recordings_free_gb()
+        if free is None:
+            return False
+        return free < MIN_FREE_GB
+
     def _sync(self):
         desired = self._desired()
+        disk_pressure = self._disk_pressure()
         with self._lock:
             for n in list(self._procs):
                 if n not in desired:
@@ -116,6 +141,13 @@ class RecordingEngine:
                 p = self._procs.get(name)
 
                 if p is None:
+                    if disk_pressure:
+                        logger.warning(
+                            "Skipping record start for %s: disk pressure (free < %.2f GiB)",
+                            name,
+                            MIN_FREE_GB,
+                        )
+                        continue
                     if launches > 0:
                         time.sleep(STAGGER_DELAY)
                     self._launch(cam)
@@ -581,11 +613,15 @@ class RecordingEngine:
 
         tb = self._disk_usage()
         disk = None
+        free_gb = None
         if os.path.exists(self.recordings_dir):
             du = shutil.disk_usage(self.recordings_dir)
+            free_gb = round(du.free / 1024**3, 3)
             disk = {"total_gb": round(du.total / 1024**3, 2),
-                    "free_gb": round(du.free / 1024**3, 2),
+                    "free_gb": free_gb,
                     "percent_used": round(du.used / du.total * 100, 1)}
+
+        pressure = self._disk_pressure()
 
         return {
             "engine_running": self._running,
@@ -595,12 +631,15 @@ class RecordingEngine:
             "processes": active,
             "shelved": shelved_list,
             "setup_complete_gate": self._setup_allows_recording(),
+            "disk_pressure": pressure,
             "storage": {"recordings_gb": round(tb / 1024**3, 2),
                         "max_storage_gb": MAX_STORAGE_GB or None, "disk": disk},
             "config": {"segment_minutes": SEGMENT_MINUTES,
                        "retention_days": RETENTION_DAYS,
                        "clip_retention_days": CLIP_RETENTION_DAYS,
                        "events_only_buffer_hours": EVENTS_ONLY_BUFFER_HOURS,
+                       "min_free_gb": MIN_FREE_GB if MIN_FREE_GB > 0 else None,
+                       "recordings_free_gb": free_gb,
                        "source": "go2rtc_relay" if GO2RTC_RTSP_URL else "direct_rtsp",
                        "stagger_seconds": STAGGER_DELAY,
                        "shelve_after": MAX_CRASHES, "shelve_retry_min": SHELVE_RETRY_MIN},

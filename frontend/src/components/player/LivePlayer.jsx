@@ -5,8 +5,9 @@ import { useMemo } from "react";
  * - `cameraName`: stream name in go2rtc (e.g. "FrontDoor-main")
  * - `enabled`: when false, player stays idle (used for lazy-loading in grids)
  *
- * Uses go2rtc `stream.html` in an iframe. HEVC: many browsers fail MSE on H.265 — use
- * `playbackMode="webrtc"` for single views, or transcode in go2rtc (go2rtc/README-HEVC.md).
+ * Uses go2rtc `stream.html` in an iframe. Default `mse` + substream mirrors the dashboard and
+ * avoids WebRTC ICE issues behind nginx/Docker. For HEVC in MSE, transcode in go2rtc
+ * (go2rtc/README-HEVC.md); `playbackMode="webrtc"` needs reachable ICE candidates or TURN.
  */
 export default function LivePlayer({
   cameraName,

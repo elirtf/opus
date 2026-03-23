@@ -9,6 +9,7 @@ import DeviceSetup from './pages/DeviceSetup'
 import Users from './pages/Users'
 import Recordings from './pages/Recordings'
 import Discovery from './pages/Discovery'
+import Configuration from './pages/Configuration'
 
 function AppLayout({
   children,
@@ -41,6 +42,7 @@ export default function App() {
           <Route path="/nvrs"            element={<Navigate to="/devices" replace />} />
           <Route path="/cameras"         element={<Navigate to="/devices?tab=cameras" replace />} />
           <Route path="/users"           element={<AppLayout adminOnly><Users /></AppLayout>} />
+          <Route path="/configuration"   element={<AppLayout adminOnly><Configuration /></AppLayout>} />
           <Route path="*"                element={<Navigate to="/" replace />} />
         </Routes>
       </AuthProvider>

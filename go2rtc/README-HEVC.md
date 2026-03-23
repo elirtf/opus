@@ -8,6 +8,10 @@ Segment recording uses **stream copy** (`-c:v copy`) when possible, so **H.265 o
 
 Many browsers **do not** support HEVC inside **MSE** (`mode=mse` in `stream.html`). Firefox often shows errors like “No video with supported format or MIME type found.”
 
+### WebRTC and reverse proxies
+
+`mode=webrtc` in go2rtc’s player negotiates UDP/WebRTC to the go2rtc host. Behind **Docker + nginx**, the browser often cannot reach those ICE candidates, which produces **“WebRTC: ICE failed”** in devtools. Fixing that usually means **public hostnames**, **STUN/TURN**, or **host networking** for go2rtc—not something Opus configures by default. The app therefore prefers **MSE** for normal pages so video flows over **HTTP** like the dashboard tiles.
+
 **Mitigations:**
 
 1. **WebRTC mode** — The single-camera page (`/camera/...`) uses `playbackMode="webrtc"`, which can negotiate codecs differently than MSE. If the stream still fails, use (2) or (3).

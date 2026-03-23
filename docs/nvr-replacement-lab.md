@@ -1,12 +1,14 @@
-# NVR replacement — validation 
+# NVR Replacement — Validation
 
-Aggregator/recorder **without** destabilizing production NVRs.
+**Product context:** Opus v1 is a **narrow NVR replacement** (direct camera → Opus). See [PRODUCT_SCOPE_V1.md](PRODUCT_SCOPE_V1.md) for what is in and out of scope. This doc is for **validation and migration**, not vendor UI parity.
+
+Aggregator/recorder **without** destabilizing production NVRs when you still have a legacy box in the path.
 
 ## Objectives
 
 - Live view stable for **N** hours through go2rtc  
 - Continuous or selective recording produces **valid MP4** segments  
-- Playback in UI (or direct file) matches wall clock within acceptable skew  
+- Playback in UI (or direct file) matches wall clock 
 - No camera/NVR lockout (some devices limit **concurrent RTSP** clients)
 
 ## Track A — Secondary RTSP URL (dual stream / substream)
@@ -73,10 +75,13 @@ ffmpeg -re -f lavfi -i testsrc=size=1280x720:rate=15 \
 
 ## Product decision (document separately)
 
-- **Parallel** to NVR until trust is earned, vs **primary** recorder only.  
+- **Parallel** to NVR until trust is earned, vs **primary** recorder only (v1 assumes **primary** for new installs).  
 - Failover expectations (who owns time sync, DNS, certificates).
 
 ## Related
+
+- [PRODUCT_SCOPE_V1.md](PRODUCT_SCOPE_V1.md) — v1 features and explicit non-goals  
+- [certified-cameras.md](certified-cameras.md) — minimal supported list + short regression checklist
 
 - [deployment-profiles.md](deployment-profiles.md)  
 - [hardware-sizing.md](hardware-sizing.md)

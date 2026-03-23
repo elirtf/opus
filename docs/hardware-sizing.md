@@ -60,6 +60,7 @@ Retention (see below): multiply by effective days stored (capped by `RECORDING_M
 | `RECORDING_RETENTION_DAYS` | Age-based deletion of segment rows/files                     |
 | `CLIP_RETENTION_DAYS`      | Age-based deletion of motion/event clips                     |
 | `RECORDING_MAX_STORAGE_GB` | Cap total segment storage (0 = unlimited)                    |
+| `RECORDING_MIN_FREE_GB`    | Do not **start** new recorders when free disk on the recordings volume is below this (0 = off). Existing FFmpeg processes keep running. |
 | `EVENTS_ONLY_BUFFER_HOURS` | How long **rolling** segments stay for `events_only` cameras |
 
 

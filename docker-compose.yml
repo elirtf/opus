@@ -105,6 +105,10 @@ services:
     volumes:
       - ./go2rtc:/config
       - recordings:/recordings
+    # Publish to host so local Flask/Vite (split dev) can reach go2rtc without the full stack.
+    ports:
+      - "1984:1984"
+      - "8554:8554"
     networks:
       - opusnet
 

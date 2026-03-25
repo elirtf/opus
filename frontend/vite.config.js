@@ -15,7 +15,12 @@ export default defineConfig({
         changeOrigin: true,
         timeout: 600_000, // discovery scans can run for minutes
       },
-      '/go2rtc': 'http://localhost:80',
+      // Match nginx: strip /go2rtc prefix and forward to go2rtc API (split dev: compose publishes :1984)
+      '/go2rtc': {
+        target: 'http://localhost:1984',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/go2rtc/, '') || '/',
+      },
     }
   }
 })

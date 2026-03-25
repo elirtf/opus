@@ -114,12 +114,15 @@ IP Camera (RTSP)
 | [docs/hw-diagnostics-spec.md](docs/hw-diagnostics-spec.md) | Admin `GET /api/health/diagnostics` JSON schema |
 | [docs/nvr-replacement-lab.md](docs/nvr-replacement-lab.md) | Lab tracks and migration validation |
 | [docs/hosted-ops-outline.md](docs/hosted-ops-outline.md) | Rented-appliance ops outline |
+| [docs/DEV_WORKFLOW.md](docs/DEV_WORKFLOW.md) | Local dev: Windows vs WSL/Linux, Compose vs split loop, Makefile |
 
 ---
 
 ## Development
 
-**Typical fast loop:** run **go2rtc** with Docker (`docker compose up go2rtc`), run **Flask** (`python run.py`), and run the **Vite** dev server (`cd frontend && npm install && npm run dev`). The frontend proxies `/api` to `localhost:5000` (see `frontend/vite.config.js`). Optional: copy `compose.override.yml.example` to `compose.override.yml` for local compose tweaks (file is gitignored).
+Step-by-step commands (PowerShell, env vars, Makefile on WSL): **[docs/DEV_WORKFLOW.md](docs/DEV_WORKFLOW.md)**.
+
+**Typical fast loop:** run **go2rtc** with Docker (`docker compose up go2rtc`), run **Flask** (`python run.py`), and run the **Vite** dev server (`cd frontend && npm install && npm run dev`). Set `GO2RTC_URL=http://127.0.0.1:1984` for local Flask so it talks to the published go2rtc port. The frontend proxies `/api` to `localhost:5000` and `/go2rtc` to go2rtc on `localhost:1984` (see `frontend/vite.config.js`). Optional: copy `compose.override.yml.example` to `compose.override.yml` for local compose tweaks (file is gitignored).
 
 To run the backend alone:
 

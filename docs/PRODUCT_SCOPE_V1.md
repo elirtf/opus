@@ -1,6 +1,6 @@
 #  Opus — Project Scope and Plan (v1.0)
 
-This page is the **single place** to read what Opus v1.0 is meant to do, what it is *not* meant to do, and how we plan to ship and support it. It doubles as a **reference for sales and support**: if something is written here, we stand behind it for supported setups; if it is listed as out of scope, we do not promise it in v1.0.
+This page is the **single place** to read what Opus v1.0 is meant to do and how we plan to ship and support it. It doubles as a **reference for sales and support**: if something is written here, we stand behind it for supported setups; if it is listed as out of scope, we do not promise it in v1.0.
 
 **Who this is for**
 

@@ -132,7 +132,26 @@ def _health_lookup_stream_name(cam_name: str) -> str:
     return cam_name
 
 
-def camera_to_dict(cam, nvr_map=None, health_map=None):
+def _live_view_stream_name(cam, all_camera_names=None):
+    """
+    go2rtc stream key for live preview: use sub when configured (rtsp_substream_url or paired *-sub row).
+    Recording and motion analysis always use the main stream's rtsp_url on *-main cameras.
+    """
+    if not cam.name.endswith("-main"):
+        return cam.name
+    sub_name = cam.name.replace("-main", "-sub", 1)
+    if (getattr(cam, "rtsp_substream_url", None) or "").strip():
+        return sub_name
+    if all_camera_names is not None:
+        if sub_name in all_camera_names:
+            return sub_name
+    else:
+        if Camera.select().where(Camera.name == sub_name).exists():
+            return sub_name
+    return cam.name
+
+
+def camera_to_dict(cam, nvr_map=None, health_map=None, all_camera_names=None):
     nvr_name = None
     if cam.nvr and nvr_map:
         nvr = nvr_map.get(cam.nvr)
@@ -161,6 +180,7 @@ def camera_to_dict(cam, nvr_map=None, health_map=None):
         "is_sub": cam.name.endswith("-sub"),
         # Keep for compatibility with any existing frontend usage:
         "stream_url": f"/go2rtc/stream.html?src={cam.name}&mode=mse",
+        "live_view_stream_name": _live_view_stream_name(cam, all_camera_names),
         # Optional runtime field for UI badges:
         "online": online,
     }
@@ -177,7 +197,9 @@ def list_cameras():
         return api_response([])
 
     nvr_map = {nvr.id: nvr for nvr in NVR.select()}
-    return api_response([camera_to_dict(c, nvr_map) for c in query])
+    rows = list(query)
+    name_set = {c.name for c in rows}
+    return api_response([camera_to_dict(c, nvr_map, None, name_set) for c in rows])
 
 
 @bp.route("/", methods=["POST"])
@@ -365,7 +387,9 @@ def cameras_summary():
     nvr_map = {nvr.id: nvr for nvr in NVR.select()}
     health = _get_stream_health_cached()
 
-    return api_response([camera_to_dict(c, nvr_map, health) for c in query])
+    rows = list(query)
+    name_set = {c.name for c in rows}
+    return api_response([camera_to_dict(c, nvr_map, health, name_set) for c in rows])
 
 
 @bp.route("/inventory", methods=["GET"])
@@ -378,9 +402,11 @@ def cameras_inventory():
     """
     nvr_map = {nvr.id: nvr for nvr in NVR.select()}
     health = _get_stream_health_cached()
+    all_cams = list(Camera.select().order_by(Camera.name))
+    name_set = {c.name for c in all_cams}
     rows = []
-    for c in Camera.select().order_by(Camera.name):
-        d = camera_to_dict(c, nvr_map, health)
+    for c in all_cams:
+        d = camera_to_dict(c, nvr_map, health, name_set)
         host = _rtsp_hostname(c.rtsp_url)
         d["channel"] = _guess_channel_from_name(c.name)
         d["source_host"] = host
@@ -431,6 +457,8 @@ def camera_status(name: str):
     if online is None and hkey != cam.name:
         online = health.get(cam.name)
 
+    name_set = {r.name for r in Camera.select(Camera.name)}
+
     return api_response({
         "name": cam.name,
         "display_name": cam.display_name,
@@ -439,6 +467,7 @@ def camera_status(name: str):
         "recording_enabled": cam.recording_enabled,
         "recording_policy": getattr(cam, "recording_policy", None) or "continuous",
         "online": online,
+        "live_view_stream_name": _live_view_stream_name(cam, name_set),
     })
 
 

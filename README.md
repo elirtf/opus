@@ -104,7 +104,7 @@ IP Camera (RTSP)
 
 Opus can record **continuously** (full timeline retention) or in **Events** mode (motion-triggered clips). For Events mode:
 
-- Run the **`processor`** service from Docker Compose (`app.processing_service`). It samples each camera stream (prefer the optional **substream** URL on the camera for lower CPU), detects motion, and writes clips under `RECORDINGS_DIR/clips/`. Use the **Recordings → Events** tab (playback) for those clips.
+- Run the **`processor`** service from Docker Compose (`app.processing_service`). It samples each camera’s **main** RTSP path (same quality tier as HDD recording), detects motion, and writes clips under `RECORDINGS_DIR/clips/`. Use the **Recordings → Events** tab (playback) for those clips. **Live view** uses the **sub** stream when configured — see [docs/mainstream-substream.md](docs/mainstream-substream.md).
 - Choose the mode per camera under **Recordings → Settings → Camera Recording**: **Off**, **Continuous**, or **Events (motion)**. You can also set `recording_policy` to `events_only` or `continuous` via `PATCH /api/cameras/<id>`.
 - **By default, Events mode does not run 24/7 segment recording** (no always-on FFmpeg writer for those cameras), so the **Playback** timeline stays empty for them — footage lives under **Events** as motion clips. Opus does **not** read camera/NVR “motion only” flags; it decides motion in software using the processor. If you want a **rolling segment buffer** on disk for pre-roll (like a traditional NVR), set **`EVENTS_ONLY_RECORD_SEGMENTS=1`** (or `true` / `yes` / `on`) on the **`recorder`** service — any other value leaves Events as **clip-only** (see [docker-compose.yml](docker-compose.yml) and [docs/hardware-sizing.md](docs/hardware-sizing.md)).
 - Tune behavior with environment variables on the `processor` (and shared retention settings): see [docs/hardware-sizing.md](docs/hardware-sizing.md) for `PROCESSING_POLL_SECONDS`, `CLIP_SECONDS`, `MOTION_COOLDOWN_SECONDS`, `EVENTS_ONLY_BUFFER_HOURS`, `CLIP_RETENTION_DAYS`, and related notes.
@@ -124,6 +124,7 @@ Opus can record **continuously** (full timeline retention) or in **Events** mode
 | [docs/nvr-replacement-lab.md](docs/nvr-replacement-lab.md) | Lab tracks and migration validation |
 | [docs/hosted-ops-outline.md](docs/hosted-ops-outline.md) | Rented-appliance ops outline |
 | [docs/DEV_WORKFLOW.md](docs/DEV_WORKFLOW.md) | Local dev: Windows vs WSL/Linux, Compose vs split loop, Makefile |
+| [docs/mainstream-substream.md](docs/mainstream-substream.md) | Main vs sub streams: recording, motion, live view |
 
 ---
 

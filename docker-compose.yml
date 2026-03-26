@@ -68,6 +68,12 @@ services:
       # Events (motion) cameras: 0 = clip-only (default), 1 = rolling segment buffer (see README)
       # - EVENTS_ONLY_RECORD_SEGMENTS=1
       # - GO2RTC_RTSP_URL=rtsp://go2rtc:8554
+      # FFmpeg hwaccel (optional): segments use stream copy — FFMPEG_HWACCEL has minimal effect on
+      # recording CPU; set for future decode/transcode paths. Intel/AMD Linux: often vaapi or qsv
+      # after passing /dev/dri (see processor service). NVIDIA: cuda + nvidia-container-toolkit.
+      # Raspberry Pi: usually none in Docker; validate outside containers first.
+      # - FFMPEG_HWACCEL=none
+      # - FFMPEG_HWACCEL_DEVICE=0
     volumes:
       - ./instance:/app/instance
       - ./go2rtc:/config
@@ -94,6 +100,9 @@ services:
       - FFMPEG_HWACCEL=none
       # Match recorder: relay RTSP through go2rtc (uncomment both here and on recorder)
       # - GO2RTC_RTSP_URL=rtsp://go2rtc:8554
+      # Hwaccel examples (Linux): VAAPI — add devices: /dev/dri, env FFMPEG_HWACCEL=vaapi
+      # Intel QSV — often FFMPEG_HWACCEL=qsv (requires /dev/dri). NVIDIA — FFMPEG_HWACCEL=cuda
+      # plus GPU device/runtime per nvidia-container-toolkit docs. Verify with ffmpeg -hwaccels in the container.
     volumes:
       - ./instance:/app/instance
       - recordings:/recordings

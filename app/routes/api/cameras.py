@@ -297,17 +297,33 @@ def toggle_recording(cam_id):
     if "enabled" not in data:
         return api_error('"enabled" field is required.')
 
-    if bool(data["enabled"]) and not cam.name.endswith("-main"):
+    enabled = bool(data["enabled"])
+    if enabled and not cam.name.endswith("-main"):
         return api_error("Recording is only supported on main streams.", 400)
 
-    cam.recording_enabled = bool(data["enabled"])
-    cam.recording_policy = "continuous" if cam.recording_enabled else "off"
+    if enabled:
+        pol = (data.get("recording_policy") or "").strip().lower()
+        if not pol:
+            pol = "continuous"
+        if pol not in ("continuous", "events_only"):
+            return api_error(
+                'When enabling, recording_policy must be "continuous" or "events_only" (or omit for continuous).',
+                400,
+            )
+        cam.recording_policy = pol
+    else:
+        cam.recording_policy = "off"
+
+    cam.recording_enabled = enabled
     cam.save()
     stream_sync(cam)
 
     status = "enabled" if cam.recording_enabled else "disabled"
     return api_response(
-        {"recording_enabled": cam.recording_enabled},
+        {
+            "recording_enabled": cam.recording_enabled,
+            "recording_policy": getattr(cam, "recording_policy", None) or "continuous",
+        },
         message=f'Recording {status} for "{cam.display_name}".'
     )
 

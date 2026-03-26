@@ -208,7 +208,11 @@ def update_settings():
 
     return api_response(
         {"updated": updated},
-        message=f"Updated {len(updated)} setting(s). Restart the recording engine for changes to take effect."
+        message=(
+            f"Updated {len(updated)} setting(s). "
+            "Segment length is picked up by the recorder within a few seconds (FFmpeg restarts automatically). "
+            "Other options may require restarting the recorder container if they do not apply immediately."
+        ),
     )
 
 

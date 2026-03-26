@@ -78,6 +78,22 @@ def _camera_should_record_segments(cam) -> bool:
 MIN_FREE_GB = float(os.environ.get("RECORDING_MIN_FREE_GB", "1") or "0")
 
 
+def _segment_minutes_from_db():
+    """
+    Segment duration from the setting table (same DB the API writes).
+    Import-time RECORDING_SEGMENT_MINUTES is only a bootstrap default; the recorder
+    service must read the DB so UI changes take effect without container rebuild.
+    """
+    try:
+        from app.routes.api.recording_settings import get_setting
+
+        raw = get_setting("segment_minutes", "15")
+        v = int(raw or os.environ.get("RECORDING_SEGMENT_MINUTES", "15"))
+        return max(1, min(60, v))
+    except Exception:
+        return max(1, min(60, int(os.environ.get("RECORDING_SEGMENT_MINUTES", "15"))))
+
+
 class RecordingEngine:
 
     def __init__(self, app):
@@ -99,7 +115,7 @@ class RecordingEngine:
         self._thread.start()
         logger.info(
             "Recording engine started (seg=%smin, relay=%s, stagger=%ss, events_only_segments=%s)",
-            SEGMENT_MINUTES,
+            _segment_minutes_from_db(),
             "yes" if GO2RTC_RTSP_URL else "no",
             STAGGER_DELAY,
             "on" if EVENTS_ONLY_RECORD_SEGMENTS else "off",
@@ -228,6 +244,26 @@ class RecordingEngine:
                 if proc.poll() is None:
                     if p.get("crashes", 0) > 0 and time.time() - p["started_at"] > 60:
                         p["crashes"] = 0
+                    # Segment length is stored in DB — restart FFmpeg when it changes
+                    cur_seg = _segment_minutes_from_db()
+                    if p.get("segment_minutes") != cur_seg:
+                        logger.info(
+                            "Segment length for %s changed %s -> %s min; restarting FFmpeg",
+                            name,
+                            p.get("segment_minutes"),
+                            cur_seg,
+                        )
+                        self._kill(name)
+                        if disk_pressure:
+                            logger.warning(
+                                "Not restarting %s after segment change: disk pressure",
+                                name,
+                            )
+                            continue
+                        if launches > 0:
+                            time.sleep(STAGGER_DELAY)
+                        self._launch(desired[name])
+                        launches += 1
                     continue
 
                 rt = time.time() - p["started_at"]
@@ -285,7 +321,8 @@ class RecordingEngine:
         else:
             src = cam.rtsp_url
 
-        seg = SEGMENT_MINUTES * 60
+        seg_min = _segment_minutes_from_db()
+        seg = seg_min * 60
         pat = os.path.join(cam_dir, "%Y-%m-%d_%H-%M-%S.mp4")
 
         from app.ffmpeg_config import hwaccel_input_args
@@ -327,6 +364,7 @@ class RecordingEngine:
             "process": proc, "camera_id": cam.id, "source": src,
             "started_at": time.time(), "crashes": 0, "last_error": None,
             "shelved": False, "wait_until": None, "retry_at": None,
+            "segment_minutes": seg_min,
         }
         logger.info("Recording: %s PID=%d src=%s", cam.name, proc.pid, src)
 
@@ -720,7 +758,7 @@ class RecordingEngine:
             "disk_pressure": pressure,
             "storage": {"recordings_gb": round(tb / 1024**3, 2),
                         "max_storage_gb": MAX_STORAGE_GB or None, "disk": disk},
-            "config": {"segment_minutes": SEGMENT_MINUTES,
+            "config": {"segment_minutes": _segment_minutes_from_db(),
                        "retention_days": RETENTION_DAYS,
                        "clip_retention_days": CLIP_RETENTION_DAYS,
                        "events_only_record_segments": EVENTS_ONLY_RECORD_SEGMENTS,

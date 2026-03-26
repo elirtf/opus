@@ -32,16 +32,46 @@ SHELVE_RETRY_MIN     = int(os.environ.get("RECORDING_SHELVE_RETRY_MINUTES", "10"
 STAGGER_DELAY        = float(os.environ.get("RECORDING_STAGGER_SECONDS", "2"))
 # Rolling segment buffer for events_only cameras (hours); older segments are purged first.
 EVENTS_ONLY_BUFFER_HOURS = int(os.environ.get("EVENTS_ONLY_BUFFER_HOURS", "48"))
+
+
+def _env_opt_in(name: str, default: bool = False) -> bool:
+    """
+    True only when env is explicitly 1/true/yes/on.
+    Avoids accidental enable from typos or unknown values (older code used opt-out logic where
+    almost any string turned segment recording on for events_only cameras).
+    """
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    s = str(raw).strip().lower()
+    if s == "":
+        return default
+    return s in ("1", "true", "yes", "on")
+
+
 # When True, events_only cameras get 24/7 FFmpeg segment recording (rolling buffer up to EVENTS_ONLY_BUFFER_HOURS).
-# When False (default), events_only does not run segment recording — only motion clips from the processor
-# (matches typical "motion-only" NVR expectation; Playback timeline stays empty for those cameras).
-EVENTS_ONLY_RECORD_SEGMENTS = os.environ.get("EVENTS_ONLY_RECORD_SEGMENTS", "0").strip().lower() not in (
-    "",
-    "0",
-    "false",
-    "no",
-    "off",
-)
+# When False (default), events_only does not run segment recording — only motion clips from the processor.
+EVENTS_ONLY_RECORD_SEGMENTS = _env_opt_in("EVENTS_ONLY_RECORD_SEGMENTS", False)
+
+
+def _norm_recording_policy(cam) -> str:
+    p = getattr(cam, "recording_policy", None)
+    if p is None:
+        return "continuous"
+    s = str(p).strip().lower()
+    return s if s else "continuous"
+
+
+def _camera_should_record_segments(cam) -> bool:
+    """Whether this camera should have an FFmpeg segment writer (vs clips-only for events_only)."""
+    pol = _norm_recording_policy(cam)
+    if pol == "off":
+        return False
+    if pol == "events_only":
+        return EVENTS_ONLY_RECORD_SEGMENTS
+    return True
+
+
 # Do not start new FFmpeg writers when free space on the recordings volume drops below this (0 = disabled).
 MIN_FREE_GB = float(os.environ.get("RECORDING_MIN_FREE_GB", "1") or "0")
 
@@ -118,8 +148,7 @@ class RecordingEngine:
             & (Camera.recording_policy != "off")
         )
         cams = [c for c in qs if c.name.endswith("-main")]
-        if not EVENTS_ONLY_RECORD_SEGMENTS:
-            cams = [c for c in cams if getattr(c, "recording_policy", None) != "events_only"]
+        cams = [c for c in cams if _camera_should_record_segments(c)]
         return {c.name: c for c in cams}
 
     def _recordings_free_gb(self):
@@ -224,13 +253,28 @@ class RecordingEngine:
                 launches += 1
 
     def _launch(self, camera):
-        cam_dir = os.path.join(self.recordings_dir, camera.name)
+        from app.models import Camera
+
+        try:
+            cam = Camera.get_by_id(camera.id)
+        except Exception:
+            cam = camera
+        if not _camera_should_record_segments(cam):
+            logger.info(
+                "Skipping segment FFmpeg for %s (policy=%s, events_only_segment_buffer=%s)",
+                cam.name,
+                _norm_recording_policy(cam),
+                EVENTS_ONLY_RECORD_SEGMENTS,
+            )
+            return
+
+        cam_dir = os.path.join(self.recordings_dir, cam.name)
         os.makedirs(cam_dir, exist_ok=True)
 
         if GO2RTC_RTSP_URL:
-            src = "%s/%s" % (GO2RTC_RTSP_URL, camera.name)
+            src = "%s/%s" % (GO2RTC_RTSP_URL, cam.name)
         else:
-            src = camera.rtsp_url
+            src = cam.rtsp_url
 
         seg = SEGMENT_MINUTES * 60
         pat = os.path.join(cam_dir, "%Y-%m-%d_%H-%M-%S.mp4")
@@ -267,15 +311,15 @@ class RecordingEngine:
             logger.error("ffmpeg not found")
             return
         except Exception:
-            logger.exception("FFmpeg launch failed: %s", camera.name)
+            logger.exception("FFmpeg launch failed: %s", cam.name)
             return
 
-        self._procs[camera.name] = {
-            "process": proc, "camera_id": camera.id, "source": src,
+        self._procs[cam.name] = {
+            "process": proc, "camera_id": cam.id, "source": src,
             "started_at": time.time(), "crashes": 0, "last_error": None,
             "shelved": False, "wait_until": None, "retry_at": None,
         }
-        logger.info("Recording: %s PID=%d src=%s", camera.name, proc.pid, src)
+        logger.info("Recording: %s PID=%d src=%s", cam.name, proc.pid, src)
 
     def _kill(self, name):
         info = self._procs.pop(name, None)

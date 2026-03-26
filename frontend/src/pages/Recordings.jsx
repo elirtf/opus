@@ -213,7 +213,9 @@ export default function RecordingsPage() {
         method: "PUT",
         body: JSON.stringify(settings),
       });
-      showToast("Settings saved");
+      showToast(
+        "Settings saved. Segment length updates within ~10s (FFmpeg restarts automatically)."
+      );
     } catch (e) {
       showToast(e.message, false);
     }
@@ -300,6 +302,21 @@ export default function RecordingsPage() {
   );
   const recordingCams = filtered.filter((c) => c.recording_enabled);
   const availableCams = filtered.filter((c) => !c.recording_enabled);
+
+  const continuousRecCount = cameras.filter(
+    (c) =>
+      c.active &&
+      c.name.endsWith("-main") &&
+      c.recording_enabled &&
+      (c.recording_policy === "continuous" || !c.recording_policy)
+  ).length;
+  const motionOnlyCount = cameras.filter(
+    (c) =>
+      c.active &&
+      c.name.endsWith("-main") &&
+      c.recording_enabled &&
+      c.recording_policy === "events_only"
+  ).length;
 
   const shiftDate = (days) => {
     const d = new Date(date + "T00:00:00");
@@ -420,13 +437,33 @@ export default function RecordingsPage() {
           </svg>
           <h1 style={S.title}>Recordings</h1>
           {engineStatus && (
-            <span style={{
-              ...S.badge,
-              background: engineStatus.engine_running ? "rgba(16,185,129,0.15)" : "rgba(239,68,68,0.15)",
-              color: engineStatus.engine_running ? "#10b981" : "#ef4444",
-            }}>
-              {engineStatus.active_recordings || 0} recording
-            </span>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span style={{
+                ...S.badge,
+                background: engineStatus.engine_running ? "rgba(16,185,129,0.15)" : "rgba(239,68,68,0.15)",
+                color: engineStatus.engine_running ? "#10b981" : "#ef4444",
+              }}>
+                {engineStatus.active_recordings || 0} segment{engineStatus.active_recordings === 1 ? "" : "s"}
+              </span>
+              {continuousRecCount > 0 && (
+                <span style={{
+                  ...S.badge,
+                  background: "rgba(16,185,129,0.12)",
+                  color: "#6ee7b7",
+                }}>
+                  {continuousRecCount} continuous
+                </span>
+              )}
+              {motionOnlyCount > 0 && (
+                <span style={{
+                  ...S.badge,
+                  background: "rgba(34,211,238,0.12)",
+                  color: "#22d3ee",
+                }}>
+                  {motionOnlyCount} motion
+                </span>
+              )}
+            </div>
           )}
         </div>
         <div style={S.tabs}>
@@ -759,8 +796,16 @@ export default function RecordingsPage() {
                       <span style={S.statVal}>{storageStats.total_segments?.toLocaleString()}</span>
                     </div>
                     <div style={S.statRow}>
-                      <span style={S.statLabel}>Cameras Recording</span>
+                      <span style={S.statLabel}>Cameras with segments</span>
                       <span style={S.statVal}>{storageStats.cameras?.length || 0}</span>
+                    </div>
+                    <div style={S.statRow}>
+                      <span style={S.statLabel}>Continuous recording</span>
+                      <span style={S.statVal}>{continuousRecCount}</span>
+                    </div>
+                    <div style={S.statRow}>
+                      <span style={S.statLabel}>Motion / events only</span>
+                      <span style={S.statVal}>{motionOnlyCount}</span>
                     </div>
                   </div>
                   {storageStats.cameras?.length > 0 && (
@@ -933,6 +978,13 @@ function Timeline({ segments, playing, onPlay, date }) {
 function CamItem({ cam, selected, onSelect, engineStatus }) {
   const proc = engineStatus?.processes?.[cam.name];
   const running = proc?.running;
+  const isMotion =
+    cam.recording_enabled && cam.recording_policy === "events_only";
+  let dot = "#475569";
+  if (running) dot = "#10b981";
+  else if (isMotion) dot = "#22d3ee";
+  else if (cam.recording_enabled) dot = "#f59e0b";
+
   return (
     <button
       onClick={onSelect}
@@ -940,14 +992,17 @@ function CamItem({ cam, selected, onSelect, engineStatus }) {
     >
       <span style={{
         width: 7, height: 7, borderRadius: 4,
-        background: running ? "#10b981" : cam.recording_enabled ? "#f59e0b" : "#475569",
+        background: dot,
         flexShrink: 0,
       }} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={S.camName}>{cam.display_name}</div>
+        {isMotion && (
+          <div style={{ fontSize: 10, color: "#67e8f9" }}>Motion</div>
+        )}
         {running && proc?.uptime_seconds > 0 && (
           <div style={{ fontSize: 10, color: "#64748b" }}>
-            {Math.floor(proc.uptime_seconds / 60)}m uptime
+            {Math.floor(proc.uptime_seconds / 60)}m segment
           </div>
         )}
       </div>

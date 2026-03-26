@@ -11,5 +11,9 @@ export const camerasApi = {
   create: (payload) => api.post("/api/cameras/", payload),
   update: (id, payload) => api.patch(`/api/cameras/${id}`, payload),
   remove: (id) => api.delete(`/api/cameras/${id}`),
-  setRecording: (id, enabled) => api.post(`/api/cameras/${id}/recording`, { enabled }),
+  setRecording: (id, enabled, recordingPolicy) =>
+    api.post(`/api/cameras/${id}/recording`, {
+      enabled,
+      ...(enabled && recordingPolicy ? { recording_policy: recordingPolicy } : {}),
+    }),
 };

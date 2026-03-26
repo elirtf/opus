@@ -138,5 +138,3 @@ Log in, open a dashboard live tile, try Discovery, open Recordings. Full stack b
 - Set a camera to **Events (motion)** under **Recordings → Settings → Camera Recording**, or call `PATCH /api/cameras/<id>` with `"recording_policy": "events_only"`.
 - Optional: set **`rtsp_substream_url`** on the camera (Devices → edit) so the processor samples a lighter stream.
 - If you enable **`GO2RTC_RTSP_URL`** for FFmpeg, set the **same** value on **`recorder`** and **`processor`** so recording, motion sampling, and clip capture use the same go2rtc paths. See comments in [docker-compose.yml](../docker-compose.yml).
-
->>>>>>> 90e9f627f4437b38c0ebc505eede4f4eebb6285c

@@ -771,6 +771,13 @@ export default function RecordingsPage() {
             {/* ── Storage Stats (visible to all) ── */}
             <div style={S.card}>
               <h3 style={S.cardTitle}>Storage</h3>
+              <p style={{ ...S.hint, marginBottom: 10 }}>
+                Counts include continuous and motion clips under{" "}
+                <span style={{ fontFamily: "monospace", color: "#94a3b8" }}>clips/</span>. Path:{" "}
+                <span style={{ fontFamily: "monospace", color: "#94a3b8", wordBreak: "break-all" }}>
+                  {storageStats?.recordings_dir || "—"}
+                </span>
+              </p>
               {storageStats ? (
                 <>
                   {storageStats.disk && (
@@ -792,11 +799,19 @@ export default function RecordingsPage() {
                   )}
                   <div style={{ marginTop: 12 }}>
                     <div style={S.statRow}>
-                      <span style={S.statLabel}>Total Segments</span>
-                      <span style={S.statVal}>{storageStats.total_segments?.toLocaleString()}</span>
+                      <span style={S.statLabel}>Segment files (continuous)</span>
+                      <span style={S.statVal}>{storageStats.total_segments?.toLocaleString() ?? 0}</span>
                     </div>
                     <div style={S.statRow}>
-                      <span style={S.statLabel}>Cameras with segments</span>
+                      <span style={S.statLabel}>Motion clip files</span>
+                      <span style={S.statVal}>{storageStats.total_clips?.toLocaleString() ?? 0}</span>
+                    </div>
+                    <div style={S.statRow}>
+                      <span style={S.statLabel}>Total MP4 files</span>
+                      <span style={S.statVal}>{storageStats.total_files?.toLocaleString() ?? 0}</span>
+                    </div>
+                    <div style={S.statRow}>
+                      <span style={S.statLabel}>Cameras with stored media</span>
                       <span style={S.statVal}>{storageStats.cameras?.length || 0}</span>
                     </div>
                     <div style={S.statRow}>
@@ -815,7 +830,7 @@ export default function RecordingsPage() {
                         <div key={c.camera_name} style={S.cameraStat}>
                           <span style={{ color: "#cbd5e1", fontSize: 12 }}>{c.camera_name}</span>
                           <span style={{ color: "#94a3b8", fontSize: 12 }}>
-                            {c.segment_count} segs · {c.total_gb} GB
+                            {c.segment_count || 0} seg · {c.clip_count || 0} clips · {c.total_gb} GB
                           </span>
                         </div>
                       ))}

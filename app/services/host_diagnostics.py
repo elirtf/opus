@@ -8,6 +8,8 @@ import platform
 import shutil
 import subprocess
 
+from app.ffmpeg_config import get_video_pipeline_summary
+
 
 def _mem_total_kb_linux():
     try:
@@ -44,6 +46,7 @@ def collect_host_diagnostics():
 
     out = {
         "schema_version": "1",
+        "video_pipeline": get_video_pipeline_summary(),
         "platform_system": platform.system(),
         "platform_machine": platform.machine(),
         "platform_release": platform.release(),

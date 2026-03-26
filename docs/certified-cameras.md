@@ -16,4 +16,4 @@ Before a release or customer rollout:
 3. **Playback:** scrub a segment from the previous day.
 4. **Restart:** `docker compose restart` opus + recorder + go2rtc; streams recover without manual DB edits.
 
-Full lab tracks: [nvr-replacement-lab.md](nvr-replacement-lab.md). Product boundaries: [PRODUCT_SCOPE_V1.md](PRODUCT_SCOPE_V1.md).
+Full lab tracks: [nvr-replacement-lab.md](nvr-replacement-lab.md). Overall scope and plan: [PRODUCT_SCOPE_V1.md](PRODUCT_SCOPE_V1.md).

@@ -2,7 +2,7 @@
 
 Reference **defaults** for `.env` and `docker-compose` overrides. Tune for **your** bitrates and camera count; see [hardware-sizing.md](hardware-sizing.md).
 
-**v1 product scope** (what we promise vs defer): [PRODUCT_SCOPE_V1.md](PRODUCT_SCOPE_V1.md).
+**v1 scope and plan** (what we promise vs defer): [PRODUCT_SCOPE_V1.md](PRODUCT_SCOPE_V1.md).
 
 ## Principles
 

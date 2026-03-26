@@ -100,6 +100,15 @@ IP Camera (RTSP)
 
 **Recommended path:** one RTSP URL per camera (main for recording; optional substream for live tiles). **Migration path:** import channels from an existing NVR under Devices → Sites & migration.
 
+### Motion and event-based recording
+
+Opus can record **continuously** (full timeline retention) or in **Events** mode (motion-triggered clips plus a short rolling buffer of segments). For Events mode:
+
+- Run the **`processor`** service from Docker Compose (`app.processing_service`). It samples each camera stream (prefer the optional **substream** URL on the camera for lower CPU), detects motion, and writes clips under `RECORDINGS_DIR/clips/`.
+- Choose the mode per camera under **Recordings → Settings → Camera Recording**: **Off**, **Continuous**, or **Events (motion)**. You can also set `recording_policy` to `events_only` or `continuous` via `PATCH /api/cameras/<id>`.
+- Tune behavior with environment variables on the `processor` (and shared retention settings): see [docs/hardware-sizing.md](docs/hardware-sizing.md) for `PROCESSING_POLL_SECONDS`, `CLIP_SECONDS`, `MOTION_COOLDOWN_SECONDS`, `EVENTS_ONLY_BUFFER_HOURS`, `CLIP_RETENTION_DAYS`, and related notes.
+- If you record through the **go2rtc RTSP relay** (`GO2RTC_RTSP_URL`), use the **same** URL on both the **`recorder`** and **`processor`** services so segments, motion sampling, and clips refer to the same paths (details in [docker-compose.yml](docker-compose.yml)).
+
 ---
 
 ## Documentation

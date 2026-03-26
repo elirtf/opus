@@ -1,6 +1,6 @@
 # NVR Replacement — Validation
 
-**Product context:** Opus v1 is a **narrow NVR replacement** (direct camera → Opus). See [PRODUCT_SCOPE_V1.md](PRODUCT_SCOPE_V1.md) for what is in and out of scope. This doc is for **validation and migration**, not vendor UI parity.
+**Product context:** Opus v1 is a **narrow NVR replacement** (direct camera → Opus). This doc is for **validation and migration**, not vendor UI parity.
 
 Aggregator/recorder **without** destabilizing production NVRs when you still have a legacy box in the path.
 
@@ -80,9 +80,7 @@ ffmpeg -re -f lavfi -i testsrc=size=1280x720:rate=15 \
 
 ## Related
 
-- [PRODUCT_SCOPE_V1.md](PRODUCT_SCOPE_V1.md) — v1 features and explicit non-goals  
 - [certified-cameras.md](certified-cameras.md) — minimal supported list + short regression checklist
-
-- [deployment-profiles.md](deployment-profiles.md)  
+- [deployment-profiles.md](deployment-profiles.md)
 - [hardware-sizing.md](hardware-sizing.md)
 

@@ -496,10 +496,6 @@ export default function Configuration() {
         <CamerasPanel inventory={inventory} loading={invLoading} onEditStreams={setEditRow} />
       )}
 
-      <p className="text-xs text-gray-600 mt-10">
-        Product scope and non-goals: <code className="text-gray-500">docs/PRODUCT_SCOPE_V1.md</code> (see README documentation table).
-      </p>
-
       {editRow && (
         <Modal title={`Edit streams — ${editRow.display_name}`} onClose={() => setEditRow(null)}>
           {editSource ? (

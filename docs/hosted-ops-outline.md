@@ -14,7 +14,7 @@ One-page checklist for **fixed-SKU** appliances shipped or renting. Application 
 - **Staged** rollouts: canary appliances → fleet.  
 - **Rollback**: keep previous Compose tag and image digests **N** versions back.  
 - Document **camera firmware** interactions when upgrading FFmpeg/go2rtc.  
-- Admins use **Configuration → Maintenance** in the web UI for diagnostics JSON and recorder status; upgrades remain **pull/redeploy** (see [PRODUCT_SCOPE_V1.md](PRODUCT_SCOPE_V1.md)).
+- Admins use **Configuration → Maintenance** in the web UI for diagnostics JSON and recorder status; upgrades remain **pull/redeploy** per project documentation.
 
 ## Monitoring (minimum)
 

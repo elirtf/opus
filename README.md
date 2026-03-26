@@ -7,7 +7,7 @@
 <p align="center">
   A lightweight, self-hosted **IP camera recorder and viewer**. For new installs, cameras send **RTSP directly to Opus** (live + continuous recording + timeline playback). A vendor NVR is <strong>optional</strong>—the UI still supports importing channels from an existing recorder for <strong>migration</strong> only.
 
-  Deploy with <strong>Docker Compose</strong> on Linux (Ubuntu Server is the documented standard). Scope and non-goals for v1: <a href="docs/PRODUCT_SCOPE_V1.md">docs/PRODUCT_SCOPE_V1.md</a>.
+  Deploy with <strong>Docker Compose</strong> on Linux (Ubuntu Server is the documented standard). <strong>Project Scope/Plan (v1.0):</strong> <a href="docs/PRODUCT_SCOPE_V1.md">docs/PRODUCT_SCOPE_V1.md</a>.
 </p>
 
 <p align="center">
@@ -115,7 +115,7 @@ Opus can record **continuously** (full timeline retention) or in **Events** mode
 
 | Doc | Topic |
 |-----|--------|
-| [docs/PRODUCT_SCOPE_V1.md](docs/PRODUCT_SCOPE_V1.md) | v1 features, deployment assumptions, explicit non-goals |
+| [docs/PRODUCT_SCOPE_V1.md](docs/PRODUCT_SCOPE_V1.md) | v1 scope, plan, and non-goals |
 | [docs/certified-cameras.md](docs/certified-cameras.md) | Minimal certified list + short regression checklist |
 | [docs/hardware-sizing.md](docs/hardware-sizing.md) | Bitrate → storage, tiers, filesystems, retention env vars |
 | [docs/streaming-playback.md](docs/streaming-playback.md) | HLS/DASH/WebRTC vs go2rtc + MP4, browser notes |

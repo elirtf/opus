@@ -11,9 +11,11 @@ import { useMemo } from "react";
  */
 export default function LivePlayer({
   cameraName,
+  /** Optional go2rtc stream key from API (`live_view_stream_name`); overrides name/sub heuristic. */
+  streamName: streamNameProp,
   enabled = true,
   className = "",
-  /** Use -sub for *-main in grids (lower bitrate). */
+  /** Use -sub for *-main when `streamName` is not provided (lower bitrate). */
   preferSubStream = true,
   /** `mse` for tiles; `webrtc` often better for HEVC / dedicated camera page. */
   playbackMode = "mse",
@@ -21,12 +23,13 @@ export default function LivePlayer({
   const src = useMemo(() => {
     if (!cameraName || !enabled) return null;
     const streamKey =
-      preferSubStream && cameraName.endsWith("-main")
+      streamNameProp ||
+      (preferSubStream && cameraName.endsWith("-main")
         ? cameraName.replace(/-main$/, "-sub")
-        : cameraName;
+        : cameraName);
     const mode = playbackMode === "webrtc" ? "webrtc" : "mse";
     return `/go2rtc/stream.html?src=${encodeURIComponent(streamKey)}&mode=${encodeURIComponent(mode)}`;
-  }, [cameraName, enabled, preferSubStream, playbackMode]);
+  }, [cameraName, streamNameProp, enabled, preferSubStream, playbackMode]);
 
   return (
     <div className={`relative w-full h-full bg-black ${className}`}>

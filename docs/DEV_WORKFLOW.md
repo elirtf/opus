@@ -128,6 +128,6 @@ make DOCKER="sudo docker" up
 
 ---
 
-## Quick smoke check
+## Quick check
 
-Log in, open a dashboard live tile, try Discovery, open Recordings. Full stack behavior (recorder status, etc.) needs the `recorder` service and `RECORDER_INTERNAL_STATUS_URL` as in [docker-compose.yml](../docker-compose.yml).
+Log in, open a dashboard tile, try Discovery, open Recordings. Full stack behavior (recorder status, etc.) needs the `recorder` service and `RECORDER_INTERNAL_STATUS_URL` as in [docker-compose.yml](../docker-compose.yml).

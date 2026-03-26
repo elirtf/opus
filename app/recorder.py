@@ -15,6 +15,8 @@ import shutil
 import logging
 from datetime import datetime, timedelta
 
+from app.ffmpeg_config import get_video_pipeline_summary
+
 logger = logging.getLogger("opus.recorder")
 
 RECORDINGS_DIR       = os.environ.get("RECORDINGS_DIR", "/recordings")
@@ -101,6 +103,13 @@ class RecordingEngine:
             "yes" if GO2RTC_RTSP_URL else "no",
             STAGGER_DELAY,
             "on" if EVENTS_ONLY_RECORD_SEGMENTS else "off",
+        )
+        vp = get_video_pipeline_summary()
+        logger.info(
+            "Video pipeline: mode=%s decoder_for_recording=%s hwaccel=%s",
+            vp["recording_video_mode"],
+            vp["decoder_used_for_recording"],
+            vp["ffmpeg_hwaccel_env"],
         )
 
     def stop(self):
@@ -624,7 +633,8 @@ class RecordingEngine:
     @staticmethod
     def test_rtsp(url, timeout=10):
         res = {"url": url, "reachable": False, "error": None,
-               "video_codec": None, "resolution": None, "fps": None}
+               "video_codec": None, "resolution": None, "fps": None,
+               "video_bit_rate": None, "format_bit_rate": None}
         try:
             p = subprocess.run(
                 ["ffprobe", "-v", "error", "-rtsp_transport", "tcp",
@@ -638,10 +648,23 @@ class RecordingEngine:
             import json
             data = json.loads(p.stdout)
             res["reachable"] = True
+            fmt = data.get("format") or {}
+            br = fmt.get("bit_rate")
+            if br is not None:
+                try:
+                    res["format_bit_rate"] = int(br)
+                except (TypeError, ValueError):
+                    res["format_bit_rate"] = br
             for s in data.get("streams", []):
                 if s.get("codec_type") == "video":
                     res["video_codec"] = s.get("codec_name")
                     res["resolution"] = "%sx%s" % (s.get("width"), s.get("height"))
+                    vbr = s.get("bit_rate")
+                    if vbr is not None:
+                        try:
+                            res["video_bit_rate"] = int(vbr)
+                        except (TypeError, ValueError):
+                            res["video_bit_rate"] = vbr
                     try:
                         n, d = s["r_frame_rate"].split("/")
                         res["fps"] = round(int(n) / int(d), 1)
@@ -686,6 +709,7 @@ class RecordingEngine:
         pressure = self._disk_pressure()
 
         return {
+            "video_pipeline": get_video_pipeline_summary(),
             "engine_running": self._running,
             "active_recordings": sum(1 for v in active.values() if v["running"]),
             "total_processes": len(active),

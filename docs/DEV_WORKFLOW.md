@@ -169,6 +169,7 @@ Log in, open a dashboard live tile, try Discovery, open Recordings. Full stack b
 ## Motion / event recording (Compose)
 
 - The **processor** container must be running for motion-triggered clips (`events_only` cameras). Default `docker compose up` starts it alongside `recorder` and `opus`.
+- On the **`recorder`** service, **`EVENTS_ONLY_RECORD_SEGMENTS`** defaults to off: Events cameras do **not** get 24/7 segment files (only motion clips). Set `EVENTS_ONLY_RECORD_SEGMENTS=1` if you want the older rolling MP4 buffer behavior (see [README.md](../README.md)).
 - Set a camera to **Events (motion)** under **Recordings → Settings → Camera Recording**, or call `PATCH /api/cameras/<id>` with `"recording_policy": "events_only"`.
 - Optional: set `rtsp_substream_url` on the camera (Devices → edit) so the processor samples a lighter stream.
 - If you enable `GO2RTC_RTSP_URL` for FFmpeg, set the **same** value on **recorder** and **processor** so recording, motion sampling, and clip capture use the same go2rtc paths. See comments in [docker-compose.yml](../docker-compose.yml).

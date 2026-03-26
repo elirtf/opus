@@ -178,30 +178,32 @@ export default function RecordingsPage() {
     }
   }, [tab]);
 
-  // ── Toggle recording (original admin only) ─────────────────────────────
-  const toggleRecording = async (cam) => {
+  // ── Recording mode per camera (original admin only): PATCH recording_policy ─
+  const updateCameraRecordingPolicy = async (cam, policy) => {
     try {
-      await api(`/api/cameras/${cam.id}/recording`, {
-        method: "POST",
-        body: JSON.stringify({ enabled: !cam.recording_enabled }),
+      const updated = await api(`/api/cameras/${cam.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ recording_policy: policy }),
       });
-      const on = !cam.recording_enabled;
       setCameras((prev) =>
-        prev.map((c) =>
-          c.id === cam.id
-            ? {
-                ...c,
-                recording_enabled: on,
-                recording_policy: on ? "continuous" : "off",
-              }
-            : c
-        )
+        prev.map((c) => (c.id === cam.id ? { ...c, ...updated } : c))
       );
-      showToast(`Recording ${!cam.recording_enabled ? "enabled" : "disabled"} for ${cam.display_name}`);
+      const label =
+        policy === "off"
+          ? "Off"
+          : policy === "events_only"
+            ? "Events (motion)"
+            : "Continuous";
+      showToast(`${cam.display_name}: ${label}`);
     } catch (e) {
       showToast(e.message, false);
     }
   };
+
+  const recordingPolicySelectValue = (cam) =>
+    !cam.recording_enabled || cam.recording_policy === "off"
+      ? "off"
+      : cam.recording_policy;
 
   // ── Save settings ──────────────────────────────────────────────────────
   const saveSettings = async () => {
@@ -683,9 +685,9 @@ export default function RecordingsPage() {
             <div style={S.card}>
               <h3 style={S.cardTitle}>Camera Recording</h3>
               <p style={S.hint}>
-                Recording stays off until you turn it on here (main streams only), after completing recording setup.
+                Recording stays off until you choose a mode here (main streams only), after completing recording setup.
                 {isOriginalAdmin
-                  ? " Use the toggles below."
+                  ? " Continuous keeps full retention; Events uses motion clips plus a short segment buffer (requires the processor service in Docker Compose)."
                   : " Only the original administrator can change these."}
               </p>
               <div style={S.camToggleList}>
@@ -699,25 +701,29 @@ export default function RecordingsPage() {
                         <div style={{ color: "#64748b", fontSize: 11 }}>{cam.name}</div>
                       </div>
                       {isOriginalAdmin ? (
-                        <button
-                          onClick={() => toggleRecording(cam)}
-                          style={{
-                            ...S.toggle,
-                            background: cam.recording_enabled ? "#059669" : "#334155",
-                          }}
+                        <select
+                          value={recordingPolicySelectValue(cam)}
+                          onChange={(e) =>
+                            updateCameraRecordingPolicy(cam, e.target.value)
+                          }
+                          style={S.recordingPolicySelect}
+                          aria-label={`Recording mode for ${cam.display_name}`}
                         >
-                          <div style={{
-                            ...S.toggleDot,
-                            transform: cam.recording_enabled ? "translateX(18px)" : "translateX(2px)",
-                          }} />
-                        </button>
+                          <option value="off">Off</option>
+                          <option value="continuous">Continuous</option>
+                          <option value="events_only">Events (motion)</option>
+                        </select>
                       ) : (
                         <span style={{
                           fontSize: 11, fontWeight: 600, padding: "3px 8px", borderRadius: 10,
                           background: cam.recording_enabled ? "rgba(16,185,129,0.15)" : "rgba(239,68,68,0.15)",
                           color: cam.recording_enabled ? "#10b981" : "#ef4444",
                         }}>
-                          {cam.recording_enabled ? "ON" : "OFF"}
+                          {!cam.recording_enabled || cam.recording_policy === "off"
+                            ? "Off"
+                            : cam.recording_policy === "events_only"
+                              ? "Events"
+                              : "Continuous"}
                         </span>
                       )}
                     </div>
@@ -1141,7 +1147,21 @@ const S = {
   camToggleList: { maxHeight: 360, overflowY: "auto", marginTop: 8 },
   camToggleRow: {
     display: "flex", alignItems: "center", justifyContent: "space-between",
+    gap: 12,
     padding: "8px 0", borderBottom: "1px solid rgba(51,65,85,0.5)",
+  },
+  recordingPolicySelect: {
+    minWidth: 168,
+    maxWidth: "55%",
+    padding: "6px 8px",
+    background: "#0f172a",
+    border: "1px solid #334155",
+    borderRadius: 6,
+    color: "#e2e8f0",
+    fontSize: 12,
+    fontFamily: "inherit",
+    cursor: "pointer",
+    flexShrink: 0,
   },
   toggle: {
     width: 40, height: 22, borderRadius: 11, border: "none",

@@ -6,8 +6,9 @@ echo "🚀 Starting Opus setup... ensure you are in the Opus directory"
 
 docker compose down
 
-# Ask for dev key
-read -p "Enter your DEV KEY: " DEV_KEY
+# Session secret for Flask (required by the app; DEV_KEY was a misnomer)
+read -p "Enter SECRET_KEY (or press Enter for 'dev'): " SECRET_KEY
+SECRET_KEY=${SECRET_KEY:-dev}
 
 echo "📁 Moving to home directory..."
 cd ~ || exit
@@ -28,7 +29,7 @@ cd opus || exit
 
 echo "⚙️ Creating .env file..."
 cat <<EOL > .env
-DEV_KEY=$DEV_KEY
+SECRET_KEY=$SECRET_KEY
 EOL
 
 echo "🐳 Building and starting containers..."

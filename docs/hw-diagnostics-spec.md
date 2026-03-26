@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Read-only snapshot of **host/container** capabilities for support and sizing: CPU topology, memory, GPU/VAAPI presence, FFmpeg hwaccel list, and recordings mount free space.
+Read-only snapshot of **host/container** capabilities for support and sizing: CPU topology, memory, GPU/VAAPI presence, FFmpeg hwaccel list, and recordings mount free space. This endpoint is part of v1 **operational visibility**.
 
 **Security:** **Admin-only.** Same session rules as other admin API routes (`login_required_api` + `admin_required`).
 

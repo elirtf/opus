@@ -422,22 +422,75 @@ def bulk_delete():
 
 # ── Storage stats ─────────────────────────────────────────────────────────────
 
+def _resolved_recordings_dir():
+    """DB `recordings_dir` (settings) then env — matches recorder/processor volume."""
+    try:
+        from app.routes.api.recording_settings import get_setting
+
+        p = (get_setting("recordings_dir") or "").strip()
+        if p.startswith("/"):
+            return p
+    except Exception:
+        pass
+    return os.environ.get("RECORDINGS_DIR", RECORDINGS_DIR)
+
+
+def _scan_mp4_folder(folder):
+    """Non-recursive MP4 count/size under folder. Returns (count, bytes, oldest, newest)."""
+    cam_count = 0
+    cam_bytes = 0
+    oldest_file = None
+    newest_file = None
+    if not os.path.isdir(folder):
+        return 0, 0, None, None
+    try:
+        files = sorted(f for f in os.listdir(folder) if f.endswith(".mp4"))
+    except OSError:
+        return 0, 0, None, None
+    for fn in files:
+        fp = os.path.join(folder, fn)
+        try:
+            sz = os.path.getsize(fp)
+        except OSError:
+            continue
+        if sz < 1024:
+            continue
+        cam_bytes += sz
+        cam_count += 1
+        if oldest_file is None:
+            oldest_file = fn
+        newest_file = fn
+    return cam_count, cam_bytes, oldest_file, newest_file
+
+
 @bp.route("/storage", methods=["GET"])
 @login_required_api
 def storage_stats():
     """
-    Returns storage statistics using the FILESYSTEM as source of truth.
-    Walks the recordings directory to get accurate file counts and sizes,
-    regardless of whether the DB scanner has caught up.
+    Filesystem-backed stats: rolling segments under <dir>/<camera>/ and motion clips
+    under <dir>/clips/<camera>/ (events_only). Uses the same recordings path as settings.
     """
     import shutil
 
-    recordings_dir = os.environ.get("RECORDINGS_DIR", RECORDINGS_DIR)
-    cameras = []
-    total_bytes = 0
-    total_segments = 0
+    recordings_dir = _resolved_recordings_dir()
+    by_cam = {}
+    total_segment_files = 0
+    total_clip_files = 0
+    all_bytes = 0
 
-    # ── Scan filesystem directly ──────────────────────────────────────────
+    def _row(name):
+        if name not in by_cam:
+            by_cam[name] = {
+                "camera_name": name,
+                "segment_count": 0,
+                "clip_count": 0,
+                "total_bytes": 0,
+                "total_gb": 0.0,
+                "oldest": None,
+                "newest": None,
+            }
+        return by_cam[name]
+
     if os.path.exists(recordings_dir):
         try:
             for cam_name in sorted(os.listdir(recordings_dir)):
@@ -446,46 +499,47 @@ def storage_stats():
                 cam_dir = os.path.join(recordings_dir, cam_name)
                 if not os.path.isdir(cam_dir):
                     continue
-
-                cam_bytes = 0
-                cam_count = 0
-                oldest_file = None
-                newest_file = None
-
-                try:
-                    files = sorted(f for f in os.listdir(cam_dir) if f.endswith(".mp4"))
-                except OSError:
+                cnt, bts, old, new = _scan_mp4_folder(cam_dir)
+                if cnt <= 0:
                     continue
+                r = _row(cam_name)
+                r["segment_count"] += cnt
+                r["total_bytes"] += bts
+                all_bytes += bts
+                total_segment_files += cnt
+                if old:
+                    r["oldest"] = old if r["oldest"] is None else min(r["oldest"], old)
+                if new:
+                    r["newest"] = new if r["newest"] is None else max(r["newest"], new)
 
-                for fn in files:
-                    fp = os.path.join(cam_dir, fn)
-                    try:
-                        sz = os.path.getsize(fp)
-                    except OSError:
+            clips_root = os.path.join(recordings_dir, "clips")
+            if os.path.isdir(clips_root):
+                for cam_name in sorted(os.listdir(clips_root)):
+                    cdir = os.path.join(clips_root, cam_name)
+                    if not os.path.isdir(cdir):
                         continue
-                    if sz < 1024:  # skip tiny/empty files
+                    cnt, bts, old, new = _scan_mp4_folder(cdir)
+                    if cnt <= 0:
                         continue
-                    cam_bytes += sz
-                    cam_count += 1
-                    if oldest_file is None:
-                        oldest_file = fn
-                    newest_file = fn
-
-                if cam_count > 0:
-                    cameras.append({
-                        "camera_name":   cam_name,
-                        "segment_count": cam_count,
-                        "total_gb":      round(cam_bytes / (1024**3), 2),
-                        "total_bytes":   cam_bytes,
-                        "oldest":        oldest_file,
-                        "newest":        newest_file,
-                    })
-                    total_bytes += cam_bytes
-                    total_segments += cam_count
+                    r = _row(cam_name)
+                    r["clip_count"] += cnt
+                    r["total_bytes"] += bts
+                    all_bytes += bts
+                    total_clip_files += cnt
+                    if old:
+                        r["oldest"] = old if r["oldest"] is None else min(r["oldest"], old)
+                    if new:
+                        r["newest"] = new if r["newest"] is None else max(r["newest"], new)
         except OSError:
             pass
 
-    # ── Disk usage ────────────────────────────────────────────────────────
+    cameras = []
+    for name in sorted(by_cam.keys()):
+        row = by_cam[name]
+        tb = row["total_bytes"]
+        row["total_gb"] = round(tb / (1024**3), 2) if tb else 0.0
+        cameras.append(row)
+
     disk = None
     if os.path.exists(recordings_dir):
         try:
@@ -500,10 +554,13 @@ def storage_stats():
             pass
 
     return api_response({
+        "recordings_dir":  recordings_dir,
         "cameras":         cameras,
-        "total_segments":  total_segments,
-        "total_gb":        round(total_bytes / (1024**3), 2),
-        "total_bytes":     total_bytes,
+        "total_segments":  total_segment_files,
+        "total_clips":     total_clip_files,
+        "total_files":     total_segment_files + total_clip_files,
+        "total_gb":        round(all_bytes / (1024**3), 2),
+        "total_bytes":     all_bytes,
         "disk":            disk,
     })
 

@@ -136,7 +136,11 @@ export default function CameraView() {
           unless go2rtc advertises reachable candidates or TURN is configured.
           Substream live preview matches the dashboard (lower bitrate).
         */}
-        <LivePlayer cameraName={cam.name} enabled={true} />
+        <LivePlayer
+          cameraName={cam.name}
+          streamName={cam.live_view_stream_name}
+          enabled={true}
+        />
       </div>
     </div>
   );

@@ -6,6 +6,10 @@ import { healthApi } from '../api/health'
 
 const HEALTH_POLL_MS = 30000
 
+function liveStreamKey(cam) {
+  return cam.live_view_stream_name || cam.name.replace('-main', '-sub')
+}
+
 function StatusDot({ online }) {
   return (
     <span className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${
@@ -17,7 +21,7 @@ function StatusDot({ online }) {
 }
 
 function NVRGroup({ name, cameras, health, isOpen, onToggle }) {
-  const online = cameras.filter(c => health[c.name.replace('-main', '-sub')] === true).length
+  const online = cameras.filter(c => health[liveStreamKey(c)] === true).length
   const total  = cameras.length
 
   return (
@@ -38,7 +42,7 @@ function NVRGroup({ name, cameras, health, isOpen, onToggle }) {
       {isOpen && (
         <div className="mt-0.5 space-y-0.5">
           {cameras.map(cam => {
-            const subName = cam.name.replace('-main', '-sub')
+            const streamKey = liveStreamKey(cam)
             return (
               <NavLink
                 key={cam.id}
@@ -51,7 +55,7 @@ function NVRGroup({ name, cameras, health, isOpen, onToggle }) {
                   }`
                 }
               >
-                <StatusDot online={health[subName]} />
+                <StatusDot online={health[streamKey]} />
                 <span className="truncate">
                   {cam.display_name
                     .replace(' — ', ' ')
@@ -125,7 +129,7 @@ export default function Sidebar() {
     groups[key].cameras.push(cam)
   })
 
-  const onlineCount = cameras.filter(c => health[c.name.replace('-main', '-sub')] === true).length
+  const onlineCount = cameras.filter(c => health[liveStreamKey(c)] === true).length
 
   return (
     <aside className="w-56 bg-gray-900 border-r border-gray-800 flex flex-col h-screen shrink-0">

@@ -215,13 +215,13 @@ export default function Dashboard() {
           }}
         >
           {slice.map(cam => {
-            const subName = cam.name.replace('-main', '-sub')
+            const liveName = cam.live_view_stream_name || cam.name.replace('-main', '-sub')
             return (
               <CameraTile
                 key={cam.id}
                 cam={cam}
-                streamName={subName}
-                online={health[subName]}
+                streamName={liveName}
+                online={health[liveName]}
                 onClick={() => navigate(`/camera/${cam.name}`)}
               />
             )

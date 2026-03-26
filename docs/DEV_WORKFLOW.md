@@ -1,8 +1,38 @@
-# Local Development Workflows
+# Development Workflows
 
-Short reference for working on Opus on **Windows** (PowerShell) or **WSL/Linux**. Use whichever path matches how you like to run things.
 
-## Pick a Workflow
+
+
+---
+
+## Get updates from GitHub
+
+1. Open a terminal **in the project folder** (directory that contains `docker-compose.yml`).
+2. Optional: see what branch you’re on: `git branch` (switch with `git checkout <branch>`)
+3. Download and merge the latest from GitHub:
+  ```bash
+   git pull
+  ```
+
+That brings down commits you pushed elsewhere. Rebuild or restart only if you need to (e.g. after dependency or Docker image changes):
+
+```bash
+docker compose up --build
+```
+
+**If `git pull` complains about local changes:** you edited files on this machine and Git won’t overwrite them. Either commit them, or stash, pull, then pop:
+
+```bash
+git stash
+git pull
+git stash pop
+```
+
+**When you might still clone again:** rare cases like a broken repo, wrong remote, or you truly want a new folder. For normal “my other PC has newer commits,” `**git pull` is the whole fix.**
+
+---
+
+## Pick a workflow
 
 ### A — Full Docker Compose (one command)
 
@@ -12,7 +42,7 @@ Short reference for working on Opus on **Windows** (PowerShell) or **WSL/Linux**
 docker compose up --build
 ```
 
-Open **http://localhost** (nginx on port 80). Default login: `admin` / `admin` (change after first login).
+Open **[http://localhost](http://localhost)** (nginx on port 80). Default login: `admin` / `admin` (change after first login).
 
 **Stop:**
 
@@ -68,7 +98,7 @@ npm install
 npm run dev
 ```
 
-Open the URL Vite prints (usually **http://localhost:5173**). Log in and use live tiles; `/go2rtc/stream.html` is proxied like in production nginx.
+Open the URL Vite prints (usually **[http://localhost:5173](http://localhost:5173)**). Log in and use live tiles; `/go2rtc/stream.html` is proxied like in production nginx.
 
 **Optional:** copy `compose.override.yml.example` to `compose.override.yml` for local Compose tweaks (gitignored).
 
@@ -98,14 +128,16 @@ The [Makefile](../Makefile) assumes you run it from **your clone** of the repo. 
 make up PROJECT_DIR=/path/to/opus
 ```
 
-| Target | What it does |
-|--------|----------------|
+
+| Target              | What it does                                                                     |
+| ------------------- | -------------------------------------------------------------------------------- |
 | `up` / `compose-up` | Ensure `.env` exists (minimal dev defaults), then `docker compose up --build -d` |
-| `down` | `docker compose down` |
-| `rebuild` | Down, then up with build |
-| `logs` | Follow Compose logs |
-| `go2rtc` | Start only the `go2rtc` service (detached) |
-| `prune` | Prompts, then aggressive Docker prune (optional cleanup) |
+| `down`              | `docker compose down`                                                            |
+| `rebuild`           | Down, then up with build                                                         |
+| `logs`              | Follow Compose logs                                                              |
+| `go2rtc`            | Start only the `go2rtc` service (detached)                                       |
+| `prune`             | Prompts, then aggressive Docker prune (optional cleanup)                         |
+
 
 **Sudo:** if your user is not in the `docker` group, run:
 
@@ -119,12 +151,14 @@ make DOCKER="sudo docker" up
 
 ## Troubleshooting
 
-| Issue | Things to check |
-|--------|------------------|
-| Login / sessions weird | `SECRET_KEY` must be set for Flask. |
-| Live tiles blank in split dev | go2rtc running? `GO2RTC_URL` reachable from host (`http://127.0.0.1:1984`)? |
-| Port 80 in use | Full stack needs port 80 for nginx; stop the other app or adjust Compose ports in an override. |
-| Port 5000 in use | Another Flask or service; stop it or change `run.py` / proxy target for experiments. |
+
+| Issue                         | Things to check                                                                                |
+| ----------------------------- | ---------------------------------------------------------------------------------------------- |
+| Login / sessions weird        | `SECRET_KEY` must be set for Flask.                                                            |
+| Live tiles blank in split dev | go2rtc running? `GO2RTC_URL` reachable from host (`http://127.0.0.1:1984`)?                    |
+| Port 80 in use                | Full stack needs port 80 for nginx; stop the other app or adjust Compose ports in an override. |
+| Port 5000 in use              | Another Flask or service; stop it or change `run.py` / proxy target for experiments.           |
+
 
 ---
 
@@ -134,9 +168,8 @@ Log in, open a dashboard live tile, try Discovery, open Recordings. Full stack b
 
 ## Motion / event recording (Compose)
 
-- The **`processor`** container must be running for motion-triggered clips (`events_only` cameras). Default `docker compose up` starts it alongside `recorder` and `opus`.
+- The `**processor`** container must be running for motion-triggered clips (`events_only` cameras). Default `docker compose up` starts it alongside `recorder` and `opus`.
 - Set a camera to **Events (motion)** under **Recordings → Settings → Camera Recording**, or call `PATCH /api/cameras/<id>` with `"recording_policy": "events_only"`.
-- Optional: set **`rtsp_substream_url`** on the camera (Devices → edit) so the processor samples a lighter stream.
-- If you enable **`GO2RTC_RTSP_URL`** for FFmpeg, set the **same** value on **`recorder`** and **`processor`** so recording, motion sampling, and clip capture use the same go2rtc paths. See comments in [docker-compose.yml](../docker-compose.yml).
+- Optional: set `**rtsp_substream_url`** on the camera (Devices → edit) so the processor samples a lighter stream.
+- If you enable `**GO2RTC_RTSP_URL**` for FFmpeg, set the **same** value on `**recorder`** and `**processor**` so recording, motion sampling, and clip capture use the same go2rtc paths. See comments in [docker-compose.yml](../docker-compose.yml).
 
->>>>>>> 90e9f627f4437b38c0ebc505eede4f4eebb6285c

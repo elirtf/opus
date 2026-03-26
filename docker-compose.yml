@@ -11,6 +11,13 @@
 #   - WS-Discovery multicast won't reach cameras
 #   - Use the subnet CIDR scan in the Discovery page instead
 # ────────────────────────────────────────────────────────────────────────────
+#
+# GO2RTC_RTSP_URL (RTSP relay for FFmpeg): when uncommented or set in .env, it
+# must be identical on every service that reads RTSP for recording or motion —
+# at minimum the **recorder** and **processor** services. Otherwise segment
+# files, motion sampling, and event clips can point at different sources.
+#
+# ────────────────────────────────────────────────────────────────────────────
 
 services:
   opus:

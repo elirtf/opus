@@ -51,6 +51,22 @@ const pad2 = (n) => String(n).padStart(2, "0");
 const toDateStr = (d) =>
   `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 
+/** Group active main-stream cameras by NVR for settings and playback sidebar. */
+function groupMainCamerasByNvr(camList) {
+  const groups = {};
+  for (const cam of camList) {
+    if (!cam.active || !cam.name.endsWith("-main")) continue;
+    const key = cam.nvr_id != null ? String(cam.nvr_id) : "standalone";
+    const label = cam.nvr_name ?? "Standalone";
+    if (!groups[key]) groups[key] = { key, label, cameras: [] };
+    groups[key].cameras.push(cam);
+  }
+  for (const g of Object.values(groups)) {
+    g.cameras.sort((a, b) => a.display_name.localeCompare(b.display_name));
+  }
+  return Object.values(groups).sort((a, b) => a.label.localeCompare(b.label));
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // MAIN PAGE
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -77,6 +93,8 @@ export default function RecordingsPage() {
   const [speed, setSpeed] = useState(1);
   const videoRef = useRef(null);
   const [pollError, setPollError] = useState(null);
+  /** When set, bulk apply is running for this NVR group key (`standalone` or nvr id string). */
+  const [bulkApplyingKey, setBulkApplyingKey] = useState(null);
 
   const showToast = useCallback((msg, ok = true) => {
     setToast({ msg, ok });
@@ -200,6 +218,53 @@ export default function RecordingsPage() {
     }
   };
 
+  const applyRecordingPolicyToCameras = async (cams, policy, groupKey) => {
+    if (!cams.length) return;
+    setBulkApplyingKey(groupKey);
+    try {
+      const results = await Promise.allSettled(
+        cams.map((cam) =>
+          api(`/api/cameras/${cam.id}`, {
+            method: "PATCH",
+            body: JSON.stringify({ recording_policy: policy }),
+          })
+        )
+      );
+      const updates = {};
+      let ok = 0;
+      let fail = 0;
+      results.forEach((r, i) => {
+        if (r.status === "fulfilled") {
+          ok++;
+          updates[cams[i].id] = r.value;
+        } else {
+          fail++;
+        }
+      });
+      setCameras((prev) =>
+        prev.map((c) => (updates[c.id] ? { ...c, ...updates[c.id] } : c))
+      );
+      const polLabel =
+        policy === "off"
+          ? "Off"
+          : policy === "events_only"
+            ? "Events (motion)"
+            : "Continuous";
+      if (fail === 0) {
+        showToast(`All ${ok} camera(s) in group set to ${polLabel}.`);
+      } else {
+        showToast(
+          `Updated ${ok}, failed ${fail}. Check permissions or connectivity.`,
+          ok > 0
+        );
+      }
+    } catch (e) {
+      showToast(e.message, false);
+    } finally {
+      setBulkApplyingKey(null);
+    }
+  };
+
   const recordingPolicySelectValue = (cam) =>
     !cam.recording_enabled || cam.recording_policy === "off"
       ? "off"
@@ -302,6 +367,10 @@ export default function RecordingsPage() {
   );
   const recordingCams = filtered.filter((c) => c.recording_enabled);
   const availableCams = filtered.filter((c) => !c.recording_enabled);
+
+  const settingsCameraGroups = groupMainCamerasByNvr(cameras);
+  const recordingByNvr = groupMainCamerasByNvr(recordingCams);
+  const availableByNvr = groupMainCamerasByNvr(availableCams);
 
   const continuousRecCount = cameras.filter(
     (c) =>
@@ -499,13 +568,18 @@ export default function RecordingsPage() {
             {recordingCams.length > 0 && (
               <>
                 <div style={S.sideLabel}>Recording ({recordingCams.length})</div>
-                {recordingCams.map((c) => (
-                  <CamItem
-                    key={c.id} cam={c}
-                    selected={selectedCam === c.name}
-                    onSelect={() => setSelectedCam(c.name)}
-                    engineStatus={engineStatus}
-                  />
+                {recordingByNvr.map((g) => (
+                  <div key={`rec-${g.key}`}>
+                    <div style={S.sideNvrLabel}>{g.label} · {g.cameras.length}</div>
+                    {g.cameras.map((c) => (
+                      <CamItem
+                        key={c.id} cam={c}
+                        selected={selectedCam === c.name}
+                        onSelect={() => setSelectedCam(c.name)}
+                        engineStatus={engineStatus}
+                      />
+                    ))}
+                  </div>
                 ))}
               </>
             )}
@@ -514,17 +588,19 @@ export default function RecordingsPage() {
                 <div style={{ ...S.sideLabel, marginTop: 16 }}>
                   Not Recording ({availableCams.length})
                 </div>
-                {availableCams.slice(0, 10).map((c) => (
-                  <CamItem
-                    key={c.id} cam={c}
-                    selected={selectedCam === c.name}
-                    onSelect={() => setSelectedCam(c.name)}
-                    engineStatus={engineStatus}
-                  />
+                {availableByNvr.map((g) => (
+                  <div key={`avail-${g.key}`}>
+                    <div style={S.sideNvrLabel}>{g.label} · {g.cameras.length}</div>
+                    {g.cameras.map((c) => (
+                      <CamItem
+                        key={c.id} cam={c}
+                        selected={selectedCam === c.name}
+                        onSelect={() => setSelectedCam(c.name)}
+                        engineStatus={engineStatus}
+                      />
+                    ))}
+                  </div>
                 ))}
-                {availableCams.length > 10 && (
-                  <div style={S.moreLabel}>+{availableCams.length - 10} more</div>
-                )}
               </>
             )}
           </div>
@@ -537,7 +613,9 @@ export default function RecordingsPage() {
                   <rect x="2" y="4" width="20" height="16" rx="2" />
                   <path d="M7 15l3-3 2 2 4-4 4 4" />
                 </svg>
-                <p style={{ color: "#94a3b8", marginTop: 12 }}>Select a camera to view recordings</p>
+                <p style={{ color: "#94a3b8", marginTop: 12, textAlign: "center", maxWidth: 280, lineHeight: 1.5 }}>
+                  Pick a camera from the list on the left. Use search to filter by name. Only cameras with recording enabled show under Recording.
+                </p>
               </div>
             ) : (
               <>
@@ -722,49 +800,113 @@ export default function RecordingsPage() {
             <div style={S.card}>
               <h3 style={S.cardTitle}>Camera Recording</h3>
               <p style={S.hint}>
+                Cameras are grouped by site (NVR). Use the group buttons to set the same mode for every main stream in that site in one step, or set each camera below.
                 Recording stays off until you choose a mode here (main streams only), after completing recording setup.
                 {isOriginalAdmin
                   ? " Continuous keeps full retention; Events uses motion clips (Events tab) via the processor service. Rolling MP4 segments for Events are optional — set EVENTS_ONLY_RECORD_SEGMENTS=1 on the recorder if you want a disk buffer."
                   : " Only the original administrator can change these."}
               </p>
               <div style={S.camToggleList}>
-                {cameras
-                  .filter((c) => c.active && c.name.endsWith("-main"))
-                  .sort((a, b) => a.display_name.localeCompare(b.display_name))
-                  .map((cam) => (
-                    <div key={cam.id} style={S.camToggleRow}>
-                      <div>
-                        <div style={{ color: "#e2e8f0", fontSize: 13 }}>{cam.display_name}</div>
-                        <div style={{ color: "#64748b", fontSize: 11 }}>{cam.name}</div>
+                {settingsCameraGroups.length === 0 ? (
+                  <p style={{ color: "#64748b", fontSize: 12, margin: 0 }}>No active main-stream cameras.</p>
+                ) : (
+                  settingsCameraGroups.map((g) => (
+                    <div key={g.key} style={S.nvrGroupSection}>
+                      <div style={S.nvrGroupHeader}>
+                        <div>
+                          <span style={{ color: "#94a3b8", fontSize: 12, fontWeight: 600 }}>{g.label}</span>
+                          <span style={{ color: "#475569", fontSize: 11, marginLeft: 8 }}>
+                            ({g.cameras.length} main {g.cameras.length === 1 ? "stream" : "streams"})
+                          </span>
+                        </div>
+                        {isOriginalAdmin && (
+                          <div style={S.nvrBulkBtnRow}>
+                            <button
+                              type="button"
+                              style={{
+                                ...S.nvrBulkBtn,
+                                ...(bulkApplyingKey != null
+                                  ? { opacity: 0.45, cursor: "not-allowed" }
+                                  : {}),
+                              }}
+                              disabled={bulkApplyingKey != null}
+                              onClick={() =>
+                                applyRecordingPolicyToCameras(g.cameras, "events_only", g.key)
+                              }
+                              title="Set all cameras in this site to Events (motion)"
+                            >
+                              Motion
+                            </button>
+                            <button
+                              type="button"
+                              style={{
+                                ...S.nvrBulkBtn,
+                                ...(bulkApplyingKey != null
+                                  ? { opacity: 0.45, cursor: "not-allowed" }
+                                  : {}),
+                              }}
+                              disabled={bulkApplyingKey != null}
+                              onClick={() =>
+                                applyRecordingPolicyToCameras(g.cameras, "continuous", g.key)
+                              }
+                              title="Set all cameras in this site to Continuous"
+                            >
+                              Continuous
+                            </button>
+                            <button
+                              type="button"
+                              style={{
+                                ...S.nvrBulkBtn,
+                                ...(bulkApplyingKey != null
+                                  ? { opacity: 0.45, cursor: "not-allowed" }
+                                  : {}),
+                              }}
+                              disabled={bulkApplyingKey != null}
+                              onClick={() => applyRecordingPolicyToCameras(g.cameras, "off", g.key)}
+                              title="Turn off recording for all cameras in this site"
+                            >
+                              Off
+                            </button>
+                          </div>
+                        )}
                       </div>
-                      {isOriginalAdmin ? (
-                        <select
-                          value={recordingPolicySelectValue(cam)}
-                          onChange={(e) =>
-                            updateCameraRecordingPolicy(cam, e.target.value)
-                          }
-                          style={S.recordingPolicySelect}
-                          aria-label={`Recording mode for ${cam.display_name}`}
-                        >
-                          <option value="off">Off</option>
-                          <option value="continuous">Continuous</option>
-                          <option value="events_only">Events (motion)</option>
-                        </select>
-                      ) : (
-                        <span style={{
-                          fontSize: 11, fontWeight: 600, padding: "3px 8px", borderRadius: 10,
-                          background: cam.recording_enabled ? "rgba(16,185,129,0.15)" : "rgba(239,68,68,0.15)",
-                          color: cam.recording_enabled ? "#10b981" : "#ef4444",
-                        }}>
-                          {!cam.recording_enabled || cam.recording_policy === "off"
-                            ? "Off"
-                            : cam.recording_policy === "events_only"
-                              ? "Events"
-                              : "Continuous"}
-                        </span>
-                      )}
+                      {g.cameras.map((cam) => (
+                        <div key={cam.id} style={S.camToggleRow}>
+                          <div>
+                            <div style={{ color: "#e2e8f0", fontSize: 13 }}>{cam.display_name}</div>
+                            <div style={{ color: "#64748b", fontSize: 11 }}>{cam.name}</div>
+                          </div>
+                          {isOriginalAdmin ? (
+                            <select
+                              value={recordingPolicySelectValue(cam)}
+                              onChange={(e) =>
+                                updateCameraRecordingPolicy(cam, e.target.value)
+                              }
+                              style={S.recordingPolicySelect}
+                              aria-label={`Recording mode for ${cam.display_name}`}
+                            >
+                              <option value="off">Off</option>
+                              <option value="continuous">Continuous</option>
+                              <option value="events_only">Events (motion)</option>
+                            </select>
+                          ) : (
+                            <span style={{
+                              fontSize: 11, fontWeight: 600, padding: "3px 8px", borderRadius: 10,
+                              background: cam.recording_enabled ? "rgba(16,185,129,0.15)" : "rgba(239,68,68,0.15)",
+                              color: cam.recording_enabled ? "#10b981" : "#ef4444",
+                            }}>
+                              {!cam.recording_enabled || cam.recording_policy === "off"
+                                ? "Off"
+                                : cam.recording_policy === "events_only"
+                                  ? "Events"
+                                  : "Continuous"}
+                            </span>
+                          )}
+                        </div>
+                      ))}
                     </div>
-                  ))}
+                  ))
+                )}
               </div>
             </div>
 
@@ -1103,7 +1245,13 @@ const S = {
     padding: "6px 12px", fontSize: 10, fontWeight: 700,
     color: "#64748b", textTransform: "uppercase", letterSpacing: 0.8,
   },
-  moreLabel: { padding: "4px 12px", fontSize: 11, color: "#475569", fontStyle: "italic" },
+  sideNvrLabel: {
+    padding: "4px 12px 2px",
+    fontSize: 10,
+    fontWeight: 600,
+    color: "#475569",
+    letterSpacing: 0.3,
+  },
   camItem: {
     width: "100%", display: "flex", alignItems: "center", gap: 8,
     padding: "8px 12px", border: "none", background: "transparent",
@@ -1214,7 +1362,33 @@ const S = {
   },
 
   // Camera toggles
-  camToggleList: { maxHeight: 360, overflowY: "auto", marginTop: 8 },
+  camToggleList: { maxHeight: 480, overflowY: "auto", marginTop: 8 },
+  nvrGroupSection: {
+    marginBottom: 12,
+    paddingBottom: 8,
+    borderBottom: "1px solid rgba(51,65,85,0.45)",
+  },
+  nvrGroupHeader: {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+    paddingBottom: 8,
+    marginBottom: 4,
+  },
+  nvrBulkBtnRow: { display: "flex", flexWrap: "wrap", gap: 6 },
+  nvrBulkBtn: {
+    padding: "4px 10px",
+    fontSize: 11,
+    fontWeight: 600,
+    fontFamily: "inherit",
+    borderRadius: 5,
+    border: "1px solid #475569",
+    background: "#0f172a",
+    color: "#cbd5e1",
+    cursor: "pointer",
+  },
   camToggleRow: {
     display: "flex", alignItems: "center", justifyContent: "space-between",
     gap: 12,

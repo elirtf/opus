@@ -68,8 +68,10 @@ class ProcessingEngine:
             time.sleep(POLL_SECONDS)
 
     def _motion_rtsp(self, cam) -> str:
-        if cam.rtsp_substream_url:
-            return cam.rtsp_substream_url.strip()
+        """
+        Motion detection uses the same source as recording (main stream / go2rtc main name).
+        Live view may use a substream via go2rtc; analysis stays on the main channel for accuracy.
+        """
         if GO2RTC_RTSP_URL:
             return "%s/%s" % (GO2RTC_RTSP_URL.rstrip("/"), cam.name)
         return cam.rtsp_url

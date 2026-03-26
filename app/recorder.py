@@ -32,6 +32,16 @@ SHELVE_RETRY_MIN     = int(os.environ.get("RECORDING_SHELVE_RETRY_MINUTES", "10"
 STAGGER_DELAY        = float(os.environ.get("RECORDING_STAGGER_SECONDS", "2"))
 # Rolling segment buffer for events_only cameras (hours); older segments are purged first.
 EVENTS_ONLY_BUFFER_HOURS = int(os.environ.get("EVENTS_ONLY_BUFFER_HOURS", "48"))
+# When True, events_only cameras get 24/7 FFmpeg segment recording (rolling buffer up to EVENTS_ONLY_BUFFER_HOURS).
+# When False (default), events_only does not run segment recording — only motion clips from the processor
+# (matches typical "motion-only" NVR expectation; Playback timeline stays empty for those cameras).
+EVENTS_ONLY_RECORD_SEGMENTS = os.environ.get("EVENTS_ONLY_RECORD_SEGMENTS", "0").strip().lower() not in (
+    "",
+    "0",
+    "false",
+    "no",
+    "off",
+)
 # Do not start new FFmpeg writers when free space on the recordings volume drops below this (0 = disabled).
 MIN_FREE_GB = float(os.environ.get("RECORDING_MIN_FREE_GB", "1") or "0")
 
@@ -56,8 +66,11 @@ class RecordingEngine:
         self._thread = threading.Thread(target=self._loop, daemon=True, name="recorder")
         self._thread.start()
         logger.info(
-            "Recording engine started (seg=%smin, relay=%s, stagger=%ss)",
-            SEGMENT_MINUTES, "yes" if GO2RTC_RTSP_URL else "no", STAGGER_DELAY,
+            "Recording engine started (seg=%smin, relay=%s, stagger=%ss, events_only_segments=%s)",
+            SEGMENT_MINUTES,
+            "yes" if GO2RTC_RTSP_URL else "no",
+            STAGGER_DELAY,
+            "on" if EVENTS_ONLY_RECORD_SEGMENTS else "off",
         )
 
     def stop(self):
@@ -104,7 +117,10 @@ class RecordingEngine:
             & (Camera.active == True)
             & (Camera.recording_policy != "off")
         )
-        return {c.name: c for c in qs if c.name.endswith("-main")}
+        cams = [c for c in qs if c.name.endswith("-main")]
+        if not EVENTS_ONLY_RECORD_SEGMENTS:
+            cams = [c for c in cams if getattr(c, "recording_policy", None) != "events_only"]
+        return {c.name: c for c in cams}
 
     def _recordings_free_gb(self):
         """Free space on the filesystem that holds RECORDINGS_DIR (None if unknown)."""
@@ -513,7 +529,9 @@ class RecordingEngine:
             names = [
                 c.name
                 for c in Camera.select(Camera.name).where(
-                    (Camera.recording_policy == "events_only") & (Camera.active == True)
+                    (Camera.recording_policy == "events_only")
+                    & (Camera.active == True)
+                    & (Camera.recording_enabled == True)
                 )
             ]
         except Exception:
@@ -637,6 +655,7 @@ class RecordingEngine:
             "config": {"segment_minutes": SEGMENT_MINUTES,
                        "retention_days": RETENTION_DAYS,
                        "clip_retention_days": CLIP_RETENTION_DAYS,
+                       "events_only_record_segments": EVENTS_ONLY_RECORD_SEGMENTS,
                        "events_only_buffer_hours": EVENTS_ONLY_BUFFER_HOURS,
                        "min_free_gb": MIN_FREE_GB if MIN_FREE_GB > 0 else None,
                        "recordings_free_gb": free_gb,

@@ -238,6 +238,7 @@ def bulk_toggle_recording():
     data = request.get_json(silent=True) or {}
     camera_ids = data.get("camera_ids", [])
     enabled = bool(data.get("enabled", False))
+    policy_raw = (data.get("recording_policy") or "").strip().lower()
 
     if not camera_ids:
         return api_error("camera_ids is required.", 400)
@@ -245,6 +246,9 @@ def bulk_toggle_recording():
     from app.models import Camera
 
     if enabled:
+        if policy_raw and policy_raw not in ("continuous", "events_only"):
+            return api_error('recording_policy must be "continuous" or "events_only" when enabling.', 400)
+        pol = policy_raw or "continuous"
         main_ids = [
             c.id
             for c in Camera.select(Camera.id, Camera.name).where(
@@ -255,7 +259,7 @@ def bulk_toggle_recording():
             return api_error("Recording is only supported on main streams.", 400)
         camera_ids = main_ids
         count = (
-            Camera.update(recording_enabled=True, recording_policy="continuous")
+            Camera.update(recording_enabled=True, recording_policy=pol)
             .where(Camera.id.in_(camera_ids))
             .execute()
         )

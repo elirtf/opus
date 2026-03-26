@@ -687,7 +687,7 @@ export default function RecordingsPage() {
               <p style={S.hint}>
                 Recording stays off until you choose a mode here (main streams only), after completing recording setup.
                 {isOriginalAdmin
-                  ? " Continuous keeps full retention; Events uses motion clips plus a short segment buffer (requires the processor service in Docker Compose)."
+                  ? " Continuous keeps full retention; Events uses motion clips (Events tab) via the processor service. Rolling MP4 segments for Events are optional — set EVENTS_ONLY_RECORD_SEGMENTS=1 on the recorder if you want a disk buffer."
                   : " Only the original administrator can change these."}
               </p>
               <div style={S.camToggleList}>

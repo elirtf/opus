@@ -65,6 +65,8 @@ services:
       - RECORDING_MAX_STORAGE_GB=25
       - RECORDING_MIN_FREE_GB=1
       - RECORDING_STAGGER_SECONDS=2
+      # Events (motion) cameras: 0 = clip-only (default), 1 = rolling segment buffer (see README)
+      # - EVENTS_ONLY_RECORD_SEGMENTS=1
       # - GO2RTC_RTSP_URL=rtsp://go2rtc:8554
     volumes:
       - ./instance:/app/instance

@@ -21,3 +21,55 @@ def hwaccel_input_args():
     if FFMPEG_HWACCEL_DEVICE:
         args.extend(["-hwaccel_device", FFMPEG_HWACCEL_DEVICE])
     return args
+
+
+def _ffmpeg_hwaccel_effective() -> str:
+    """Normalized env value: none when disabled."""
+    if FFMPEG_HWACCEL in ("", "none", "off", "false", "0"):
+        return "none"
+    return FFMPEG_HWACCEL
+
+
+def _paths_that_decode_frames():
+    """
+    Where FFmpeg/OpenCV actually decode pixels. Recording uses stream copy unless changed.
+    MOTION_DETECTOR is set on the processor service; unset in a typical recorder-only process.
+    """
+    raw = os.environ.get("MOTION_DETECTOR")
+    if raw is None:
+        return (
+            [],
+            "Motion decoding runs in the processor service; set MOTION_DETECTOR there.",
+        )
+    det = raw.strip().lower()
+    if det in ("stub", "none", "off"):
+        return ([], "MOTION_DETECTOR is off or stub — no frame decode for motion.")
+    if det == "opencv":
+        return (["motion_detection_opencv"], None)
+    return (["motion_detection_%s" % det], None)
+
+
+def get_video_pipeline_summary():
+    """
+    Single JSON-friendly description of how Opus uses FFmpeg (copy vs decode, hwaccel scope).
+    Safe to log and expose on status/diagnostics endpoints.
+    """
+    paths, paths_note = _paths_that_decode_frames()
+    hw = _ffmpeg_hwaccel_effective()
+    out = {
+        "recording_video_mode": "stream_copy",
+        "decoder_used_for_recording": False,
+        "recording_note": (
+            "Segments and clips use -c:v copy; the camera bitstream is remuxed to MP4 without re-encoding."
+        ),
+        "ffmpeg_hwaccel_env": hw,
+        "ffmpeg_hwaccel_device": FFMPEG_HWACCEL_DEVICE or None,
+        "hwaccel_expected_impact_on_recording": "minimal",
+        "hwaccel_note": (
+            "FFMPEG_HWACCEL applies when FFmpeg decodes frames; stream copy does not decode for output."
+        ),
+        "paths_that_decode_frames": paths,
+    }
+    if paths_note:
+        out["paths_that_decode_frames_note"] = paths_note
+    return out

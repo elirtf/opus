@@ -14,6 +14,9 @@ Steps for **Windows (PowerShell)**, **WSL**, and **Linux**. Copy the block that 
 | 1    | `git pull` — downloads the latest commits into project folder.                                            |
 | 2    | `docker compose up --build -d` — **rebuilds** the Opus images from updated files and restarts containers. |
 
+**`docker compose pull`** only updates **pre-built** images (e.g. go2rtc, nginx). Opus uses **`build: .`** — new code needs **`--build`**, not prune.
+
+**Old UI after a rebuild (root cause and fix):** The React app is served from a **named volume** (`static_files`) shared by `opus` and `nginx`. That volume sits on top of the files in the image, so once it was created it could keep **stale** JS until the volume was deleted (people often deleted it indirectly via **prune**). Current images run a **startup copy** from the fresh build into that volume so **`git pull` + `docker compose up --build -d`** is enough. **Do not use prune** as your normal update step.
 
 ---
 
@@ -57,15 +60,25 @@ git stash pop
 
 ### Still seeing the old app?
 
-Try recreating containers once:
-
-**PowerShell / Bash:**
+1. Pull this fix, rebuild, and restart (creates a new image with the entrypoint):
 
 ```bash
+git pull
 docker compose up --build --force-recreate -d
 ```
 
-Only if something is really stuck, use prune **carefully** (dev machine, disk cleanup). For production servers, prefer `--build` and only prune when you understand what will be removed.
+2. Hard-refresh the browser (Ctrl+F5) so the browser is not caching `index.html`.
+
+3. **Only on an old deploy** without the entrypoint: remove the **static** volume once — **not** a full prune — then bring the stack back:
+
+```bash
+docker compose down
+docker volume ls   # find `<project>_static_files`, often opus_static_files
+docker volume rm opus_static_files
+docker compose up --build -d
+```
+
+Never remove the **`recordings`** volume unless you mean to delete footage.
 
 ---
 
@@ -169,7 +182,8 @@ From the repo: `make up` runs `docker compose up --build -d`.
 
 | Problem                        | Try                                                          |
 | ------------------------------ | ------------------------------------------------------------ |
-| Old UI or old API after update | `docker compose up --build --force-recreate -d`              |
+| Old UI after update            | Ensure you have the entrypoint fix, then `docker compose up --build --force-recreate -d`. Ctrl+F5. If still stuck (legacy volume), `docker volume rm <project>_static_files` only — not prune. |
+| Old API / Python not updating  | `docker compose up --build --force-recreate -d` (API code is in the image; not blocked by `static_files`). |
 | `git pull` fails               | Commit or `git stash`, then pull again                       |
 | Login / sessions odd           | Set `SECRET_KEY` in `.env`                                   |
 | Live tiles blank (split dev)   | go2rtc running? `GO2RTC_URL=http://127.0.0.1:1984`?          |

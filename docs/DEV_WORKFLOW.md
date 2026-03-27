@@ -11,8 +11,8 @@ Steps for **Windows (PowerShell)**, **WSL**, and **Linux**. Copy the block that 
 
 | Step | What it does                                                                                                  |
 | ---- | ------------------------------------------------------------------------------------------------------------- |
-| 1    | `**git pull`** — downloads the latest commits into project folder.                                            |
-| 2    | `**docker compose up --build -d`** — **rebuilds** the Opus images from updated files and restarts containers. |
+| 1    | `git pull` — downloads the latest commits into project folder.                                            |
+| 2    | `docker compose up --build -d` — **rebuilds** the Opus images from updated files and restarts containers. |
 
 
 ---
@@ -180,7 +180,7 @@ From the repo: `make up` runs `docker compose up --build -d`.
 
 ## Motion / event recording (Compose)
 
-- `**processor**` must run for motion clips on **Events** cameras. Full `docker compose up` starts it with the rest.
-- `**EVENTS_ONLY_RECORD_SEGMENTS`** on **recorder** (see [README.md](../README.md)): default off — Events cameras do not keep 24/7 segment files unless you enable it.
-- Same `**GO2RTC_RTSP_URL`** on **recorder** and **processor** if you use go2rtc relay for FFmpeg.
+- `processor` must run for motion clips on **Events** cameras. Full `docker compose up` starts it with the rest.
+- `EVENTS_ONLY_RECORD_SEGMENTS` on **recorder** (see [README.md](../README.md)): default off — Events cameras do not keep 24/7 segment files unless you enable it.
+- Same `GO2RTC_RTSP_URL` on **recorder** and **processor** if you use go2rtc relay for FFmpeg.
 

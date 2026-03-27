@@ -1,26 +1,51 @@
 # Development Workflows
 
+Steps for **Windows (PowerShell)**, **WSL**, and **Linux**. Copy the block that matches your machine.
 
+---
+
+## Development Updates:
+
+**Goal:** Get the latest code and run the **new** version in Docker.
+
+
+| Step | What it does                                                                                                  |
+| ---- | ------------------------------------------------------------------------------------------------------------- |
+| 1    | `**git pull`** — downloads the latest commits into project folder.                                            |
+| 2    | `**docker compose up --build -d`** — **rebuilds** the Opus images from updated files and restarts containers. |
 
 
 ---
 
-## Get updates from GitHub
+### Windows — PowerShell
 
-1. Open a terminal **in the project folder** (directory that contains `docker-compose.yml`).
-2. Optional: see what branch you’re on: `git branch` (switch with `git checkout <branch>`)
-3. Download and merge the latest from GitHub:
-  ```bash
-   git pull
-  ```
+In your project folder:
 
-That brings down commits you pushed elsewhere. Rebuild or restart only if you need to (e.g. after dependency or Docker image changes):
-
-```bash
-docker compose up --build
+```powershell
+git pull
+docker compose up --build -d
 ```
 
-**If `git pull` complains about local changes:** you edited files on this machine and Git won’t overwrite them. Either commit them, or stash, pull, then pop:
+If Git says you have local edits you don’t want to lose:
+
+```powershell
+git stash
+git pull
+git stash pop
+```
+
+---
+
+### WSL or Linux — Bash
+
+In your project folder:
+
+```bash
+git pull
+docker compose up --build -d
+```
+
+Stash if needed:
 
 ```bash
 git stash
@@ -28,21 +53,31 @@ git pull
 git stash pop
 ```
 
-**When you might still clone again:** rare cases like a broken repo, wrong remote, or you truly want a new folder. For normal “my other PC has newer commits,” `git pull` is the whole fix.
+---
+
+### Still seeing the old app?
+
+Try recreating containers once:
+
+**PowerShell / Bash:**
+
+```bash
+docker compose up --build --force-recreate -d
+```
+
+Only if something is really stuck, use prune **carefully** (dev machine, disk cleanup). For production servers, prefer `--build` and only prune when you understand what will be removed.
 
 ---
 
-## Pick a workflow
+## Run the full stack (first time or after a reboot)
 
-### A — Full Docker Compose (one command)
-
-**Prerequisites:** Docker Desktop (Windows/macOS) or Docker Engine + Compose (Linux), a `.env` in the repo root with at least `SECRET_KEY`.
+**PowerShell / WSL / Linux** (project root, `.env` with `SECRET_KEY`):
 
 ```bash
-docker compose up --build
+docker compose up --build -d
 ```
 
-Open **[http://localhost](http://localhost)** (nginx on port 80). Default login: `admin` / `admin` (change after first login).
+Open **[http://localhost](http://localhost)** — login `admin` / `admin` (change after first login).
 
 **Stop:**
 
@@ -50,23 +85,21 @@ Open **[http://localhost](http://localhost)** (nginx on port 80). Default login:
 docker compose down
 ```
 
-### B — Split “fast loop” (UI / API work)
+---
 
-Run **go2rtc** in Docker, **Flask** and **Vite** on the host. The frontend proxies `/api` to Flask and `/go2rtc` to go2rtc’s API (see `frontend/vite.config.js`).
+## Split dev (UI / API — faster iteration)
 
-**1. Start go2rtc**
+Use Docker only for **go2rtc**, run **Flask** and **Vite** on the host.
+
+**1. go2rtc**
 
 ```bash
-docker compose up go2rtc
+docker compose up go2rtc -d
 ```
-
-Leave this terminal running (or add `-d` for detached).
 
 **2. Backend**
 
-Create a venv once, install deps, set `SECRET_KEY`, run Flask.
-
-**Windows (PowerShell):**
+PowerShell:
 
 ```powershell
 python -m venv .venv
@@ -77,7 +110,7 @@ $env:GO2RTC_URL = "http://127.0.0.1:1984"
 python run.py
 ```
 
-**WSL / Linux / macOS:**
+WSL / Linux:
 
 ```bash
 python -m venv .venv
@@ -88,8 +121,6 @@ export GO2RTC_URL=http://127.0.0.1:1984
 python run.py
 ```
 
-`GO2RTC_URL` points at the go2rtc container published on the host (Compose exposes go2rtc’s ports by default for the `go2rtc` image).
-
 **3. Frontend**
 
 ```bash
@@ -98,78 +129,58 @@ npm install
 npm run dev
 ```
 
-Open the URL Vite prints (usually **[http://localhost:5173](http://localhost:5173)**). Log in and use live tiles; `/go2rtc/stream.html` is proxied like in production nginx.
-
-**Optional:** copy `compose.override.yml.example` to `compose.override.yml` for local Compose tweaks (gitignored).
+Open the URL Vite prints (often **[http://localhost:5173](http://localhost:5173)**).
 
 ---
 
 ## Environment file (`.env`)
 
-For **Compose workflow A**, create `.env` in the repo root. Minimum:
+For Docker Compose, put a `.env` next to `docker-compose.yml` with at least:
 
 ```env
 SECRET_KEY=your-secret-here
 ```
 
-Compose sets other defaults (see `docker-compose.yml` and [README.md](../README.md) Getting Started).
-
-For **split workflow B**, Flask reads the environment of your shell (`SECRET_KEY`, `GO2RTC_URL`) more than `.env` unless you use a tool that loads it; the commands above set the important vars explicitly.
+See [README.md](../README.md) for more options.
 
 ---
 
 ## Makefile (WSL / Linux only)
 
-`make` needs a Unix shell. On **Windows** without WSL, use the commands in sections A and B instead of Make.
-
-The [Makefile](../Makefile) assumes you run it from **your clone** of the repo. It uses `PROJECT_DIR` (default: current directory when you invoke `make`). Override if needed:
-
-```bash
-make up PROJECT_DIR=/path/to/opus
-```
+From the repo: `make up` runs `docker compose up --build -d`.  
+`make DOCKER="sudo docker" up` if Docker needs sudo.
 
 
-| Target              | What it does                                                                     |
-| ------------------- | -------------------------------------------------------------------------------- |
-| `up` / `compose-up` | Ensure `.env` exists (minimal dev defaults), then `docker compose up --build -d` |
-| `down`              | `docker compose down`                                                            |
-| `rebuild`           | Down, then up with build                                                         |
-| `logs`              | Follow Compose logs                                                              |
-| `go2rtc`            | Start only the `go2rtc` service (detached)                                       |
-| `prune`             | Prompts, then aggressive Docker prune (optional cleanup)                         |
+| Target              | Action                       |
+| ------------------- | ---------------------------- |
+| `up` / `compose-up` | Build and start stack        |
+| `down`              | Stop stack                   |
+| `rebuild`           | Down, then build and up      |
+| `logs`              | Follow logs                  |
+| `go2rtc`            | Start only go2rtc (detached) |
 
 
-**Sudo:** if your user is not in the `docker` group, run:
-
-```bash
-make DOCKER="sudo docker" up
-```
-
-**Dangerous / rare:** `clean-wipe` deletes `PROJECT_DIR` on disk. It **refuses** to run if `PROJECT_DIR` is the same as the directory you invoked `make` from, so you cannot accidentally delete your active clone. Use only for disposable paths after explicitly setting `PROJECT_DIR`.
+`clean-wipe` is rare and only for a disposable clone path (see Makefile).
 
 ---
 
 ## Troubleshooting
 
 
-| Issue                         | Things to check                                                                                |
-| ----------------------------- | ---------------------------------------------------------------------------------------------- |
-| Login / sessions weird        | `SECRET_KEY` must be set for Flask.                                                            |
-| Live tiles blank in split dev | go2rtc running? `GO2RTC_URL` reachable from host (`http://127.0.0.1:1984`)?                    |
-| Port 80 in use                | Full stack needs port 80 for nginx; stop the other app or adjust Compose ports in an override. |
-| Port 5000 in use              | Another Flask or service; stop it or change `run.py` / proxy target for experiments.           |
+| Problem                        | Try                                                          |
+| ------------------------------ | ------------------------------------------------------------ |
+| Old UI or old API after update | `docker compose up --build --force-recreate -d`              |
+| `git pull` fails               | Commit or `git stash`, then pull again                       |
+| Login / sessions odd           | Set `SECRET_KEY` in `.env`                                   |
+| Live tiles blank (split dev)   | go2rtc running? `GO2RTC_URL=http://127.0.0.1:1984`?          |
+| Port 80 or 5000 in use         | Stop the other program or change ports in a Compose override |
 
 
 ---
 
-## Quick check
-
-Log in, open a dashboard live tile, try Discovery, open Recordings. Full stack behavior (recorder status, etc.) needs the `recorder` service and `RECORDER_INTERNAL_STATUS_URL` as in [docker-compose.yml](../docker-compose.yml).
-
 ## Motion / event recording (Compose)
 
-- The **processor** container must be running for motion-triggered clips (`events_only` cameras). Default `docker compose up` starts it alongside `recorder` and `opus`.
-- On the **`recorder`** service, **`EVENTS_ONLY_RECORD_SEGMENTS`** defaults to off: Events cameras do **not** get 24/7 segment files (only motion clips). Set `EVENTS_ONLY_RECORD_SEGMENTS=1` if you want the older rolling MP4 buffer behavior (see [README.md](../README.md)).
-- Set a camera to **Events (motion)** under **Recordings → Settings → Camera Recording**, or call `PATCH /api/cameras/<id>` with `"recording_policy": "events_only"`.
-- Optional: set `rtsp_substream_url` on the camera (Devices → edit) so the processor samples a lighter stream.
-- If you enable `GO2RTC_RTSP_URL` for FFmpeg, set the **same** value on **recorder** and **processor** so recording, motion sampling, and clip capture use the same go2rtc paths. See comments in [docker-compose.yml](../docker-compose.yml).
+- `**processor**` must run for motion clips on **Events** cameras. Full `docker compose up` starts it with the rest.
+- `**EVENTS_ONLY_RECORD_SEGMENTS`** on **recorder** (see [README.md](../README.md)): default off — Events cameras do not keep 24/7 segment files unless you enable it.
+- Same `**GO2RTC_RTSP_URL`** on **recorder** and **processor** if you use go2rtc relay for FFmpeg.
+

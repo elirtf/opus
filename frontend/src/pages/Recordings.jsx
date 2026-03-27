@@ -820,7 +820,9 @@ export default function RecordingsPage() {
                         <div style={S.nvrGroupHeader}>
                           <div style={S.nvrSiteTitleRow}>
                             <span style={S.nvrSiteBadge}>Site</span>
-                            <span style={S.nvrSiteName}>{g.label}</span>
+                            <span style={S.nvrSiteName} title={g.label}>
+                              {g.label}
+                            </span>
                             <span style={S.nvrSiteMeta}>
                               {g.cameras.length} main {g.cameras.length === 1 ? "stream" : "streams"}
                             </span>
@@ -1388,15 +1390,16 @@ const S = {
     flexWrap: "wrap",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: 10,
+    columnGap: 12,
+    rowGap: 10,
   },
   nvrSiteTitleRow: {
     display: "flex",
     alignItems: "center",
-    flexWrap: "wrap",
     gap: 8,
-    flex: 1,
+    flex: "1 1 0",
     minWidth: 0,
+    maxWidth: "100%",
   },
   nvrSiteBadge: {
     fontSize: 9,
@@ -1414,14 +1417,27 @@ const S = {
     fontSize: 14,
     fontWeight: 700,
     color: "#f1f5f9",
-    flexShrink: 0,
+    minWidth: 0,
+    flex: "1 1 0",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
   },
   nvrSiteMeta: {
     fontSize: 11,
     color: "#64748b",
     whiteSpace: "nowrap",
+    flexShrink: 0,
   },
-  nvrBulkBtnRow: { display: "flex", flexWrap: "wrap", gap: 6 },
+  /** Full-width row so Motion / Continuous / Off never collide with long site names. */
+  nvrBulkBtnRow: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 6,
+    flexShrink: 0,
+    justifyContent: "flex-end",
+    flexBasis: "100%",
+  },
   nvrBulkBtn: {
     padding: "4px 10px",
     fontSize: 11,

@@ -82,6 +82,31 @@ Never remove the **`recordings`** volume unless you mean to delete footage.
 
 ---
 
+## Login and password after updates
+
+**Seeing the login screen again after `git pull` / rebuild is normal** if your `.env` **`SECRET_KEY`** changed: old browser sessions no longer count, so you must sign in again.
+
+**`admin` / `admin` only applies on a brand‑new database** (no users yet). Your data folder `./instance` is **reused** across rebuilds, so:
+
+- If you already changed the admin password, **`admin` / `admin` will not work** — use the password you set.
+- Rebuilding Docker **does not** reset passwords and **does not** wipe users.
+
+**Locked out or need to go back to a known password** (stack must be running):
+
+**PowerShell / WSL / Linux** (in the project folder):
+
+```bash
+docker compose exec opus python scripts/reset_admin_password.py
+```
+
+Defaults reset user `admin` to password `admin`. To pick another password:
+
+```bash
+docker compose exec opus python scripts/reset_admin_password.py --username admin --password "your-new-password"
+```
+
+---
+
 ## Run the full stack (first time or after a reboot)
 
 **PowerShell / WSL / Linux** (project root, `.env` with `SECRET_KEY`):
@@ -185,7 +210,7 @@ From the repo: `make up` runs `docker compose up --build -d`.
 | Old UI after update            | Ensure you have the entrypoint fix, then `docker compose up --build --force-recreate -d`. Ctrl+F5. If still stuck (legacy volume), `docker volume rm <project>_static_files` only — not prune. |
 | Old API / Python not updating  | `docker compose up --build --force-recreate -d` (API code is in the image; not blocked by `static_files`). |
 | `git pull` fails               | Commit or `git stash`, then pull again                       |
-| Login / sessions odd           | Set `SECRET_KEY` in `.env`                                   |
+| Login / sessions odd           | Set `SECRET_KEY` in `.env`. After it **changes**, you must log in again; default **`admin` / `admin`** only exists on first install — see [Login and password after updates](#login-and-password-after-updates). |
 | Live tiles blank (split dev)   | go2rtc running? `GO2RTC_URL=http://127.0.0.1:1984`?          |
 | Port 80 or 5000 in use         | Stop the other program or change ports in a Compose override |
 

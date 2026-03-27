@@ -51,18 +51,29 @@ const pad2 = (n) => String(n).padStart(2, "0");
 const toDateStr = (d) =>
   `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 
+/** Human-readable site name for one NVR bucket (avoid every group showing "Standalone"). */
+function siteLabelForCameras(cameras) {
+  if (!cameras.length) return "Standalone";
+  const withName = cameras.find((c) => c.nvr_name && String(c.nvr_name).trim());
+  if (withName) return String(withName.nvr_name).trim();
+  const id = cameras[0].nvr_id;
+  if (id != null && id !== "") return `Site #${id}`;
+  return "Standalone";
+}
+
 /** Group active main-stream cameras by NVR for settings and playback sidebar. */
 function groupMainCamerasByNvr(camList) {
   const groups = {};
   for (const cam of camList) {
     if (!cam.active || !cam.name.endsWith("-main")) continue;
-    const key = cam.nvr_id != null ? String(cam.nvr_id) : "standalone";
-    const label = cam.nvr_name ?? "Standalone";
-    if (!groups[key]) groups[key] = { key, label, cameras: [] };
+    const hasNvr = cam.nvr_id != null && cam.nvr_id !== "";
+    const key = hasNvr ? String(cam.nvr_id) : "standalone";
+    if (!groups[key]) groups[key] = { key, cameras: [] };
     groups[key].cameras.push(cam);
   }
   for (const g of Object.values(groups)) {
     g.cameras.sort((a, b) => a.display_name.localeCompare(b.display_name));
+    g.label = siteLabelForCameras(g.cameras);
   }
   return Object.values(groups).sort((a, b) => a.label.localeCompare(b.label));
 }
@@ -799,27 +810,22 @@ export default function RecordingsPage() {
             {/* ── Camera Recording (original admin only can toggle) ── */}
             <div style={S.card}>
               <h3 style={S.cardTitle}>Camera Recording</h3>
-              <p style={S.hint}>
-                Cameras are grouped by site (NVR). Use the group buttons to set the same mode for every main stream in that site in one step, or set each camera below.
-                Recording stays off until you choose a mode here (main streams only), after completing recording setup.
-                {isOriginalAdmin
-                  ? " Continuous keeps full retention; Events uses motion clips (Events tab) via the processor service. Rolling MP4 segments for Events are optional — set EVENTS_ONLY_RECORD_SEGMENTS=1 on the recorder if you want a disk buffer."
-                  : " Only the original administrator can change these."}
-              </p>
               <div style={S.camToggleList}>
                 {settingsCameraGroups.length === 0 ? (
                   <p style={{ color: "#64748b", fontSize: 12, margin: 0 }}>No active main-stream cameras.</p>
                 ) : (
                   settingsCameraGroups.map((g) => (
                     <div key={g.key} style={S.nvrGroupSection}>
-                      <div style={S.nvrGroupHeader}>
-                        <div>
-                          <span style={{ color: "#94a3b8", fontSize: 12, fontWeight: 600 }}>{g.label}</span>
-                          <span style={{ color: "#475569", fontSize: 11, marginLeft: 8 }}>
-                            ({g.cameras.length} main {g.cameras.length === 1 ? "stream" : "streams"})
-                          </span>
-                        </div>
-                        {isOriginalAdmin && (
+                      <div style={S.nvrSiteBar}>
+                        <div style={S.nvrGroupHeader}>
+                          <div style={S.nvrSiteTitleRow}>
+                            <span style={S.nvrSiteBadge}>Site</span>
+                            <span style={S.nvrSiteName}>{g.label}</span>
+                            <span style={S.nvrSiteMeta}>
+                              {g.cameras.length} main {g.cameras.length === 1 ? "stream" : "streams"}
+                            </span>
+                          </div>
+                          {isOriginalAdmin && (
                           <div style={S.nvrBulkBtnRow}>
                             <button
                               type="button"
@@ -868,7 +874,8 @@ export default function RecordingsPage() {
                               Off
                             </button>
                           </div>
-                        )}
+                          )}
+                        </div>
                       </div>
                       {g.cameras.map((cam) => (
                         <div key={cam.id} style={S.camToggleRow}>
@@ -1362,20 +1369,57 @@ const S = {
   },
 
   // Camera toggles
-  camToggleList: { maxHeight: 480, overflowY: "auto", marginTop: 8 },
+  camToggleList: { maxHeight: 480, overflowY: "auto", marginTop: 4 },
   nvrGroupSection: {
-    marginBottom: 12,
-    paddingBottom: 8,
-    borderBottom: "1px solid rgba(51,65,85,0.45)",
+    marginBottom: 16,
+    paddingBottom: 4,
+    borderBottom: "1px solid rgba(51,65,85,0.5)",
+  },
+  nvrSiteBar: {
+    background: "#0f172a",
+    borderLeft: "4px solid #3b82f6",
+    borderRadius: 6,
+    padding: "10px 12px",
+    marginBottom: 10,
+    border: "1px solid #334155",
   },
   nvrGroupHeader: {
     display: "flex",
     flexWrap: "wrap",
     alignItems: "center",
     justifyContent: "space-between",
+    gap: 10,
+  },
+  nvrSiteTitleRow: {
+    display: "flex",
+    alignItems: "center",
+    flexWrap: "wrap",
     gap: 8,
-    paddingBottom: 8,
-    marginBottom: 4,
+    flex: 1,
+    minWidth: 0,
+  },
+  nvrSiteBadge: {
+    fontSize: 9,
+    fontWeight: 700,
+    color: "#94a3b8",
+    textTransform: "uppercase",
+    letterSpacing: "0.08em",
+    background: "#1e293b",
+    padding: "3px 7px",
+    borderRadius: 4,
+    flexShrink: 0,
+    border: "1px solid #334155",
+  },
+  nvrSiteName: {
+    fontSize: 14,
+    fontWeight: 700,
+    color: "#f1f5f9",
+    flexShrink: 0,
+  },
+  nvrSiteMeta: {
+    fontSize: 11,
+    color: "#64748b",
+    whiteSpace: "nowrap",
   },
   nvrBulkBtnRow: { display: "flex", flexWrap: "wrap", gap: 6 },
   nvrBulkBtn: {

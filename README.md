@@ -132,6 +132,8 @@ Opus can record **continuously** (full timeline retention) or in **Events** mode
 
 Step-by-step commands (PowerShell, env vars, Makefile on WSL): **[docs/DEV_WORKFLOW.md](docs/DEV_WORKFLOW.md)**.
 
+**After `git pull`:** run `docker compose up --build -d` so Opus rebuilds from your repo (`docker compose pull` alone only updates pre-built images like nginx/go2rtc, not your app code). Do not rely on `docker prune` for routine updates.
+
 **Typical fast loop:** run **go2rtc** with Docker (`docker compose up go2rtc`), run **Flask** (`python run.py`), and run the **Vite** dev server (`cd frontend && npm install && npm run dev`). Set `GO2RTC_URL=http://127.0.0.1:1984` for local Flask so it talks to the published go2rtc port. The frontend proxies `/api` to `localhost:5000` and `/go2rtc` to go2rtc on `localhost:1984` (see `frontend/vite.config.js`). Optional: copy `compose.override.yml.example` to `compose.override.yml` for local compose tweaks (file is gitignored).
 
 To run the backend alone:

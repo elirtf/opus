@@ -79,7 +79,7 @@ The app will be available at **http://localhost**.
 |---|---|---|
 | admin | admin | admin |
 
-> **Change this immediately** after first login.
+> **Change this immediately** after first login. **These defaults only apply the first time** (empty user database). Rebuilds and `git pull` keep your existing `./instance` database, so your **current** password stays in effect. If `SECRET_KEY` in `.env` changes, you get logged out and must sign in again — not necessarily with `admin` / `admin`. To reset a password: `docker compose exec opus python scripts/reset_admin_password.py` (see [docs/DEV_WORKFLOW.md](docs/DEV_WORKFLOW.md)).
 
 ---
 

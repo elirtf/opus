@@ -127,8 +127,8 @@ Opus can record **continuously** (full timeline retention) or in **Events** mode
 | [docs/hosted-ops-outline.md](docs/hosted-ops-outline.md) | Rented-appliance ops outline |
 | [docs/DEV_WORKFLOW.md](docs/DEV_WORKFLOW.md) | Local dev: Windows vs WSL/Linux, Compose vs split loop, Makefile |
 | [docs/mainstream-substream.md](docs/mainstream-substream.md) | Main vs sub streams: recording, motion, live view |
-| [docs/remote-viewing.md](docs/remote-viewing.md) | **Remote viewing:** TLS, VPN/tunnels, DDNS, mobile/CORS notes |
-| [mobile/README.md](mobile/README.md) | Optional **Capacitor** shell for App Store / Play (HTTPS Opus URL) |
+| [docs/remote-viewing.md](docs/remote-viewing.md) | Watching Opus from **outside the local network** (HTTPS, VPN, tunnel, or port forward) |
+| [mobile/README.md](mobile/README.md) | Optional **App Store / Play** wrapper around the same Opus website |
 
 ---
 

@@ -10,10 +10,13 @@ logging.basicConfig(
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
 )
 
+import os
+
 from app import create_app
 from app.ffmpeg_config import get_video_pipeline_summary
 from app.processing.engine import ProcessingEngine
 from app.processing import engine as engine_module
+from app.processor_status_server import start_processor_status_server
 
 
 def main():
@@ -28,6 +31,9 @@ def main():
         vp["decoder_used_for_recording"],
         vp["ffmpeg_hwaccel_env"],
     )
+    status_port = int(os.environ.get("PROCESSOR_STATUS_PORT", "5056"))
+    start_processor_status_server(eng, port=status_port)
+    app.logger.info("Processor status HTTP on 0.0.0.0:%s (/status, /metrics)", status_port)
     try:
         while True:
             time.sleep(3600)

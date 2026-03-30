@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { compareCamerasByDisplayName, naturalCompare } from "../utils/naturalCompare";
 import { apiFetch, withOrigin } from "../api/client";
 
 // ── API helpers ──────────────────────────────────────────────────────────────
@@ -103,10 +104,10 @@ function groupMainCamerasByNvr(camList) {
     groups[key].cameras.push(cam);
   }
   for (const g of Object.values(groups)) {
-    g.cameras.sort((a, b) => a.display_name.localeCompare(b.display_name));
+    g.cameras.sort(compareCamerasByDisplayName);
     g.label = siteLabelForCameras(g.cameras);
   }
-  return Object.values(groups).sort((a, b) => a.label.localeCompare(b.label));
+  return Object.values(groups).sort((a, b) => naturalCompare(a.label, b.label));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

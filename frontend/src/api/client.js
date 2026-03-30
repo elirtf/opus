@@ -43,7 +43,7 @@ export async function apiFetch(path, opts = {}) {
 
   let json = {}
   try {
-    const text = await res.text()
+    const text = (await res.text()).trim()
     if (text) json = JSON.parse(text)
   } catch {
     json = {}

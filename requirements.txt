@@ -1,5 +1,6 @@
 Flask>=3.0.2
 Flask-Login>=0.6.3
+flask-cors>=4.0.0
 peewee>=3.17.0
 requests>=2.32.4
 pyyaml

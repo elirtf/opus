@@ -11,6 +11,7 @@ import subprocess
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 logger = logging.getLogger("opus.processing")
@@ -20,6 +21,10 @@ POLL_SECONDS = int(os.environ.get("PROCESSING_POLL_SECONDS", "6"))
 CLIP_SECONDS = int(os.environ.get("CLIP_SECONDS", "45"))
 MOTION_COOLDOWN_SECONDS = int(os.environ.get("MOTION_COOLDOWN_SECONDS", "75"))
 DETECTOR = (os.environ.get("MOTION_DETECTOR") or "opencv").strip().lower()
+try:
+    MOTION_MAX_CONCURRENT = max(1, int(os.environ.get("MOTION_MAX_CONCURRENT", "4")))
+except ValueError:
+    MOTION_MAX_CONCURRENT = 4
 
 # Motion sampling: auto = sub when a sub URL/stream exists (lower CPU), else main; main = always main; sub = prefer sub, else main.
 _MOTION_MODE_RAW = (os.environ.get("MOTION_RTSP_MODE") or "auto").strip().lower()
@@ -43,10 +48,16 @@ class ProcessingEngine:
 
     @staticmethod
     def _make_detector():
-        from app.processing.detectors import OpenCvMotionDetector, StubDetector
+        from app.processing.detectors import (
+            Mog2MotionDetector,
+            OpenCvMotionDetector,
+            StubDetector,
+        )
 
         if DETECTOR in ("stub", "none", "off"):
             return StubDetector()
+        if DETECTOR in ("opencv_mog2", "mog2"):
+            return Mog2MotionDetector()
         return OpenCvMotionDetector()
 
     def start(self):
@@ -56,11 +67,12 @@ class ProcessingEngine:
         self._thread = threading.Thread(target=self._loop, daemon=True, name="processing")
         self._thread.start()
         logger.info(
-            "Processing engine started (poll=%ss, clip=%ss, detector=%s, motion_rtsp_mode=%s)",
+            "Processing engine started (poll=%ss, clip=%ss, detector=%s, motion_rtsp_mode=%s, motion_max_concurrent=%s)",
             POLL_SECONDS,
             CLIP_SECONDS,
             DETECTOR,
             MOTION_RTSP_MODE,
+            MOTION_MAX_CONCURRENT,
         )
 
     def stop(self):
@@ -181,13 +193,18 @@ class ProcessingEngine:
         )
         cams = [c for c in qs if c.name.endswith("-main")]
         now = time.time()
-        for cam in cams:
-            last = self._last_clip_at.get(cam.name, 0)
-            if now - last < MOTION_COOLDOWN_SECONDS:
-                continue
+        eligible = [
+            c
+            for c in cams
+            if now - self._last_clip_at.get(c.name, 0) >= MOTION_COOLDOWN_SECONDS
+        ]
+        if not eligible:
+            return
+
+        def run_motion(cam):
             src_motion = self._motion_rtsp(cam)
             try:
-                motion = self._detector.detect_motion(src_motion)
+                return cam, self._detector.detect_motion(src_motion, stream_key=cam.name)
             except Exception:
                 logger.exception("detector failed: %s", cam.name)
                 try:
@@ -196,16 +213,25 @@ class ProcessingEngine:
                     processor_detector_errors_total.inc()
                 except Exception:
                     pass
-                continue
-            if not motion:
-                continue
+                return cam, False
+
+        workers = min(MOTION_MAX_CONCURRENT, len(eligible))
+        fired = []
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(run_motion, cam): cam for cam in eligible}
+            for fut in as_completed(futures):
+                cam, motion = fut.result()
+                if motion:
+                    fired.append(cam)
+
+        for cam in fired:
             logger.info("Motion: %s — capturing clip", cam.name)
             ev = self._write_clip(cam)
             if ev:
                 self._last_clip_at[cam.name] = now
 
     def _write_clip(self, cam):
-        from app.ffmpeg_config import hwaccel_input_args
+        from app.ffmpeg_config import hwaccel_input_args, rtsp_input_queue_args
         from app.models import RecordingEvent
 
         clips_dir = os.path.join(self.recordings_dir, "clips", cam.name)
@@ -222,6 +248,7 @@ class ProcessingEngine:
             "-loglevel",
             "error",
             *hwaccel_input_args(),
+            *rtsp_input_queue_args(),
             "-avoid_negative_ts",
             "make_zero",
             "-fflags",
@@ -307,6 +334,7 @@ class ProcessingEngine:
             "clip_seconds": CLIP_SECONDS,
             "cooldown_seconds": MOTION_COOLDOWN_SECONDS,
             "motion_rtsp_mode": MOTION_RTSP_MODE,
+            "motion_max_concurrent": MOTION_MAX_CONCURRENT,
             "last_tick_unix": self._last_tick_ts,
         }
 

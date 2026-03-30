@@ -1,13 +1,32 @@
-import { useMemo } from "react";
+import { useMemo, useEffect, useRef, useState } from "react";
+import Hls from "hls.js";
+import { withOrigin } from "../../api/client";
+
+/**
+ * Prefer HLS on phones/tablets — Safari plays native HLS; others use hls.js (MSE).
+ * MSE via go2rtc iframe is less reliable on some mobile browsers.
+ */
+export function shouldPreferHlsForDevice() {
+  if (typeof window === "undefined") return false;
+  if (window.matchMedia("(pointer: coarse)").matches) return true;
+  if (window.matchMedia("(max-width: 1024px)").matches) return true;
+  return false;
+}
+
+function resolveMode(playbackMode) {
+  if (playbackMode === "auto") {
+    return shouldPreferHlsForDevice() ? "hls" : "mse";
+  }
+  return playbackMode;
+}
 
 /**
  * LivePlayer
  * - `cameraName`: stream name in go2rtc (e.g. "FrontDoor-main")
  * - `enabled`: when false, player stays idle (used for lazy-loading in grids)
  *
- * Uses go2rtc `stream.html` in an iframe. Default `mse` + substream mirrors the dashboard and
- * avoids WebRTC ICE issues behind nginx/Docker. For HEVC in MSE, transcode in go2rtc
- * (go2rtc/README-HEVC.md); `playbackMode="webrtc"` needs reachable ICE candidates or TURN.
+ * Uses go2rtc `stream.html` in an iframe for mse/webrtc, or HLS (native video + hls.js).
+ * HLS URL: `/go2rtc/api/stream.m3u8?src=...` (proxied like stream.html).
  */
 export default function LivePlayer({
   cameraName,
@@ -17,25 +36,40 @@ export default function LivePlayer({
   className = "",
   /** Use -sub for *-main when `streamName` is not provided (lower bitrate). */
   preferSubStream = true,
-  /** `mse` for tiles; `webrtc` often better for HEVC / dedicated camera page. */
-  playbackMode = "mse",
+  /** `auto` picks HLS on coarse pointer / narrow viewports; `mse` for tiles on desktop. */
+  playbackMode = "auto",
 }) {
-  const src = useMemo(() => {
+  const mode = resolveMode(playbackMode);
+  const streamKey = useMemo(() => {
     if (!cameraName || !enabled) return null;
-    const streamKey =
+    return (
       streamNameProp ||
       (preferSubStream && cameraName.endsWith("-main")
         ? cameraName.replace(/-main$/, "-sub")
-        : cameraName);
-    const mode = playbackMode === "webrtc" ? "webrtc" : "mse";
-    return `/go2rtc/stream.html?src=${encodeURIComponent(streamKey)}&mode=${encodeURIComponent(mode)}`;
-  }, [cameraName, streamNameProp, enabled, preferSubStream, playbackMode]);
+        : cameraName)
+    );
+  }, [cameraName, streamNameProp, enabled, preferSubStream]);
+
+  const iframeSrc = useMemo(() => {
+    if (!streamKey || mode === "hls") return null;
+    const m = mode === "webrtc" ? "webrtc" : "mse";
+    const path = `/go2rtc/stream.html?src=${encodeURIComponent(streamKey)}&mode=${encodeURIComponent(m)}`;
+    return withOrigin(path);
+  }, [streamKey, mode]);
+
+  const hlsUrl = useMemo(() => {
+    if (!streamKey || mode !== "hls") return null;
+    const path = `/go2rtc/api/stream.m3u8?src=${encodeURIComponent(streamKey)}`;
+    return withOrigin(path);
+  }, [streamKey, mode]);
 
   return (
     <div className={`relative w-full h-full bg-black ${className}`}>
-      {src ? (
+      {mode === "hls" && hlsUrl ? (
+        <HlsVideo src={hlsUrl} cameraName={cameraName} />
+      ) : iframeSrc ? (
         <iframe
-          src={src}
+          src={iframeSrc}
           title={cameraName}
           className="w-full h-full"
           frameBorder="0"
@@ -47,5 +81,81 @@ export default function LivePlayer({
         </div>
       )}
     </div>
+  );
+}
+
+function HlsVideo({ src, cameraName }) {
+  const videoRef = useRef(null);
+  const hlsRef = useRef(null);
+  const [err, setErr] = useState(null);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !src) return;
+
+    setErr(null);
+    video.controls = true;
+    video.playsInline = true;
+    video.setAttribute("playsinline", "");
+    video.muted = true; // improves autopostart on mobile; user can unmute via controls
+
+    let cancelled = false;
+
+    if (Hls.isSupported()) {
+      const hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: true,
+      });
+      hlsRef.current = hls;
+      hls.loadSource(src);
+      hls.attachMedia(video);
+      hls.on(Hls.Events.ERROR, (_, data) => {
+        if (cancelled) return;
+        if (data.fatal) {
+          setErr(data.type === "networkError" ? "Network error" : "Playback error");
+        }
+      });
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        if (cancelled) return;
+        video.play().catch(() => {});
+      });
+    } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+      video.src = src;
+      video.addEventListener(
+        "loadedmetadata",
+        () => {
+          if (cancelled) return;
+          video.play().catch(() => {});
+        },
+        { once: true },
+      );
+    } else {
+      setErr("HLS not supported in this browser");
+    }
+
+    return () => {
+      cancelled = true;
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
+      video.removeAttribute("src");
+      video.load();
+    };
+  }, [src]);
+
+  return (
+    <>
+      <video
+        ref={videoRef}
+        className="w-full h-full object-contain"
+        title={cameraName}
+      />
+      {err && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/80 text-amber-200 text-xs px-4 text-center">
+          {err}
+        </div>
+      )}
+    </>
   );
 }

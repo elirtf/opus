@@ -21,6 +21,15 @@ CLIP_SECONDS = int(os.environ.get("CLIP_SECONDS", "45"))
 MOTION_COOLDOWN_SECONDS = int(os.environ.get("MOTION_COOLDOWN_SECONDS", "75"))
 DETECTOR = (os.environ.get("MOTION_DETECTOR") or "opencv").strip().lower()
 
+# Motion sampling: auto = sub when a sub URL/stream exists (lower CPU), else main; main = always main; sub = prefer sub, else main.
+_MOTION_MODE_RAW = (os.environ.get("MOTION_RTSP_MODE") or "auto").strip().lower()
+if _MOTION_MODE_RAW in ("main", "force_main"):
+    MOTION_RTSP_MODE = "main"
+elif _MOTION_MODE_RAW in ("sub", "substream"):
+    MOTION_RTSP_MODE = "sub"
+else:
+    MOTION_RTSP_MODE = "auto"
+
 
 class ProcessingEngine:
     def __init__(self, app):
@@ -46,10 +55,11 @@ class ProcessingEngine:
         self._thread = threading.Thread(target=self._loop, daemon=True, name="processing")
         self._thread.start()
         logger.info(
-            "Processing engine started (poll=%ss, clip=%ss, detector=%s)",
+            "Processing engine started (poll=%ss, clip=%ss, detector=%s, motion_rtsp_mode=%s)",
             POLL_SECONDS,
             CLIP_SECONDS,
             DETECTOR,
+            MOTION_RTSP_MODE,
         )
 
     def stop(self):
@@ -67,19 +77,83 @@ class ProcessingEngine:
                 logger.exception("processing tick failed")
             time.sleep(POLL_SECONDS)
 
-    def _motion_rtsp(self, cam) -> str:
-        """
-        Motion detection uses the same source as recording (main stream / go2rtc main name).
-        Live view may use a substream via go2rtc; analysis stays on the main channel for accuracy.
-        """
+    def _main_rtsp(self, cam) -> str:
+        """Record / clip source (always main)."""
         if GO2RTC_RTSP_URL:
             return "%s/%s" % (GO2RTC_RTSP_URL.rstrip("/"), cam.name)
         return cam.rtsp_url
 
     def _clip_rtsp(self, cam) -> str:
-        if GO2RTC_RTSP_URL:
-            return "%s/%s" % (GO2RTC_RTSP_URL.rstrip("/"), cam.name)
-        return cam.rtsp_url
+        return self._main_rtsp(cam)
+
+    def _paired_sub_name(self, cam) -> str | None:
+        if cam.name.endswith("-main"):
+            return cam.name.replace("-main", "-sub", 1)
+        return None
+
+    def _resolve_sub_rtsp_url(self, cam) -> str | None:
+        """
+        Direct RTSP URL for the sub stream when not using go2rtc, or when we only have URLs in DB.
+        """
+        from app.models import Camera
+
+        sub = (getattr(cam, "rtsp_substream_url", None) or "").strip()
+        if sub:
+            return sub
+        sub_key = self._paired_sub_name(cam)
+        if not sub_key:
+            return None
+        sub_row = Camera.get_or_none(Camera.name == sub_key)
+        if not sub_row:
+            return None
+        return (sub_row.rtsp_url or "").strip() or None
+
+    def _sub_stream_registered(self, cam) -> bool:
+        """True if we should expect go2rtc to serve …-sub (virtual or NVR row)."""
+        from app.models import Camera
+
+        if (getattr(cam, "rtsp_substream_url", None) or "").strip():
+            return True
+        sk = self._paired_sub_name(cam)
+        if sk and Camera.select().where(Camera.name == sk).exists():
+            return True
+        return False
+
+    def _resolve_motion_sub_go2rtc(self, cam) -> str | None:
+        """go2rtc RTSP URL for the sub stream, if configured."""
+        if not GO2RTC_RTSP_URL or not self._sub_stream_registered(cam):
+            return None
+        sk = self._paired_sub_name(cam)
+        if not sk:
+            return None
+        return "%s/%s" % (GO2RTC_RTSP_URL.rstrip("/"), sk)
+
+    def _motion_rtsp(self, cam) -> str:
+        """
+        RTSP used only for OpenCV motion sampling.
+        Default (auto): sub when paired / rtsp_substream_url / go2rtc sub exists — lighter decode.
+        Clips still use _main_rtsp (full quality).
+        """
+        if MOTION_RTSP_MODE == "main":
+            return self._main_rtsp(cam)
+
+        sub_url = self._resolve_motion_sub_go2rtc(cam)
+        if not sub_url and not GO2RTC_RTSP_URL:
+            sub_url = self._resolve_sub_rtsp_url(cam)
+
+        if MOTION_RTSP_MODE == "sub":
+            if sub_url:
+                return sub_url
+            logger.warning(
+                "MOTION_RTSP_MODE=sub but no sub stream for %s; using main",
+                cam.name,
+            )
+            return self._main_rtsp(cam)
+
+        # auto
+        if sub_url:
+            return sub_url
+        return self._main_rtsp(cam)
 
     def _tick(self):
         from app.models import Camera
@@ -197,6 +271,7 @@ class ProcessingEngine:
             "poll_seconds": POLL_SECONDS,
             "clip_seconds": CLIP_SECONDS,
             "cooldown_seconds": MOTION_COOLDOWN_SECONDS,
+            "motion_rtsp_mode": MOTION_RTSP_MODE,
         }
 
 

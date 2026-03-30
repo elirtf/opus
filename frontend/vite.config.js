@@ -1,8 +1,21 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { VitePWA } from 'vite-plugin-pwa'
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    VitePWA({
+      registerType: 'autoUpdate',
+      includeAssets: ['icon.svg', 'manifest.webmanifest'],
+      workbox: {
+        navigateFallback: '/index.html',
+        // Do not SPA-fallback API, go2rtc, or HLS playlists — only static UI assets.
+        navigateFallbackDenylist: [/^\/api/, /^\/go2rtc/],
+        globPatterns: ['**/*.{js,css,ico,png,svg,webmanifest}'],
+      },
+    }),
+  ],
   build: {
     outDir: 'dist',
     emptyOutDir: true,

@@ -1,28 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { apiFetch, withOrigin } from "../api/client";
 
 // ── API helpers ──────────────────────────────────────────────────────────────
-const api = async (url, opts = {}) => {
-  const res = await fetch(url, {
-    credentials: "include",
-    headers: { "Content-Type": "application/json", ...opts.headers },
-    ...opts,
-  });
-  let json = {};
-  try {
-    const text = await res.text();
-    if (text) json = JSON.parse(text);
-  } catch {
-    json = {};
-  }
-  if (!res.ok) {
-    const err = new Error(json.error || `HTTP ${res.status}`);
-    err.status = res.status;
-    throw err;
-  }
-  return json.data !== undefined ? json.data : json;
-};
+const api = (url, opts = {}) => apiFetch(url, opts);
 
 // ── Constants & formatters ───────────────────────────────────────────────────
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
@@ -341,7 +323,8 @@ export default function RecordingsPage() {
   const playSeg = (seg) => {
     const base =
       tab === "events" ? "/api/events/" : "/api/recordings/";
-    const url = `${base}${encodeURIComponent(selectedCam)}/${seg.filename}`;
+    const path = `${base}${encodeURIComponent(selectedCam)}/${seg.filename}`;
+    const url = withOrigin(path);
     setPlaying({ ...seg, url });
     if (videoRef.current) {
       videoRef.current.src = url;

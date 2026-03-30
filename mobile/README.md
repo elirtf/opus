@@ -1,4 +1,4 @@
-# Opus on the app stores (optional “wrapper” app)
+# Opus on App Stores
 
 This folder builds a **thin mobile app** that loads your real Opus website inside a full-screen browser view. **It does not replace the website** — it is the same login, same live view, and same recordings you get in Chrome or Safari.
 

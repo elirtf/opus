@@ -26,6 +26,8 @@ class User(UserMixin, BaseModel):
     role         = CharField(max_length=20, default="viewer")  # "admin" | "viewer"
     can_view_live = BooleanField(default=True)
     can_view_recordings = BooleanField(default=True)
+    # Hashed secret for Authorization: Bearer (optional; see POST /api/auth/token)
+    api_token_hash = CharField(max_length=255, null=True)
 
     class Meta:
         table_name = "user"

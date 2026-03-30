@@ -123,6 +123,12 @@ svg {
 /* Accessibility: respect system preference */
 /* ------------------------------------------------ */
 
+/* Dashboard tiles: belt-and-suspenders if a browser still paints controls chrome */
+video.live-tile-video::-webkit-media-controls,
+video.live-tile-video::-webkit-media-controls-enclosure {
+  display: none !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

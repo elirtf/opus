@@ -5,7 +5,7 @@
 <h1 align="center">Opus NVR</h1>
 
 <p align="center">
-  A lightweight, self-hosted **IP camera recorder and viewer**. For new installs, cameras send **RTSP directly to Opus** (live + continuous recording + timeline playback). A vendor NVR is <strong>optional</strong>—the UI still supports importing channels from an existing recorder for <strong>migration</strong> only.
+  A lightweight, self-hosted IP camera recorder and viewer. For new installs, cameras send RTSP directly to Opus (live + continuous recording + timeline playback). A vendor NVR is <strong>optional</strong>—the UI still supports importing channels from an existing recorder for <strong>migration</strong> only.
 
   Deploy with <strong>Docker Compose</strong> on Linux (Ubuntu Server is the documented standard).
 </p>

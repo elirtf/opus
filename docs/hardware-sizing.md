@@ -63,6 +63,7 @@ Retention (see below): multiply by effective days stored (capped by `RECORDING_M
 | `RECORDING_MIN_FREE_GB`    | Do not **start** new recorders when free disk on the recordings volume is below this (0 = off). Existing FFmpeg processes keep running. |
 | `EVENTS_ONLY_BUFFER_HOURS` | How long **rolling** segments stay for `events_only` cameras **when** segment recording is enabled |
 | `EVENTS_ONLY_RECORD_SEGMENTS` | Rolling segment buffer for `events_only` is **opt-in**: only **`1`**, **`true`**, **`yes`**, or **`on`** enable it (anything else = clip-only). Set on the **`recorder`** service. |
+| `MOTION_RTSP_MODE` | On the **`processor`**: **`auto`** (default) = motion sampling uses **sub** when configured (`*-sub` row, `rtsp_substream_url`, or go2rtc sub name); **`main`** = always sample main; **`sub`** = prefer sub, fall back to main with a log warning if missing. Event **clips** always use **main**. |
 
 
 Segment FFmpeg arguments follow the same copy-record / RTSP input pattern as [Frigate](https://github.com/blakeblackshear/frigate)’s generic presets (see `app/recorder.py` and `app/ffmpeg_config.py`); you do not need to import Frigate’s `ffmpeg_presets.py` into Opus.

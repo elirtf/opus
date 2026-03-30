@@ -1,4 +1,4 @@
-import { NavLink, useNavigate } from 'react-router-dom'
+import { NavLink, useNavigate, useLocation, Link } from 'react-router-dom'
 import { useState, useEffect } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { camerasApi } from '../api/cameras'
@@ -20,24 +20,41 @@ function StatusDot({ online }) {
   )
 }
 
-function NVRGroup({ name, cameras, health, isOpen, onToggle }) {
+function NVRGroup({ groupKey, name, cameras, health, isOpen, onToggle, siteFilter }) {
   const online = cameras.filter(c => health[liveStreamKey(c)] === true).length
   const total  = cameras.length
+  const keyStr = String(groupKey)
+  const siteActive = siteFilter != null && siteFilter !== '' && siteFilter === keyStr
 
   return (
     <div className="mb-1">
-      <button
-        onClick={onToggle}
-        className="w-full flex items-center justify-between px-3 py-1.5 text-left hover:bg-gray-800 rounded-lg transition-colors"
-      >
-        <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider truncate">
-          {name}
-        </span>
-        <div className="flex items-center gap-2 shrink-0">
-          <span className="text-xs text-gray-500">{online}/{total}</span>
-          <span className={`text-gray-500 text-xs transition-transform ${isOpen ? 'rotate-90' : ''}`}>›</span>
-        </div>
-      </button>
+      <div className="flex items-stretch rounded-lg overflow-hidden border border-transparent hover:border-gray-700/80 transition-colors">
+        <Link
+          to={`/?site=${encodeURIComponent(keyStr)}`}
+          title="Live view: cameras on this site only"
+          className={`flex-1 flex items-center justify-between gap-2 min-w-0 px-3 py-1.5 text-left transition-colors ${
+            siteActive
+              ? 'bg-indigo-600/30 text-indigo-100'
+              : 'text-gray-400 hover:text-white hover:bg-gray-800'
+          }`}
+        >
+          <span className="text-xs font-semibold uppercase tracking-wider truncate">
+            {name}
+          </span>
+          <span className="text-xs text-gray-500 shrink-0 tabular-nums">{online}/{total}</span>
+        </Link>
+        <button
+          type="button"
+          onClick={() => onToggle()}
+          className={`shrink-0 px-1.5 flex items-center border-l border-gray-800/80 transition-colors ${
+            siteActive ? 'bg-indigo-600/20 text-indigo-200' : 'text-gray-500 hover:text-white hover:bg-gray-800'
+          }`}
+          aria-expanded={isOpen}
+          aria-label={isOpen ? 'Collapse camera list' : 'Expand camera list'}
+        >
+          <span className={`text-xs transition-transform inline-block ${isOpen ? 'rotate-90' : ''}`}>›</span>
+        </button>
+      </div>
 
       {isOpen && (
         <div className="mt-0.5 space-y-0.5">
@@ -79,6 +96,8 @@ export default function Sidebar() {
   const canLive = user?.role === 'admin' || user?.can_view_live !== false
   const canRec  = user?.role === 'admin' || user?.can_view_recordings !== false
   const navigate              = useNavigate()
+  const location              = useLocation()
+  const siteFilter            = new URLSearchParams(location.search).get('site')
   const [cameras, setCameras] = useState([])
   const [health, setHealth]   = useState({})
   const [open, setOpen]       = useState({})
@@ -152,11 +171,12 @@ export default function Sidebar() {
           <div className="px-3 pt-3">
             <NavLink
               to="/" end
-              className={({ isActive }) =>
-                `flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  isActive ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-800'
+              className={({ isActive }) => {
+                const allSites = isActive && (siteFilter == null || siteFilter === '')
+                return `flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  allSites ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-800'
                 }`
-              }
+              }}
             >
               <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z" />
@@ -168,11 +188,13 @@ export default function Sidebar() {
             {Object.entries(groups).map(([key, group]) => (
               <NVRGroup
                 key={key}
+                groupKey={key}
                 name={group.label}
                 cameras={group.cameras}
                 health={health}
                 isOpen={open[key] ?? true}
                 onToggle={() => toggleGroup(key)}
+                siteFilter={siteFilter}
               />
             ))}
           </div>

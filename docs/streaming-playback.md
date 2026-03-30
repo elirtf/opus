@@ -8,6 +8,7 @@ How **live** and **recorded** video flow in Opus today, and how that compares to
 | Path           | Mechanism                                                                                       |
 | -------------- | ----------------------------------------------------------------------------------------------- |
 | **Live**       | Browser → **nginx** `/go2rtc/` → **go2rtc** (MSE, WebRTC-related paths, etc. per go2rtc config) |
+| **Live (HLS)** | Same proxy — **go2rtc** playlist at `/go2rtc/api/stream.m3u8?src=<stream>` (native Safari; **hls.js** elsewhere). The React UI uses this on coarse-pointer / narrow viewports by default. |
 | **Recordings** | **FFmpeg** segment writer → **MP4** on disk; UI/API serves files (Flask) for playback           |
 
 

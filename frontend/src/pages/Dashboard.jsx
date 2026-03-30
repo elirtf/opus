@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate, Link, useSearchParams } from 'react-router-dom'
 import { camerasApi } from '../api/cameras'
 import { healthApi } from '../api/health'
 import Spinner from '../components/Spinner'
+import LivePlayer from '../components/player/LivePlayer'
 import { useAuth } from '../context/AuthContext'
 
 const GRID_SIZES = [3, 4, 6]
@@ -28,18 +29,6 @@ function StatusDot({ online }) {
 }
 
 function CameraTile({ cam, streamName, online, onClick }) {
-  const iframeRef = useRef(null)
-
-  useEffect(() => {
-    return () => { if (iframeRef.current) iframeRef.current.src = '' }
-  }, [])
-
-  useEffect(() => {
-    if (iframeRef.current) {
-      iframeRef.current.src = `/go2rtc/stream.html?src=${streamName}&mode=mse`
-    }
-  }, [streamName])
-
   const label = cam.display_name
     .replace(' — ', ' ')
     .replace(' Main', '')
@@ -67,14 +56,17 @@ function CameraTile({ cam, streamName, online, onClick }) {
         </div>
       </div>
 
-      {/* Stream */}
+      {/* Stream — HLS on touch / narrow viewports, MSE iframe on desktop */}
       <div className="relative w-full" style={{ paddingBottom: '56.25%' }}>
-        <iframe
-          ref={iframeRef}
-          allow="autoplay; fullscreen"
-          scrolling="no"
-          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 0, overflow: 'hidden' }}
-        />
+        <div className="absolute inset-0 overflow-hidden">
+          <LivePlayer
+            cameraName={cam.name}
+            streamName={streamName}
+            enabled={true}
+            playbackMode="auto"
+            className="h-full"
+          />
+        </div>
       </div>
 
       {/* Label bar */}
@@ -154,7 +146,7 @@ export default function Dashboard() {
   return (
     <div className="flex flex-col h-full">
       {/* Toolbar */}
-      <div className="px-4 py-2 flex items-center justify-between border-b border-gray-800 bg-gray-900 shrink-0">
+      <div className="px-4 py-2 flex flex-wrap items-center justify-between gap-y-2 border-b border-gray-800 bg-gray-900 shrink-0">
         <div className="flex items-center gap-3 min-w-0">
           <span className="text-sm font-semibold text-white shrink-0">Live View</span>
           {siteHeading && (

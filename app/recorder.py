@@ -337,7 +337,7 @@ class RecordingEngine:
         seg = seg_min * 60
         pat = os.path.join(cam_dir, "%Y-%m-%d_%H-%M-%S.mp4")
 
-        from app.ffmpeg_config import hwaccel_input_args
+        from app.ffmpeg_config import hwaccel_input_args, rtsp_input_queue_args
 
         # Frigate preset-rtsp-generic input + preset-record-generic output
         cmd = [
@@ -345,6 +345,7 @@ class RecordingEngine:
             "-hide_banner",
             "-loglevel", "error",
             *hwaccel_input_args(),
+            *rtsp_input_queue_args(),
             # input (Frigate preset-rtsp-generic)
             "-avoid_negative_ts", "make_zero",
             "-fflags", "+genpts+discardcorrupt",

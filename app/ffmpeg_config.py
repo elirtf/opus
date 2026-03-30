@@ -23,6 +23,17 @@ def hwaccel_input_args():
     return args
 
 
+def rtsp_input_queue_args():
+    """
+    Optional larger thread message queue before -i — eases bursty RTSP when many writers run.
+    Set FFMPEG_RTSP_THREAD_QUEUE_SIZE (e.g. 512 or 1024); unset = FFmpeg default.
+    """
+    raw = (os.environ.get("FFMPEG_RTSP_THREAD_QUEUE_SIZE") or "").strip()
+    if raw.isdigit() and int(raw) > 0:
+        return ["-thread_queue_size", raw]
+    return []
+
+
 def _ffmpeg_hwaccel_effective() -> str:
     """Normalized env value: none when disabled."""
     if FFMPEG_HWACCEL in ("", "none", "off", "false", "0"):
@@ -44,8 +55,10 @@ def _paths_that_decode_frames():
     det = raw.strip().lower()
     if det in ("stub", "none", "off"):
         return ([], "MOTION_DETECTOR is off or stub — no frame decode for motion.")
-    if det == "opencv":
+    if det in ("opencv", "diff"):
         return (["motion_detection_opencv"], None)
+    if det in ("opencv_mog2", "mog2"):
+        return (["motion_detection_opencv_mog2"], None)
     return (["motion_detection_%s" % det], None)
 
 

@@ -75,11 +75,13 @@ function CameraTile({ cam, streamName, online, onClick }) {
       {/* Stream — HLS on touch / narrow viewports, MSE iframe on desktop */}
       <div className="relative w-full" style={{ paddingBottom: '56.25%' }}>
         <div className="absolute inset-0 overflow-hidden">
+          {/* HLS tiles: go2rtc stream.html always enables native video controls (bad on Mac/Safari). */}
           <LivePlayer
             cameraName={cam.name}
             streamName={streamName}
             enabled={true}
-            playbackMode="auto"
+            playbackMode="hls"
+            nativeVideoControls={false}
             className="h-full"
           />
         </div>

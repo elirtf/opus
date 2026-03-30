@@ -13,6 +13,12 @@ This folder builds a **thin mobile app** that loads your real Opus website insid
 
 ---
 
+## Do I need to run `npm` here?
+
+**No**, unless you are a **developer packaging this optional store app**. Running Opus for real users is **Docker only** ([README](../README.md)); end users open the **website** or use **Add to Home Screen** — no local Node setup.
+
+---
+
 ## What the user does
 
 1. Open the app once.
@@ -23,7 +29,9 @@ To **point the app at a different server**, use **Clear saved URL** on the first
 
 ---
 
-## Developer setup
+## Developer setup (store app only)
+
+The commands below are **not** for normal Opus installs or for mobile web testing in a browser — only for building this **native wrapper**.
 
 **Requirements**
 

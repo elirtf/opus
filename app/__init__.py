@@ -51,6 +51,41 @@ def create_app():
     login_manager.init_app(app)
     login_manager.login_view = "auth.login"
 
+    _cors_origins = os.environ.get("CORS_ORIGINS", "").strip()
+    if _cors_origins:
+        from flask_cors import CORS
+
+        CORS(
+            app,
+            origins=[o.strip() for o in _cors_origins.split(",") if o.strip()],
+            supports_credentials=True,
+            allow_headers=["Content-Type", "Authorization"],
+        )
+
+    @app.before_request
+    def load_user_from_bearer():
+        """Optional API access via Authorization: Bearer (hashed token on User)."""
+        from flask import request
+        from flask_login import current_user, login_user
+        from werkzeug.security import check_password_hash
+        from app.models import User
+
+        if request.method == "OPTIONS":
+            return
+        if current_user.is_authenticated:
+            return
+        h = request.headers.get("Authorization", "") or ""
+        if not h.startswith("Bearer "):
+            return
+        raw = h[7:].strip()
+        if not raw:
+            return
+        q = User.select().where(User.api_token_hash.is_null(False))
+        for user in q:
+            if user.api_token_hash and check_password_hash(user.api_token_hash, raw):
+                login_user(user)
+                break
+
     from app.models import User
 
     @login_manager.user_loader

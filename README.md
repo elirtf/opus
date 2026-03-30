@@ -66,6 +66,8 @@ cd opus
       # GO2RTC_URL=http://go2rtc:1984 (Default)
       # GO2RTC_RTSP_URL=rtsp://go2rtc:8554 (Default)
       # SECRET_KEY=secret-key
+      # Optional: comma-separated browser origins for split-host UIs (enables flask-cors)
+      # CORS_ORIGINS=https://app.example.com,http://localhost:5173
 
 # 3. Build and start
 docker compose up --build
@@ -125,6 +127,8 @@ Opus can record **continuously** (full timeline retention) or in **Events** mode
 | [docs/hosted-ops-outline.md](docs/hosted-ops-outline.md) | Rented-appliance ops outline |
 | [docs/DEV_WORKFLOW.md](docs/DEV_WORKFLOW.md) | Local dev: Windows vs WSL/Linux, Compose vs split loop, Makefile |
 | [docs/mainstream-substream.md](docs/mainstream-substream.md) | Main vs sub streams: recording, motion, live view |
+| [docs/remote-viewing.md](docs/remote-viewing.md) | **Remote viewing:** TLS, VPN/tunnels, DDNS, mobile/CORS notes |
+| [mobile/README.md](mobile/README.md) | Optional **Capacitor** shell for App Store / Play (HTTPS Opus URL) |
 
 ---
 

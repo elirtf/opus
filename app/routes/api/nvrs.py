@@ -1,8 +1,18 @@
+import logging
+import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 from flask import Blueprint, request, current_app
 from flask_login import current_user
 from app.models import NVR, Camera, UserNVR
 from app.routes.api.utils import api_response, api_error, login_required_api, admin_required
 import requests as http
+
+logger = logging.getLogger(__name__)
+
+# When importing from an NVR, try channels 1..N (Hikvision-style /Streaming/Channels/{101,102,...}).
+# Non-existent channels are skipped after the main stream fails ffprobe. Override with NVR_IMPORT_CHANNEL_CAP.
+DEFAULT_NVR_IMPORT_CHANNEL_CAP = max(1, min(int(os.environ.get("NVR_IMPORT_CHANNEL_CAP", "64")), 256))
 
 bp = Blueprint("api_nvrs",  __name__, url_prefix="/api/nvrs")
 
@@ -39,14 +49,48 @@ def stream_add(name, rtsp_url):
         current_app.logger.warning(f"go2rtc stream_add failed: {e}")
 
 
-def import_cameras(nvr):
-    """Generate main+sub stream cameras for every channel. Returns (created, skipped).
-    Recording is off until enabled per camera in the Recordings UI."""
+def _probe_nvr_main_stream(base: str, channel_index: int, timeout: int) -> tuple[int, bool]:
+    """Returns (channel_index, True) if main URL responds to ffprobe."""
+    from app.recorder import RecordingEngine
+
+    main_url = f"{base}/Streaming/Channels/{channel_index * 100 + 1}"
+    try:
+        res = RecordingEngine.test_rtsp(main_url, timeout=timeout)
+        return channel_index, bool(res.get("reachable"))
+    except Exception as e:
+        logger.debug("NVR import probe ch %s: %s", channel_index, e)
+        return channel_index, False
+
+
+def import_cameras(nvr, probe_timeout: int | None = None):
+    """Generate main+sub stream cameras for each channel whose main RTSP URL probes OK.
+
+    Loops channels 1..nvr.max_channels, probes main only, then creates rows + go2rtc for
+    main+sub. Returns (created, skipped, unreachable_channel_count)."""
+    if probe_timeout is None:
+        probe_timeout = max(2, min(int(os.environ.get("NVR_IMPORT_PROBE_TIMEOUT", "5")), 30))
+
     created = 0
     skipped = 0
     base = f"rtsp://{nvr.username}:{nvr.password}@{nvr.ip_address}:554"
+    cap = max(1, int(nvr.max_channels or 1))
 
-    for ch in range(1, nvr.max_channels + 1):
+    workers = min(8, cap)
+    valid_channels: list[int] = []
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [
+            pool.submit(_probe_nvr_main_stream, base, ch, probe_timeout)
+            for ch in range(1, cap + 1)
+        ]
+        for fut in as_completed(futures):
+            ch, ok = fut.result()
+            if ok:
+                valid_channels.append(ch)
+
+    valid_channels.sort()
+    unreachable = cap - len(valid_channels)
+
+    for ch in valid_channels:
         streams = [
             (f"{nvr.name}-ch{ch}-main", f"{nvr.display_name} — Ch {ch} Main", f"{base}/Streaming/Channels/{ch * 100 + 1}", True),
             (f"{nvr.name}-ch{ch}-sub",  f"{nvr.display_name} — Ch {ch} Sub",  f"{base}/Streaming/Channels/{ch * 100 + 2}", False),
@@ -67,7 +111,7 @@ def import_cameras(nvr):
             stream_add(name, rtsp_url)
             created += 1
 
-    return created, skipped
+    return created, skipped, unreachable
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -103,19 +147,34 @@ def create_nvr():
     if NVR.select().where(NVR.name == name).exists():
         return api_error(f'NVR name "{name}" is already taken.')
 
+    raw_cap = data.get("max_channels")
+    if raw_cap is not None and str(raw_cap).strip() != "":
+        max_ch = max(1, min(int(raw_cap), 256))
+    else:
+        max_ch = DEFAULT_NVR_IMPORT_CHANNEL_CAP
+
     nvr = NVR.create(
         name=name,
         display_name=display_name,
         ip_address=data.get("ip_address") or None,
         username=data.get("username") or None,
         password=data.get("password") or None,
-        max_channels=int(data.get("max_channels") or 50),
+        max_channels=max_ch,
     )
-    created, skipped = import_cameras(nvr)
-    result = nvr_to_dict(nvr, created, admin=True)
+    created, skipped, unreachable = import_cameras(nvr)
+    cam_total = Camera.select().where(Camera.nvr == nvr.id).count()
+    result = nvr_to_dict(nvr, cam_total, admin=True)
     result["imported"] = created
-    result["skipped"]  = skipped
-    return api_response(result, message=f"NVR created. {created} streams imported.", status=201)
+    result["skipped_existing"] = skipped
+    result["skipped"] = skipped  # alias for older clients
+    result["unreachable_channels"] = unreachable
+    msg = (
+        f"NVR created. {created} new streams registered; "
+        f"{unreachable} channel slot(s) had no main stream."
+    )
+    if skipped:
+        msg += f" {skipped} stream row(s) already existed."
+    return api_response(result, message=msg, status=201)
 
 
 @bp.route("/<int:nvr_id>", methods=["PATCH"])
@@ -140,7 +199,7 @@ def update_nvr(nvr_id):
     if "password" in data and data["password"]:
         nvr.password = data["password"]
     if "max_channels" in data:
-        nvr.max_channels = int(data["max_channels"])
+        nvr.max_channels = max(1, min(int(data["max_channels"]), 256))
     if "active" in data:
         nvr.active = bool(data["active"])
 
@@ -173,8 +232,16 @@ def sync_nvr(nvr_id):
     except NVR.DoesNotExist:
         return api_error("NVR not found.", 404)
 
-    created, skipped = import_cameras(nvr)
+    created, skipped, unreachable = import_cameras(nvr)
     return api_response(
-        {"created": created, "skipped": skipped},
-        message=f"Sync complete: {created} new streams, {skipped} already existed."
+        {
+            "created": created,
+            "skipped_existing": skipped,
+            "skipped": skipped,
+            "unreachable_channels": unreachable,
+        },
+        message=(
+            f"Sync complete: {created} new streams, {skipped} already existed, "
+            f"{unreachable} empty slot(s) probed."
+        ),
     )

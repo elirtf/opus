@@ -1,4 +1,4 @@
-# Remote viewing (watching Opus from outside the building)
+# Remote Viewing
 
 This page explains how people **open Opus when they are not on the same Wi‑Fi** as the recorder — for example at home, on LTE, or at another office. The same ideas apply whether they use a **phone, tablet, or computer**.
 

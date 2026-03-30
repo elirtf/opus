@@ -24,6 +24,7 @@ function resolveMode(playbackMode) {
  * LivePlayer
  * - `cameraName`: stream name in go2rtc (e.g. "FrontDoor-main")
  * - `enabled`: when false, player stays idle (used for lazy-loading in grids)
+ * - `nativeVideoControls`: HLS path only — false hides Safari/Chrome’s big play + timeline on small tiles.
  *
  * Uses go2rtc `stream.html` in an iframe for mse/webrtc, or HLS (native video + hls.js).
  * HLS URL: `/go2rtc/api/stream.m3u8?src=...` (proxied like stream.html).
@@ -38,6 +39,8 @@ export default function LivePlayer({
   preferSubStream = true,
   /** `auto` picks HLS on coarse pointer / narrow viewports; `mse` for tiles on desktop. */
   playbackMode = "auto",
+  /** Show browser default &lt;video&gt; controls (timeline, play). Prefer false on dashboard tiles. */
+  nativeVideoControls = true,
 }) {
   const mode = resolveMode(playbackMode);
   const streamKey = useMemo(() => {
@@ -66,7 +69,11 @@ export default function LivePlayer({
   return (
     <div className={`relative w-full h-full bg-black ${className}`}>
       {mode === "hls" && hlsUrl ? (
-        <HlsVideo src={hlsUrl} cameraName={cameraName} />
+        <HlsVideo
+          src={hlsUrl}
+          cameraName={cameraName}
+          nativeControls={nativeVideoControls}
+        />
       ) : iframeSrc ? (
         <iframe
           src={iframeSrc}
@@ -84,7 +91,7 @@ export default function LivePlayer({
   );
 }
 
-function HlsVideo({ src, cameraName }) {
+function HlsVideo({ src, cameraName, nativeControls = true }) {
   const videoRef = useRef(null);
   const hlsRef = useRef(null);
   const [err, setErr] = useState(null);
@@ -94,10 +101,16 @@ function HlsVideo({ src, cameraName }) {
     if (!video || !src) return;
 
     setErr(null);
-    video.controls = true;
+    video.controls = nativeControls;
     video.playsInline = true;
     video.setAttribute("playsinline", "");
-    video.muted = true; // improves autopostart on mobile; user can unmute via controls
+    video.setAttribute("webkit-playsinline", "");
+    try {
+      video.disablePictureInPicture = !nativeControls;
+    } catch {
+      /* ignore */
+    }
+    video.muted = true;
 
     let cancelled = false;
 
@@ -142,14 +155,16 @@ function HlsVideo({ src, cameraName }) {
       video.removeAttribute("src");
       video.load();
     };
-  }, [src]);
+  }, [src, nativeControls]);
 
   return (
     <>
       <video
         ref={videoRef}
-        className="w-full h-full object-contain"
+        className={`w-full h-full object-contain ${!nativeControls ? "live-tile-video" : ""}`}
         title={cameraName}
+        playsInline
+        muted
       />
       {err && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/80 text-amber-200 text-xs px-4 text-center">

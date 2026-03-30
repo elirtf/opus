@@ -2,6 +2,16 @@
 
 How **live** and **recorded** video flow in Opus today, and how that compares to common NVR/streaming patterns.
 
+## Phones and tablets (short version)
+
+- Opus is a **website**: use Safari, Chrome, or another mobile browser the same way you would on a desktop (after you can reach the server from outside the building; see [remote-viewing.md](remote-viewing.md)).
+- For **live** view on **small screens**, the UI often uses **HLS** (standard HTTP video). That tends to behave better on phones and on slower links than some low-level browser paths.
+- **Recorded** footage plays as normal **MP4** files through the same site.
+- **iOS** is picky about autoplay and codecs; **H.264** is the safest choice for the widest phone support.
+- An **optional store app** still shows this same site inside a shell — see [mobile/README](../mobile/README.md).
+
+The sections below are the technical detail for installers and developers.
+
 ## Current Opus stack (anchor)
 
 

@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext'
 import { camerasApi } from '../api/cameras'
 import { healthApi } from '../api/health'
 import { compareCamerasByDisplayName } from '../utils/naturalCompare'
+import { mergeNvrOpenState, readSavedNvrOpen, writeSavedNvrOpen } from '../utils/sidebarNvrOpen'
 
 const HEALTH_POLL_MS = 30000
 
@@ -29,12 +30,12 @@ function NVRGroup({ groupKey, name, cameras, health, isOpen, onToggle, siteFilte
 
   return (
     <div className="mb-1">
-      <div className="flex items-stretch rounded-lg overflow-hidden border border-transparent hover:border-gray-700/80 transition-colors">
+      <div className="flex items-stretch rounded-lg overflow-hidden border border-transparent hover:border-gray-700/80 transition-colors motion-reduce:transition-none">
         <Link
           to={`/?site=${encodeURIComponent(keyStr)}`}
           title="Live view: cameras on this site only"
           onClick={() => onNavigate?.()}
-          className={`flex-1 flex items-center justify-between gap-2 min-w-0 px-3 py-1.5 text-left transition-colors ${
+          className={`flex-1 flex items-center justify-between gap-2 min-w-0 px-3 py-1.5 text-left transition-colors motion-reduce:transition-none ${
             siteActive
               ? 'bg-indigo-600/30 text-indigo-100'
               : 'text-gray-400 hover:text-white hover:bg-gray-800'
@@ -48,13 +49,13 @@ function NVRGroup({ groupKey, name, cameras, health, isOpen, onToggle, siteFilte
         <button
           type="button"
           onClick={() => onToggle()}
-          className={`shrink-0 px-1.5 flex items-center border-l border-gray-800/80 transition-colors ${
+          className={`shrink-0 px-1.5 flex items-center border-l border-gray-800/80 transition-colors motion-reduce:transition-none ${
             siteActive ? 'bg-indigo-600/20 text-indigo-200' : 'text-gray-500 hover:text-white hover:bg-gray-800'
           }`}
           aria-expanded={isOpen}
           aria-label={isOpen ? 'Collapse camera list' : 'Expand camera list'}
         >
-          <span className={`text-xs transition-transform inline-block ${isOpen ? 'rotate-90' : ''}`}>›</span>
+          <span className={`text-xs transition-transform motion-reduce:transition-none inline-block ${isOpen ? 'rotate-90' : ''}`}>›</span>
         </button>
       </div>
 
@@ -111,12 +112,12 @@ export default function Sidebar({ mobileOpen = false, onNavigate }) {
       return
     }
     camerasApi.list()
-      .then(all => {
-        const mains = all.filter(c => c.active && c.is_main)
+      .then((all) => {
+        const mains = all.filter((c) => c.active && c.is_main)
         setCameras(mains)
-        const groups = {}
-        mains.forEach(c => { groups[c.nvr_id ?? 'standalone'] = true })
-        setOpen(groups)
+        const groupKeys = [...new Set(mains.map((c) => String(c.nvr_id ?? 'standalone')))]
+        const saved = readSavedNvrOpen()
+        setOpen(mergeNvrOpenState(saved, groupKeys))
       })
       .catch(console.error)
   }, [canLive])
@@ -140,7 +141,17 @@ export default function Sidebar({ mobileOpen = false, onNavigate }) {
   }
 
   function toggleGroup(key) {
-    setOpen(prev => ({ ...prev, [key]: !prev[key] }))
+    const k = String(key)
+    setOpen((prev) => {
+      const keys = [...new Set(cameras.map((c) => String(c.nvr_id ?? 'standalone')))]
+      const wasOpen = prev[k] ?? true
+      const next = {}
+      for (const gk of keys) {
+        next[gk] = gk === k ? !wasOpen : (prev[gk] ?? true)
+      }
+      writeSavedNvrOpen(next)
+      return next
+    })
   }
 
   const groups = {}

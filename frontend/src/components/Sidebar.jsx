@@ -20,7 +20,7 @@ function StatusDot({ online }) {
   )
 }
 
-function NVRGroup({ groupKey, name, cameras, health, isOpen, onToggle, siteFilter }) {
+function NVRGroup({ groupKey, name, cameras, health, isOpen, onToggle, siteFilter, onNavigate }) {
   const online = cameras.filter(c => health[liveStreamKey(c)] === true).length
   const total  = cameras.length
   const keyStr = String(groupKey)
@@ -32,6 +32,7 @@ function NVRGroup({ groupKey, name, cameras, health, isOpen, onToggle, siteFilte
         <Link
           to={`/?site=${encodeURIComponent(keyStr)}`}
           title="Live view: cameras on this site only"
+          onClick={() => onNavigate?.()}
           className={`flex-1 flex items-center justify-between gap-2 min-w-0 px-3 py-1.5 text-left transition-colors ${
             siteActive
               ? 'bg-indigo-600/30 text-indigo-100'
@@ -64,6 +65,7 @@ function NVRGroup({ groupKey, name, cameras, health, isOpen, onToggle, siteFilte
               <NavLink
                 key={cam.id}
                 to={`/camera/${cam.name}`}
+                onClick={() => onNavigate?.()}
                 className={({ isActive }) =>
                   `flex items-center gap-2 pl-4 pr-3 py-1.5 rounded-lg text-sm transition-colors truncate ${
                     isActive
@@ -91,7 +93,7 @@ function NVRGroup({ groupKey, name, cameras, health, isOpen, onToggle, siteFilte
   )
 }
 
-export default function Sidebar() {
+export default function Sidebar({ mobileOpen = false, onNavigate }) {
   const { user, logout }      = useAuth()
   const canLive = user?.role === 'admin' || user?.can_view_live !== false
   const canRec  = user?.role === 'admin' || user?.can_view_recordings !== false
@@ -151,10 +153,15 @@ export default function Sidebar() {
   const onlineCount = cameras.filter(c => health[liveStreamKey(c)] === true).length
 
   return (
-    <aside className="w-56 bg-gray-900 border-r border-gray-800 flex flex-col h-screen shrink-0">
+    <aside
+      className={`w-56 bg-gray-900 border-r border-gray-800 flex flex-col h-screen shrink-0
+        max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-50 max-md:transition-transform max-md:duration-200 ease-out
+        ${mobileOpen ? 'max-md:translate-x-0' : 'max-md:-translate-x-full'}
+        md:relative md:translate-x-0`}
+    >
       {/* Logo */}
       <div className="px-4 py-4 border-b border-gray-800">
-        <NavLink to="/" className="flex items-center gap-2">
+        <NavLink to="/" onClick={() => onNavigate?.()} className="flex items-center gap-2">
           <span className="text-xl">🎥</span>
           <span className="font-bold text-white tracking-wide">Opus NVR</span>
         </NavLink>
@@ -171,6 +178,7 @@ export default function Sidebar() {
           <div className="px-3 pt-3">
             <NavLink
               to="/" end
+              onClick={() => onNavigate?.()}
               className={({ isActive }) => {
                 const allSites = isActive && (siteFilter == null || siteFilter === '')
                 return `flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
@@ -195,6 +203,7 @@ export default function Sidebar() {
                 isOpen={open[key] ?? true}
                 onToggle={() => toggleGroup(key)}
                 siteFilter={siteFilter}
+                onNavigate={onNavigate}
               />
             ))}
           </div>
@@ -208,6 +217,7 @@ export default function Sidebar() {
         <div className={`px-3 ${canLive ? 'py-2' : 'pt-3'} border-t border-gray-800`}>
           <NavLink
             to="/recordings"
+            onClick={() => onNavigate?.()}
             className={({ isActive }) =>
               `flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
                 isActive ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-800'
@@ -232,6 +242,7 @@ export default function Sidebar() {
             { to: '/users',      label: 'Users',      icon: <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" /> },
           ].map(({ to, label, icon }) => (
             <NavLink key={to} to={to}
+              onClick={() => onNavigate?.()}
               className={({ isActive }) =>
                 `flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-sm transition-colors ${
                   isActive ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-800'

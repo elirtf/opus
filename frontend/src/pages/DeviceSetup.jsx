@@ -8,7 +8,7 @@ import ConfirmModal from '../components/ConfirmModal'
 import Spinner from '../components/Spinner'
 import { useToast, ToastList } from '../components/Toast'
 
-const EMPTY_FORM = { name: '', display_name: '', ip_address: '', username: '', password: '', max_channels: 50, active: true }
+const EMPTY_FORM = { name: '', display_name: '', ip_address: '', username: '', password: '', max_channels: 64, active: true }
 
 function NVRForm({ initial = EMPTY_FORM, onSubmit, onClose, submitLabel }) {
   const [form, setForm]     = useState(initial)
@@ -32,6 +32,7 @@ function NVRForm({ initial = EMPTY_FORM, onSubmit, onClose, submitLabel }) {
   }
 
   const inputCls = "w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+  const isEdit = Boolean(initial?.id)
 
   return (
     <form onSubmit={handleSubmit} className="space-y-3">
@@ -58,10 +59,29 @@ function NVRForm({ initial = EMPTY_FORM, onSubmit, onClose, submitLabel }) {
           <input className={inputCls} type="password" value={form.password} onChange={e => set('password', e.target.value)} placeholder={initial.id ? '(unchanged)' : ''} />
         </div>
       </div>
-      <div>
-        <label className="block text-xs font-medium text-gray-400 mb-1">Max Channels</label>
-        <input className={inputCls} type="number" min="1" value={form.max_channels} onChange={e => set('max_channels', parseInt(e.target.value))} />
-      </div>
+      {!isEdit && (
+        <p className="text-xs text-gray-500 leading-relaxed">
+          Channels are detected automatically: the server tries each DVR slot (up to 64 by default) and only adds cameras where the{' '}
+          <span className="text-gray-400">main</span> RTSP stream responds. Empty slots are skipped. To scan more than 64 slots, add the site then use{' '}
+          <strong className="text-gray-400">Edit</strong> and raise the limit.
+        </p>
+      )}
+      {isEdit && (
+        <div>
+          <label className="block text-xs font-medium text-gray-400 mb-1">Channel probe limit (sync)</label>
+          <input
+            className={inputCls}
+            type="number"
+            min="1"
+            max="256"
+            value={form.max_channels}
+            onChange={e => set('max_channels', Math.min(256, Math.max(1, parseInt(e.target.value, 10) || 1)))}
+          />
+          <p className="text-xs text-gray-600 mt-1">
+            On sync/import, try channels <span className="font-mono text-gray-500">1</span> through this number; non-existent channels are omitted after RTSP probe.
+          </p>
+        </div>
+      )}
       {initial.id && (
         <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
           <input type="checkbox" checked={form.active} onChange={e => set('active', e.target.checked)} />
@@ -167,9 +187,15 @@ export default function DeviceSetup() {
   }, [tab])
 
   async function handleAdd(form) {
-    const created = await nvrsApi.create(form)
+    const { max_channels: _omit, ...payload } = form
+    const created = await nvrsApi.create(payload)
     setNvrs(prev => [...prev, created])
-    success(`"${created.display_name}" added — ${created.imported} streams imported`)
+    const unreachable = created.unreachable_channels
+    const extra =
+      unreachable != null && unreachable > 0
+        ? ` (${unreachable} empty slot(s) skipped)`
+        : ''
+    success(`"${created.display_name}" added — ${created.imported} streams imported${extra}`)
   }
 
   async function handleEdit(form) {
@@ -189,7 +215,11 @@ export default function DeviceSetup() {
     setSyncing(nvr.id)
     try {
       const res = await nvrsApi.sync(nvr.id)
-      success(`Sync complete: ${res.created} new, ${res.skipped} existed`)
+      const u = res.unreachable_channels
+      success(
+        `Sync complete: ${res.created} new, ${res.skipped_existing ?? res.skipped ?? 0} existed` +
+          (u != null && u > 0 ? `, ${u} empty slot(s)` : '')
+      )
       nvrsApi.list().then(setNvrs)
       if (tab === 'cameras') {
         camerasApi.summary().then(setCameras)
@@ -276,7 +306,7 @@ export default function DeviceSetup() {
                       <span>·</span>
                       <span>{nvr.camera_count} cameras</span>
                       <span>·</span>
-                      <span>max {nvr.max_channels} ch</span>
+                      <span>probe limit {nvr.max_channels}</span>
                     </div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">

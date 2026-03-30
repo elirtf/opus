@@ -13,15 +13,37 @@ Key improvements over the original:
 """
 
 import os
+import requests
 from datetime import datetime, timedelta
 from flask import Blueprint, request, current_app, send_from_directory
 from flask_login import current_user
 from app.models import Recording, Camera
-from app.routes.api.utils import api_response, api_error, login_required_api, admin_required
+from app.routes.api.utils import (
+    api_response,
+    api_error,
+    login_required_api,
+    admin_required,
+    accessible_camera_names,
+)
 
 bp = Blueprint("api_recordings", __name__, url_prefix="/api/recordings")
 
 RECORDINGS_DIR = os.environ.get("RECORDINGS_DIR", "/recordings")
+# Docker: set to http://recorder:5055/status so the API can show recorder process status.
+RECORDER_INTERNAL_STATUS_URL = os.environ.get("RECORDER_INTERNAL_STATUS_URL", "").strip()
+
+
+@bp.before_request
+def _recordings_perm():
+    if request.method == "OPTIONS":
+        return None
+    if not current_user.is_authenticated:
+        return None
+    if current_user.is_admin:
+        return None
+    if getattr(current_user, "can_view_recordings", True):
+        return None
+    return api_error("Recorded footage access is disabled for this account.", 403)
 
 
 def _to_iso(val):
@@ -51,19 +73,8 @@ def recording_to_dict(rec: Recording) -> dict:
 
 
 def _get_allowed_camera_names() -> set | None:
-    """
-    Returns a set of camera names the current user can access,
-    or None if the user is an admin (no restriction).
-    """
-    allowed_nvrs = current_user.allowed_nvr_ids()
-    if allowed_nvrs is None:
-        return None  # admin — no restriction
-
-    if not allowed_nvrs:
-        return set()  # no NVRs assigned → no cameras
-
-    cameras = Camera.select(Camera.name).where(Camera.nvr.in_(allowed_nvrs))
-    return {cam.name for cam in cameras}
+    """Set of camera names, or None for admin (no restriction)."""
+    return accessible_camera_names(current_user)
 
 
 # ── List recordings ──────────────────────────────────────────────────────────
@@ -324,7 +335,7 @@ def serve_recording(camera_name, filename):
 
     cam_dir = os.path.join(RECORDINGS_DIR, camera_name)
     filepath = os.path.join(cam_dir, filename)
-    if not os.path.exists(filepath):
+    if not os.path.isfile(filepath):
         return api_error("Recording not found.", 404)
 
     return send_from_directory(
@@ -411,68 +422,124 @@ def bulk_delete():
 
 # ── Storage stats ─────────────────────────────────────────────────────────────
 
+def _resolved_recordings_dir():
+    """DB `recordings_dir` (settings) then env — matches recorder/processor volume."""
+    try:
+        from app.routes.api.recording_settings import get_setting
+
+        p = (get_setting("recordings_dir") or "").strip()
+        if p.startswith("/"):
+            return p
+    except Exception:
+        pass
+    return os.environ.get("RECORDINGS_DIR", RECORDINGS_DIR)
+
+
+def _scan_mp4_folder(folder):
+    """Non-recursive MP4 count/size under folder. Returns (count, bytes, oldest, newest)."""
+    cam_count = 0
+    cam_bytes = 0
+    oldest_file = None
+    newest_file = None
+    if not os.path.isdir(folder):
+        return 0, 0, None, None
+    try:
+        files = sorted(f for f in os.listdir(folder) if f.endswith(".mp4"))
+    except OSError:
+        return 0, 0, None, None
+    for fn in files:
+        fp = os.path.join(folder, fn)
+        try:
+            sz = os.path.getsize(fp)
+        except OSError:
+            continue
+        if sz < 1024:
+            continue
+        cam_bytes += sz
+        cam_count += 1
+        if oldest_file is None:
+            oldest_file = fn
+        newest_file = fn
+    return cam_count, cam_bytes, oldest_file, newest_file
+
+
 @bp.route("/storage", methods=["GET"])
 @login_required_api
 def storage_stats():
     """
-    Returns storage statistics using the FILESYSTEM as source of truth.
-    Walks the recordings directory to get accurate file counts and sizes,
-    regardless of whether the DB scanner has caught up.
+    Filesystem-backed stats: rolling segments under <dir>/<camera>/ and motion clips
+    under <dir>/clips/<camera>/ (events_only). Uses the same recordings path as settings.
     """
     import shutil
 
-    recordings_dir = os.environ.get("RECORDINGS_DIR", RECORDINGS_DIR)
-    cameras = []
-    total_bytes = 0
-    total_segments = 0
+    recordings_dir = _resolved_recordings_dir()
+    by_cam = {}
+    total_segment_files = 0
+    total_clip_files = 0
+    all_bytes = 0
 
-    # ── Scan filesystem directly ──────────────────────────────────────────
+    def _row(name):
+        if name not in by_cam:
+            by_cam[name] = {
+                "camera_name": name,
+                "segment_count": 0,
+                "clip_count": 0,
+                "total_bytes": 0,
+                "total_gb": 0.0,
+                "oldest": None,
+                "newest": None,
+            }
+        return by_cam[name]
+
     if os.path.exists(recordings_dir):
         try:
             for cam_name in sorted(os.listdir(recordings_dir)):
+                if cam_name == "clips":
+                    continue
                 cam_dir = os.path.join(recordings_dir, cam_name)
                 if not os.path.isdir(cam_dir):
                     continue
-
-                cam_bytes = 0
-                cam_count = 0
-                oldest_file = None
-                newest_file = None
-
-                try:
-                    files = sorted(f for f in os.listdir(cam_dir) if f.endswith(".mp4"))
-                except OSError:
+                cnt, bts, old, new = _scan_mp4_folder(cam_dir)
+                if cnt <= 0:
                     continue
+                r = _row(cam_name)
+                r["segment_count"] += cnt
+                r["total_bytes"] += bts
+                all_bytes += bts
+                total_segment_files += cnt
+                if old:
+                    r["oldest"] = old if r["oldest"] is None else min(r["oldest"], old)
+                if new:
+                    r["newest"] = new if r["newest"] is None else max(r["newest"], new)
 
-                for fn in files:
-                    fp = os.path.join(cam_dir, fn)
-                    try:
-                        sz = os.path.getsize(fp)
-                    except OSError:
+            clips_root = os.path.join(recordings_dir, "clips")
+            if os.path.isdir(clips_root):
+                for cam_name in sorted(os.listdir(clips_root)):
+                    cdir = os.path.join(clips_root, cam_name)
+                    if not os.path.isdir(cdir):
                         continue
-                    if sz < 1024:  # skip tiny/empty files
+                    cnt, bts, old, new = _scan_mp4_folder(cdir)
+                    if cnt <= 0:
                         continue
-                    cam_bytes += sz
-                    cam_count += 1
-                    if oldest_file is None:
-                        oldest_file = fn
-                    newest_file = fn
-
-                if cam_count > 0:
-                    cameras.append({
-                        "camera_name":   cam_name,
-                        "segment_count": cam_count,
-                        "total_gb":      round(cam_bytes / (1024**3), 2),
-                        "total_bytes":   cam_bytes,
-                        "oldest":        oldest_file,
-                        "newest":        newest_file,
-                    })
-                    total_bytes += cam_bytes
-                    total_segments += cam_count
+                    r = _row(cam_name)
+                    r["clip_count"] += cnt
+                    r["total_bytes"] += bts
+                    all_bytes += bts
+                    total_clip_files += cnt
+                    if old:
+                        r["oldest"] = old if r["oldest"] is None else min(r["oldest"], old)
+                    if new:
+                        r["newest"] = new if r["newest"] is None else max(r["newest"], new)
         except OSError:
             pass
 
-    # ── Disk usage ────────────────────────────────────────────────────────
+    cameras = []
+    for name in sorted(by_cam.keys()):
+        row = by_cam[name]
+        tb = row["total_bytes"]
+        row["total_gb"] = round(tb / (1024**3), 2) if tb else 0.0
+        cameras.append(row)
+
     disk = None
     if os.path.exists(recordings_dir):
         try:
@@ -487,10 +554,13 @@ def storage_stats():
             pass
 
     return api_response({
+        "recordings_dir":  recordings_dir,
         "cameras":         cameras,
-        "total_segments":  total_segments,
-        "total_gb":        round(total_bytes / (1024**3), 2),
-        "total_bytes":     total_bytes,
+        "total_segments":  total_segment_files,
+        "total_clips":     total_clip_files,
+        "total_files":     total_segment_files + total_clip_files,
+        "total_gb":        round(all_bytes / (1024**3), 2),
+        "total_bytes":     all_bytes,
         "disk":            disk,
     })
 
@@ -503,10 +573,50 @@ def engine_status():
     """Returns the current status of the recording engine (processes, storage, config)."""
     from app.recorder import engine
 
-    if engine is None:
-        return api_error("Recording engine is not initialized.", 503)
+    if engine is not None:
+        return api_response(engine.get_status())
 
-    return api_response(engine.get_status())
+    if RECORDER_INTERNAL_STATUS_URL:
+        try:
+            r = requests.get(RECORDER_INTERNAL_STATUS_URL, timeout=4)
+            if r.ok:
+                data = r.json()
+                if isinstance(data, dict):
+                    data.setdefault("status_source", "recorder_container")
+                    return api_response(data)
+        except Exception as exc:
+            current_app.logger.warning("Recorder status fetch failed: %s", exc)
+
+    return api_response({
+        "engine_running": False,
+        "active_recordings": 0,
+        "total_processes": 0,
+        "shelved_count": 0,
+        "processes": {},
+        "shelved": [],
+        "message": (
+            "Recording runs in a separate service. Set RECORDER_INTERNAL_STATUS_URL on the API "
+            "(e.g. http://recorder:5055/status) and ensure the recorder container is up."
+        ),
+        "status_source": "api_placeholder",
+    })
+
+
+@bp.route("/reconcile-storage", methods=["POST"])
+@login_required_api
+@admin_required
+def reconcile_storage():
+    """
+    Remove database rows for segment/event files that no longer exist on disk.
+    Use after wiping the recordings volume or restoring from backup.
+    """
+    from app.recording_reconcile import reconcile_storage_with_db
+
+    r, e = reconcile_storage_with_db()
+    return api_response(
+        {"removed_segments": r, "removed_events": e},
+        message=f"Reconciled: removed {r} segment row(s), {e} event row(s).",
+    )
 
 
 @bp.route("/engine/rescan", methods=["POST"])
@@ -520,14 +630,18 @@ def force_rescan():
     from app.recorder import engine
 
     if engine is None:
-        return api_error("Recording engine is not initialized.", 503)
+        return api_error(
+            "Segment scan runs inside the recorder container. Ensure opus-recorder is running, "
+            "or use the recorder service logs to verify FFmpeg.",
+            503,
+        )
 
     # Get counts before
     before_count = Recording.select().count()
 
     # Force a scan
     try:
-        engine._scan_completed_segments()
+        engine._scan_segments()
     except Exception as e:
         return api_error(f"Scan failed: {str(e)}", 500)
 
@@ -578,27 +692,24 @@ def diagnose_camera(cam_id):
 
     Use this to debug why a camera isn't recording.
     """
-    from app.recorder import engine
-
-    if engine is None:
-        return api_error("Recording engine is not initialized.", 503)
+    from app.recorder import RecordingEngine, engine
 
     try:
         cam = Camera.get_by_id(cam_id)
     except Camera.DoesNotExist:
         return api_error("Camera not found.", 404)
 
-    result = engine.test_rtsp(cam.rtsp_url)
+    result = RecordingEngine.test_rtsp(cam.rtsp_url)
     result["camera_name"] = cam.name
     result["camera_display"] = cam.display_name
 
-    # Also check if there's a running FFmpeg process for this camera
-    status = engine.get_status()
-    proc_info = status.get("processes", {}).get(cam.name)
-    if proc_info:
+    if engine is not None:
+        status = engine.get_status()
+        proc_info = status.get("processes", {}).get(cam.name)
         result["recording_process"] = proc_info
     else:
         result["recording_process"] = None
+        result["note"] = "FFmpeg recording runs in the recorder container; process list is only available there."
 
     return api_response(result)
 
@@ -613,10 +724,7 @@ def diagnose_url():
 
     Body: { "rtsp_url": "rtsp://user:pass@192.168.1.100:554/stream" }
     """
-    from app.recorder import engine
-
-    if engine is None:
-        return api_error("Recording engine is not initialized.", 503)
+    from app.recorder import RecordingEngine
 
     data = request.get_json(silent=True) or {}
     rtsp_url = (data.get("rtsp_url") or "").strip()
@@ -627,7 +735,7 @@ def diagnose_url():
     if not rtsp_url.startswith("rtsp://"):
         return api_error("URL must start with rtsp://", 400)
 
-    result = engine.test_rtsp(rtsp_url)
+    result = RecordingEngine.test_rtsp(rtsp_url)
     return api_response(result)
 
 @bp.route("/timeline/<string:camera>", methods=["GET"])

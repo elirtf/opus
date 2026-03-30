@@ -106,10 +106,41 @@ export default function CameraView() {
             </span>
           )}
         </div>
+
+        {cam && (
+          <button
+            onClick={() => {
+              const today = new Date();
+              const yyyy = today.getFullYear();
+              const mm = String(today.getMonth() + 1).padStart(2, "0");
+              const dd = String(today.getDate()).padStart(2, "0");
+              const dateStr = `${yyyy}-${mm}-${dd}`;
+
+              // Navigate to recordings page with this camera and date pre-selected
+              navigate(
+                `/recordings?camera=${encodeURIComponent(
+                  cam.name
+                )}&date=${dateStr}`
+              );
+            }}
+            className="text-xs px-3 py-1.5 rounded border border-indigo-500 text-indigo-200 hover:bg-indigo-500/10 transition-colors"
+          >
+            View recordings
+          </button>
+        )}
       </div>
 
-      <div className="flex-1 bg-black">
-        <LivePlayer cameraName={cam.name} enabled={true} showControls={true} />
+      <div className="flex-1 bg-black min-h-0">
+        {/*
+          MSE over HTTP works through nginx; WebRTC often hits ICE failures behind Docker/NAT
+          unless go2rtc advertises reachable candidates or TURN is configured.
+          Substream live preview matches the dashboard (lower bitrate).
+        */}
+        <LivePlayer
+          cameraName={cam.name}
+          streamName={cam.live_view_stream_name}
+          enabled={true}
+        />
       </div>
     </div>
   );

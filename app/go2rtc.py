@@ -41,8 +41,10 @@ def stream_sync(camera) -> bool:
     Called on create, edit, or recording toggle.
     Returns True on success.
     """
+    from app.models import Camera
+
     base_url = _go2rtc_url()
-    name     = camera.name
+    name = camera.name
 
     try:
         # Always register the RTSP source
@@ -60,6 +62,25 @@ def stream_sync(camera) -> bool:
                 params={"name": name, "src": record_path(name)},
                 timeout=3,
             )
+
+        # Live UI plays "{name-main}-sub" in go2rtc for dashboard / camera page (see LivePlayer).
+        # NVR import creates a real Camera row per sub stream; standalone cameras use
+        # rtsp_substream_url on the *-main row — register that URL under the paired -sub name.
+        if name.endswith("-main"):
+            sub_name = name[: -len("-main")] + "-sub"
+            sub_row = Camera.get_or_none(Camera.name == sub_name)
+            sub_url = (getattr(camera, "rtsp_substream_url", None) or "").strip()
+            if sub_row:
+                pass
+            elif sub_url:
+                http.put(
+                    f"{base_url}/api/streams",
+                    params={"name": sub_name, "src": sub_url},
+                    timeout=3,
+                )
+            else:
+                stream_delete(sub_name)
+
         return True
     except Exception as e:
         logger.warning(f"go2rtc stream_sync failed for {name}: {e}")

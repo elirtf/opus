@@ -1,11 +1,18 @@
 import { useState, useEffect } from 'react'
 import { usersApi } from '../api/users'
 import { nvrsApi } from '../api/nvrs'
+import { camerasApi } from '../api/cameras'
 import { useAuth } from '../context/AuthContext'
 import Modal from '../components/Modal'
 import logo from '../assets/logo-black.png'
 
-const EMPTY_FORM = { username: '', password: '', role: 'viewer' }
+const EMPTY_FORM = {
+  username: '',
+  password: '',
+  role: 'viewer',
+  can_view_live: true,
+  can_view_recordings: true,
+}
 
 function UserForm({ initial = EMPTY_FORM, onSubmit, onClose, submitLabel }) {
   const [form, setForm]     = useState(initial)
@@ -48,9 +55,29 @@ function UserForm({ initial = EMPTY_FORM, onSubmit, onClose, submitLabel }) {
       <div>
         <label className="block text-xs font-medium text-gray-400 mb-1">Role</label>
         <select className={inputCls} value={form.role} onChange={e => set('role', e.target.value)}>
-          <option value="viewer">Viewer — live view only</option>
+          <option value="viewer">Viewer — scoped by NVR / cameras</option>
           <option value="admin">Admin — full access</option>
         </select>
+      </div>
+      <div className="space-y-2 pt-1">
+        <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-300">
+          <input
+            type="checkbox"
+            className="w-4 h-4 accent-indigo-500 rounded"
+            checked={!!form.can_view_live}
+            onChange={e => set('can_view_live', e.target.checked)}
+          />
+          Live viewing
+        </label>
+        <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-300">
+          <input
+            type="checkbox"
+            className="w-4 h-4 accent-indigo-500 rounded"
+            checked={!!form.can_view_recordings}
+            onChange={e => set('can_view_recordings', e.target.checked)}
+          />
+          Recordings &amp; event clips
+        </label>
       </div>
       <div className="flex gap-2 pt-2">
         <button type="submit" disabled={saving}
@@ -148,6 +175,94 @@ function NVRAssignModal({ user, nvrs, onClose }) {
   )
 }
 
+function CameraAssignModal({ user, onClose }) {
+  const [allCams, setAllCams] = useState([])
+  const [assigned, setAssigned] = useState(new Set())
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    Promise.all([camerasApi.list(), usersApi.getCameras(user.id)])
+      .then(([cams, ids]) => {
+        setAllCams((cams || []).filter(c => c.is_main))
+        setAssigned(new Set(ids || []))
+      })
+      .catch(err => setError(err.message))
+      .finally(() => setLoading(false))
+  }, [user.id])
+
+  function toggle(cameraId) {
+    setAssigned(prev => {
+      const next = new Set(prev)
+      next.has(cameraId) ? next.delete(cameraId) : next.add(cameraId)
+      return next
+    })
+  }
+
+  async function handleSave() {
+    setSaving(true)
+    setError('')
+    try {
+      await usersApi.setCameras(user.id, [...assigned])
+      onClose()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Modal title={`Camera access — ${user.username}`} onClose={onClose}>
+      <div className="space-y-3">
+        {error && <div className="px-3 py-2 rounded text-sm bg-red-900/60 text-red-300 border border-red-700">{error}</div>}
+        <p className="text-xs text-gray-400">
+          Optional allowlist: if you pick cameras, this user only sees those that also belong to their assigned NVRs.
+          Leave all unchecked to use NVR assignments only.
+        </p>
+        {loading ? (
+          <div className="text-gray-500 text-sm py-4 text-center">Loading...</div>
+        ) : allCams.length === 0 ? (
+          <div className="text-gray-500 text-sm py-4 text-center">No main-stream cameras yet.</div>
+        ) : (
+          <div className="space-y-2 max-h-64 overflow-y-auto">
+            {allCams.map(cam => (
+              <label
+                key={cam.id}
+                className="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-gray-800 hover:bg-gray-750 cursor-pointer border border-gray-700 hover:border-gray-600 transition-colors"
+              >
+                <input
+                  type="checkbox"
+                  checked={assigned.has(cam.id)}
+                  onChange={() => toggle(cam.id)}
+                  className="w-4 h-4 accent-indigo-500"
+                />
+                <div>
+                  <div className="text-sm font-medium text-white">{cam.display_name}</div>
+                  <div className="text-xs text-gray-400">{cam.name}</div>
+                </div>
+              </label>
+            ))}
+          </div>
+        )}
+        <div className="flex gap-2 pt-1">
+          <button
+            onClick={handleSave}
+            disabled={saving || loading}
+            className="flex-1 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white py-2 rounded-lg text-sm font-medium"
+          >
+            {saving ? 'Saving...' : 'Save'}
+          </button>
+          <button onClick={onClose} className="flex-1 bg-gray-800 hover:bg-gray-700 text-gray-300 py-2 rounded-lg text-sm">
+            Cancel
+          </button>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
 export default function Users() {
   const { user: currentUser }    = useAuth()
   const [users, setUsers]        = useState([])
@@ -155,6 +270,7 @@ export default function Users() {
   const [loading, setLoading]    = useState(true)
   const [modal, setModal]        = useState(null)   // null | 'add' | user object
   const [assignModal, setAssign] = useState(null)   // null | user object
+  const [cameraAssignModal, setCameraAssignModal] = useState(null)
   const [toast, setToast]        = useState('')
 
   function showToast(msg) {
@@ -234,10 +350,16 @@ export default function Users() {
                   <td className="px-5 py-3 text-right">
                     <div className="flex items-center justify-end gap-2">
                       {user.role !== 'admin' && (
-                        <button onClick={() => setAssign(user)}
-                          className="text-sm text-indigo-400 hover:text-indigo-300 border border-indigo-900 hover:border-indigo-700 px-3 py-1.5 rounded-lg transition-colors">
-                          NVR Access
-                        </button>
+                        <>
+                          <button onClick={() => setAssign(user)}
+                            className="text-sm text-indigo-400 hover:text-indigo-300 border border-indigo-900 hover:border-indigo-700 px-3 py-1.5 rounded-lg transition-colors">
+                            NVR Access
+                          </button>
+                          <button onClick={() => setCameraAssignModal(user)}
+                            className="text-sm text-indigo-400 hover:text-indigo-300 border border-indigo-900 hover:border-indigo-700 px-3 py-1.5 rounded-lg transition-colors">
+                            Cameras
+                          </button>
+                        </>
                       )}
                       <button onClick={() => setModal(user)}
                         className="text-sm text-gray-400 hover:text-white border border-gray-700 hover:border-gray-500 px-3 py-1.5 rounded-lg transition-colors">
@@ -266,7 +388,12 @@ export default function Users() {
       {modal && modal !== 'add' && (
         <Modal title="Edit User" onClose={() => setModal(null)}>
           <UserForm
-            initial={{ ...modal, password: '' }}
+            initial={{
+              ...modal,
+              password: '',
+              can_view_live: modal.can_view_live !== false,
+              can_view_recordings: modal.can_view_recordings !== false,
+            }}
             onSubmit={handleEdit}
             onClose={() => setModal(null)}
             submitLabel="Save Changes"
@@ -278,6 +405,12 @@ export default function Users() {
           user={assignModal}
           nvrs={nvrs}
           onClose={() => setAssign(null)}
+        />
+      )}
+      {cameraAssignModal && (
+        <CameraAssignModal
+          user={cameraAssignModal}
+          onClose={() => setCameraAssignModal(null)}
         />
       )}
     </div>

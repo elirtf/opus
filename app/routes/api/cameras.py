@@ -10,7 +10,12 @@ from app.routes.api.utils import (
     api_error,
     login_required_api,
     admin_required,
+    camera_catalog_allowed,
+    live_playback_allowed,
+    accessible_camera_names,
 )
+
+RECORDING_POLICIES = frozenset({"off", "continuous", "events_only"})
 from app.go2rtc import stream_sync, stream_delete
 
 bp = Blueprint("api_cameras", __name__, url_prefix="/api/cameras")
@@ -32,6 +37,43 @@ def _mask_rtsp(url: str):
     if not url:
         return url
     return _CRED_RE.sub(r"\1***:***@", url)
+
+
+def _rtsp_hostname(url: str):
+    if not url:
+        return None
+    try:
+        from urllib.parse import urlparse
+
+        return urlparse(url).hostname
+    except Exception:
+        return None
+
+
+def _guess_channel_from_name(name: str):
+    m = re.search(r"-ch(\d+)-", name or "")
+    return int(m.group(1)) if m else None
+
+
+def _cameras_query_for_user():
+    """Ordered camera query scoped by NVR + optional UserCamera rows. None = no access."""
+    allowed_nvrs = current_user.allowed_nvr_ids()
+    q = Camera.select().order_by(Camera.name)
+    if allowed_nvrs is not None:
+        if not allowed_nvrs:
+            return None
+        q = q.where(Camera.nvr.in_(allowed_nvrs))
+    subset = current_user.allowed_camera_ids_subset()
+    if subset is not None:
+        q = q.where(Camera.id.in_(subset))
+    return q
+
+
+def _sync_policy_and_enabled(cam: Camera):
+    if cam.recording_policy == "off":
+        cam.recording_enabled = False
+    else:
+        cam.recording_enabled = True
 
 
 def _is_original_admin():
@@ -83,7 +125,33 @@ def _get_stream_health_cached():
         return _state_cache.get("health", {}) or {}
 
 
-def camera_to_dict(cam, nvr_map=None, health_map=None):
+def _health_lookup_stream_name(cam_name: str) -> str:
+    """Live tiles treat paired -sub as the health signal for -main streams when both exist."""
+    if cam_name.endswith("-main"):
+        return cam_name.replace("-main", "-sub", 1)
+    return cam_name
+
+
+def _live_view_stream_name(cam, all_camera_names=None):
+    """
+    go2rtc stream key for live preview: use sub when configured (rtsp_substream_url or paired *-sub row).
+    Recording and motion analysis always use the main stream's rtsp_url on *-main cameras.
+    """
+    if not cam.name.endswith("-main"):
+        return cam.name
+    sub_name = cam.name.replace("-main", "-sub", 1)
+    if (getattr(cam, "rtsp_substream_url", None) or "").strip():
+        return sub_name
+    if all_camera_names is not None:
+        if sub_name in all_camera_names:
+            return sub_name
+    else:
+        if Camera.select().where(Camera.name == sub_name).exists():
+            return sub_name
+    return cam.name
+
+
+def camera_to_dict(cam, nvr_map=None, health_map=None, all_camera_names=None):
     nvr_name = None
     if cam.nvr and nvr_map:
         nvr = nvr_map.get(cam.nvr)
@@ -91,21 +159,28 @@ def camera_to_dict(cam, nvr_map=None, health_map=None):
 
     online = None
     if health_map is not None:
-        online = health_map.get(cam.name)
+        key = _health_lookup_stream_name(cam.name)
+        online = health_map.get(key)
+        if online is None and key != cam.name:
+            online = health_map.get(cam.name)
 
+    sub = getattr(cam, "rtsp_substream_url", None)
     return {
         "id": cam.id,
         "name": cam.name,
         "display_name": cam.display_name,
         "rtsp_url": _mask_rtsp(cam.rtsp_url),
+        "rtsp_substream_url": _mask_rtsp(sub) if sub else None,
         "nvr_id": cam.nvr,
         "nvr_name": nvr_name,
         "active": cam.active,
         "recording_enabled": cam.recording_enabled,
+        "recording_policy": getattr(cam, "recording_policy", None) or "continuous",
         "is_main": cam.name.endswith("-main"),
         "is_sub": cam.name.endswith("-sub"),
         # Keep for compatibility with any existing frontend usage:
         "stream_url": f"/go2rtc/stream.html?src={cam.name}&mode=mse",
+        "live_view_stream_name": _live_view_stream_name(cam, all_camera_names),
         # Optional runtime field for UI badges:
         "online": online,
     }
@@ -115,17 +190,16 @@ def camera_to_dict(cam, nvr_map=None, health_map=None):
 
 @bp.route("/", methods=["GET"])
 @login_required_api
+@camera_catalog_allowed
 def list_cameras():
-    allowed = current_user.allowed_nvr_ids()
-
-    query = Camera.select().order_by(Camera.name)
-    if allowed is not None:
-        if not allowed:
-            return api_response([])
-        query = query.where(Camera.nvr.in_(allowed))
+    query = _cameras_query_for_user()
+    if query is None:
+        return api_response([])
 
     nvr_map = {nvr.id: nvr for nvr in NVR.select()}
-    return api_response([camera_to_dict(c, nvr_map) for c in query])
+    rows = list(query)
+    name_set = {c.name for c in rows}
+    return api_response([camera_to_dict(c, nvr_map, None, name_set) for c in rows])
 
 
 @bp.route("/", methods=["POST"])
@@ -142,8 +216,14 @@ def create_camera():
     if Camera.select().where(Camera.name == name).exists():
         return api_error(f'Stream name "{name}" is already taken.')
 
-    # Main streams auto-record by default.
-    auto_record = name.endswith("-main")
+    policy = (data.get("recording_policy") or "").strip().lower()
+    if not policy:
+        policy = "off"
+    if policy not in RECORDING_POLICIES:
+        return api_error('recording_policy must be one of: off, continuous, events_only.')
+    if policy != "off" and not name.endswith("-main"):
+        return api_error("Recording policies other than off require a main stream (-main).", 400)
+    sub = (data.get("rtsp_substream_url") or "").strip() or None
 
     cam = Camera.create(
         name=name,
@@ -151,7 +231,9 @@ def create_camera():
         rtsp_url=rtsp_url,
         nvr=data.get("nvr_id") or None,
         active=data.get("active", True),
-        recording_enabled=auto_record,
+        recording_enabled=(policy != "off"),
+        recording_policy=policy,
+        rtsp_substream_url=sub,
     )
 
     stream_sync(cam)
@@ -183,6 +265,21 @@ def update_camera(cam_id):
     if "active" in data:
         cam.active = bool(data["active"])
 
+    if "rtsp_substream_url" in data:
+        v = data.get("rtsp_substream_url")
+        cam.rtsp_substream_url = (v or "").strip() or None
+
+    if "recording_policy" in data:
+        if not _is_original_admin():
+            return api_error("Only the original administrator can change recording settings.", 403)
+        pol = (data.get("recording_policy") or "").strip().lower()
+        if pol not in RECORDING_POLICIES:
+            return api_error('recording_policy must be one of: off, continuous, events_only.')
+        if pol != "off" and not cam.name.endswith("-main"):
+            return api_error("Recording is only supported on main streams.", 400)
+        cam.recording_policy = pol
+        _sync_policy_and_enabled(cam)
+
     # Recording enable/disable is restricted and only allowed on main streams.
     if "recording_enabled" in data:
         if not _is_original_admin():
@@ -190,6 +287,11 @@ def update_camera(cam_id):
         if bool(data["recording_enabled"]) and not cam.name.endswith("-main"):
             return api_error("Recording is only supported on main streams.", 400)
         cam.recording_enabled = bool(data["recording_enabled"])
+        if cam.recording_enabled:
+            if cam.recording_policy == "off":
+                cam.recording_policy = "continuous"
+        else:
+            cam.recording_policy = "off"
 
     cam.save()
 
@@ -217,16 +319,33 @@ def toggle_recording(cam_id):
     if "enabled" not in data:
         return api_error('"enabled" field is required.')
 
-    if bool(data["enabled"]) and not cam.name.endswith("-main"):
+    enabled = bool(data["enabled"])
+    if enabled and not cam.name.endswith("-main"):
         return api_error("Recording is only supported on main streams.", 400)
 
-    cam.recording_enabled = bool(data["enabled"])
+    if enabled:
+        pol = (data.get("recording_policy") or "").strip().lower()
+        if not pol:
+            pol = "continuous"
+        if pol not in ("continuous", "events_only"):
+            return api_error(
+                'When enabling, recording_policy must be "continuous" or "events_only" (or omit for continuous).',
+                400,
+            )
+        cam.recording_policy = pol
+    else:
+        cam.recording_policy = "off"
+
+    cam.recording_enabled = enabled
     cam.save()
     stream_sync(cam)
 
     status = "enabled" if cam.recording_enabled else "disabled"
     return api_response(
-        {"recording_enabled": cam.recording_enabled},
+        {
+            "recording_enabled": cam.recording_enabled,
+            "recording_policy": getattr(cam, "recording_policy", None) or "continuous",
+        },
         message=f'Recording {status} for "{cam.display_name}".'
     )
 
@@ -241,6 +360,11 @@ def delete_camera(cam_id):
         return api_error("Camera not found.", 404)
 
     stream_delete(cam.name)
+    # Remove virtual go2rtc sub stream if this main row owned it (no separate *-sub Camera).
+    if cam.name.endswith("-main"):
+        sub_name = cam.name[: -len("-main")] + "-sub"
+        if not Camera.select().where(Camera.name == sub_name).exists():
+            stream_delete(sub_name)
     name = cam.display_name
     cam.delete_instance()
     return api_response(message=f'Camera "{name}" deleted.')
@@ -250,40 +374,90 @@ def delete_camera(cam_id):
 
 @bp.route("/summary", methods=["GET"])
 @login_required_api
+@camera_catalog_allowed
 def cameras_summary():
     """
     Returns all cameras the user can access plus current online/offline state.
     Best endpoint for powering the live dashboard.
     """
-    allowed = current_user.allowed_nvr_ids()
-
-    query = Camera.select().order_by(Camera.name)
-    if allowed is not None:
-        if not allowed:
-            return api_response([])
-        query = query.where(Camera.nvr.in_(allowed))
+    query = _cameras_query_for_user()
+    if query is None:
+        return api_response([])
 
     nvr_map = {nvr.id: nvr for nvr in NVR.select()}
     health = _get_stream_health_cached()
 
-    return api_response([camera_to_dict(c, nvr_map, health) for c in query])
+    rows = list(query)
+    name_set = {c.name for c in rows}
+    return api_response([camera_to_dict(c, nvr_map, health, name_set) for c in rows])
+
+
+@bp.route("/inventory", methods=["GET"])
+@login_required_api
+@admin_required
+def cameras_inventory():
+    """
+    Admin-only extended list for Configuration → Camera management:
+    channel hint, source host, suggested camera web UI URL (heuristic :8000).
+    """
+    nvr_map = {nvr.id: nvr for nvr in NVR.select()}
+    health = _get_stream_health_cached()
+    all_cams = list(Camera.select().order_by(Camera.name))
+    name_set = {c.name for c in all_cams}
+    rows = []
+    for c in all_cams:
+        d = camera_to_dict(c, nvr_map, health, name_set)
+        host = _rtsp_hostname(c.rtsp_url)
+        d["channel"] = _guess_channel_from_name(c.name)
+        d["source_host"] = host
+        d["management_url"] = f"http://{host}:8000" if host else None
+        d["protocol"] = "RTSP"
+        rows.append(d)
+    return api_response(rows)
+
+
+@bp.route("/<int:cam_id>/source", methods=["GET"])
+@login_required_api
+@admin_required
+def camera_source_secrets(cam_id):
+    """Full RTSP URLs for editing (admin only)."""
+    try:
+        cam = Camera.get_by_id(cam_id)
+    except Camera.DoesNotExist:
+        return api_error("Camera not found.", 404)
+    sub = getattr(cam, "rtsp_substream_url", None)
+    return api_response(
+        {
+            "id": cam.id,
+            "name": cam.name,
+            "rtsp_url": cam.rtsp_url,
+            "rtsp_substream_url": sub or "",
+        }
+    )
 
 
 @bp.route("/<string:name>/status", methods=["GET"])
 @login_required_api
+@live_playback_allowed
 def camera_status(name: str):
     """Returns status + metadata for a single camera."""
-    allowed = current_user.allowed_nvr_ids()
+    allowed_names = accessible_camera_names(current_user)
 
     try:
         cam = Camera.get(Camera.name == name)
     except Camera.DoesNotExist:
         return api_error("Camera not found.", 404)
 
-    if allowed is not None and (cam.nvr not in allowed):
+    if allowed_names is not None and cam.name not in allowed_names:
         return api_error("Forbidden.", 403)
 
     health = _get_stream_health_cached()
+    hkey = _health_lookup_stream_name(cam.name)
+    online = health.get(hkey)
+    if online is None and hkey != cam.name:
+        online = health.get(cam.name)
+
+    name_set = {r.name for r in Camera.select(Camera.name)}
 
     return api_response({
         "name": cam.name,
@@ -291,25 +465,28 @@ def camera_status(name: str):
         "nvr_id": cam.nvr,
         "active": cam.active,
         "recording_enabled": cam.recording_enabled,
-        "online": health.get(cam.name),
+        "recording_policy": getattr(cam, "recording_policy", None) or "continuous",
+        "online": online,
+        "live_view_stream_name": _live_view_stream_name(cam, name_set),
     })
 
 
 @bp.route("/<string:name>/streams", methods=["GET"])
 @login_required_api
+@live_playback_allowed
 def camera_streams(name: str):
     """
     Stream endpoints so the frontend can choose the best playback method
     without hardcoding URLs.
     """
-    allowed = current_user.allowed_nvr_ids()
+    allowed_names = accessible_camera_names(current_user)
 
     try:
         cam = Camera.get(Camera.name == name)
     except Camera.DoesNotExist:
         return api_error("Camera not found.", 404)
 
-    if allowed is not None and (cam.nvr not in allowed):
+    if allowed_names is not None and cam.name not in allowed_names:
         return api_error("Forbidden.", 403)
 
     return api_response({
@@ -321,6 +498,7 @@ def camera_streams(name: str):
 
 @bp.route("/<string:name>/stats", methods=["GET"])
 @login_required_api
+@live_playback_allowed
 def camera_stats(name: str):
     """
     Returns summarized runtime statistics for a camera stream.
@@ -330,14 +508,14 @@ def camera_stats(name: str):
     diagnostics, monitoring panels, and health indicators.
     """
 
-    allowed = current_user.allowed_nvr_ids()
+    allowed_names = accessible_camera_names(current_user)
 
     try:
         cam = Camera.get(Camera.name == name)
     except Camera.DoesNotExist:
         return api_error("Camera not found.", 404)
 
-    if allowed is not None and (cam.nvr not in allowed):
+    if allowed_names is not None and cam.name not in allowed_names:
         return api_error("Forbidden.", 403)
 
     try:

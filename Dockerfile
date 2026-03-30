@@ -23,12 +23,16 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Copy built React app into Flask's static folder
-COPY --from=frontend /frontend/dist /app/app/static
+# Baked UI (copied into named volume at runtime — see docker-entrypoint-opus.sh)
+COPY --from=frontend /frontend/dist /opt/opus-ui
+
+COPY docker-entrypoint-opus.sh /docker-entrypoint-opus.sh
+RUN chmod +x /docker-entrypoint-opus.sh
 
 ENV FLASK_APP=run.py
 ENV FLASK_ENV=production
 
 EXPOSE 5000
 
+ENTRYPOINT ["/docker-entrypoint-opus.sh"]
 CMD ["python", "run.py"]

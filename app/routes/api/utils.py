@@ -36,3 +36,71 @@ def login_required_api(f):
             return api_error("Authentication required.", 401)
         return f(*args, **kwargs)
     return decorated
+
+
+def accessible_camera_names(user):
+    """
+    Camera names visible to this user via NVR assignments and optional UserCamera rows.
+    None means admin (no name filter).
+    """
+    from app.models import Camera
+
+    if not user.is_authenticated:
+        return set()
+    if user.is_admin:
+        return None
+    allowed_nvrs = user.allowed_nvr_ids()
+    if allowed_nvrs is not None and not allowed_nvrs:
+        return set()
+    q = Camera.select(Camera.id, Camera.name)
+    if allowed_nvrs is not None:
+        q = q.where(Camera.nvr.in_(allowed_nvrs))
+    rows = list(q)
+    subset_ids = user.allowed_camera_ids_subset()
+    if subset_ids is not None:
+        return {c.name for c in rows if c.id in subset_ids}
+    return {c.name for c in rows}
+
+
+def camera_catalog_allowed(f):
+    """List/summary cameras: need live and/or recordings permission."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not current_user.is_authenticated:
+            return api_error("Authentication required.", 401)
+        if current_user.is_admin:
+            return f(*args, **kwargs)
+        live = getattr(current_user, "can_view_live", True)
+        rec = getattr(current_user, "can_view_recordings", True)
+        if not live and not rec:
+            return api_error("No camera catalog access is enabled for this account.", 403)
+        return f(*args, **kwargs)
+    return decorated
+
+
+def live_playback_allowed(f):
+    """Single-camera live stream metadata and playback URLs."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not current_user.is_authenticated:
+            return api_error("Authentication required.", 401)
+        if current_user.is_admin:
+            return f(*args, **kwargs)
+        if not getattr(current_user, "can_view_live", True):
+            return api_error("Live viewing is disabled for this account.", 403)
+        return f(*args, **kwargs)
+    return decorated
+
+
+def recordings_view_allowed(f):
+    """Recorded segments and event clips."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not current_user.is_authenticated:
+            return api_error("Authentication required.", 401)
+        if current_user.is_admin:
+            return f(*args, **kwargs)
+        if not getattr(current_user, "can_view_recordings", True):
+            return api_error("Recorded footage access is disabled for this account.", 403)
+        return f(*args, **kwargs)
+    return decorated

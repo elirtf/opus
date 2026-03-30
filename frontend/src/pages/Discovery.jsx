@@ -52,8 +52,23 @@ function Step1({ onDone }) {
     setError('')
     setScanning(true)
     try {
-      const result = await discoveryApi.scan(username, password, subnet || undefined)
-      onDone({ result, username, password })
+      const { job_id: jobId } = await discoveryApi.startScan(username, password, subnet || undefined)
+      // Poll until background scan finishes (avoids proxy/upstream timeouts on /24 scans).
+      for (;;) {
+        const st = await discoveryApi.scanStatus(jobId)
+        if (st.status === 'running') {
+          await new Promise((r) => setTimeout(r, 1000))
+          continue
+        }
+        if (st.status === 'error') {
+          throw new Error(st.error || 'Scan failed')
+        }
+        if (st.status === 'complete' && st.result) {
+          onDone({ result: st.result, username, password })
+          return
+        }
+        throw new Error('Unexpected scan status')
+      }
     } catch (err) {
       setError(err.message)
     } finally {
@@ -70,6 +85,9 @@ function Step1({ onDone }) {
         <h3 className="text-lg font-semibold text-white">Scan for Cameras</h3>
         <p className="text-gray-400 text-sm mt-1">
           We'll run a multicast WS-Discovery scan first, then optionally scan a subnet range.
+        </p>
+        <p className="text-amber-200/80 text-xs mt-3 max-w-sm mx-auto leading-relaxed">
+          Large subnet scans run in the background; this page polls until they finish (no single long HTTP request).
         </p>
       </div>
 
@@ -114,7 +132,7 @@ function Step1({ onDone }) {
           {scanning ? (
             <span className="flex items-center justify-center gap-2">
               <span className="animate-spin">⟳</span>
-              Scanning... (this may take 10–30 seconds)
+              Scanning… (multicast is quick; full /24 subnets can take several minutes)
             </span>
           ) : '🔍 Scan Network'}
         </button>
@@ -405,8 +423,11 @@ export default function Discovery() {
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="px-6 py-4 border-b border-gray-800 bg-gray-900 shrink-0">
-        <div className="flex items-center justify-between max-w-3xl mx-auto">
-          <h2 className="text-lg font-bold text-white">Camera Discovery</h2>
+        <div className="flex items-center justify-between max-w-3xl mx-auto gap-4">
+          <div>
+            <h2 className="text-lg font-bold text-white">Camera Discovery</h2>
+            <p className="text-xs text-gray-500 mt-0.5">Preferred way to add cameras: direct RTSP into Opus (no NVR required).</p>
+          </div>
           {/* Step indicator */}
           <div className="flex items-center gap-2">
             {STEPS.map((label, i) => (

@@ -9,11 +9,15 @@ For each discovered IP, probe ONVIF to get:
   - Device name / model / manufacturer
   - All media profiles (main + sub streams)
   - RTSP URLs for each profile (with credentials injected)
+
+Long subnet scans run in a background thread; the client polls /scan/status/<job_id>.
 """
 import socket
 import ipaddress
 import concurrent.futures
 import logging
+import secrets
+import threading
 from urllib.parse import urlparse
 
 from flask import Blueprint, request, current_app
@@ -28,6 +32,9 @@ bp = Blueprint("api_discovery", __name__, url_prefix="/api/discovery")
 ONVIF_PORTS   = [80, 8080, 8000, 8899]
 SCAN_TIMEOUT  = 0.5   # seconds per port probe
 MAX_WORKERS   = 64    # parallel threads for subnet scan
+
+_scan_jobs: dict[str, dict] = {}
+_scan_lock = threading.Lock()
 
 
 # ── ONVIF helpers ─────────────────────────────────────────────────────────────
@@ -134,7 +141,9 @@ def _ws_discovery() -> list[str]:
     Returns empty list if wsdiscovery is not available or times out.
     """
     try:
-        from wsdiscovery import WSDiscovery, ServiceFilter
+        # wsdiscovery>=2.x no longer exports ServiceFilter on the package root; we only need WSDiscovery.
+        from wsdiscovery import WSDiscovery
+
         wsd = WSDiscovery()
         wsd.start()
         services = wsd.searchServices(timeout=3)
@@ -183,36 +192,12 @@ def _subnet_scan(cidr: str, known_ips: list[str], username: str, password: str) 
 
 # ── API endpoints ─────────────────────────────────────────────────────────────
 
-@bp.route("/scan", methods=["POST"])
-@login_required_api
-@admin_required
-def scan():
-    """
-    Discover ONVIF cameras on the network.
-
-    Body:
-      {
-        "username": "admin",
-        "password": "password",
-        "subnet":   "192.168.1.0/24"   // optional, enables range scan
-      }
-
-    Returns list of discovered devices with their stream URLs.
-    """
-    data     = request.get_json(silent=True) or {}
-    username = (data.get("username") or "").strip()
-    password = data.get("password", "")
-    subnet   = (data.get("subnet") or "").strip()
-
-    if not username:
-        return api_error("username is required for ONVIF probing.")
-
-    # Phase 1 — WS-Discovery multicast
+def _execute_onvif_scan(username: str, password: str, subnet: str) -> dict:
+    """Run WS-Discovery + optional subnet scan; return payload for api_response."""
     logger.info("ONVIF scan: running WS-Discovery multicast...")
     multicast_ips = _ws_discovery()
-    logger.info(f"WS-Discovery found {len(multicast_ips)} devices: {multicast_ips}")
+    logger.info("WS-Discovery found %s devices: %s", len(multicast_ips), multicast_ips)
 
-    # Probe multicast results
     devices = []
     seen_ips = set(multicast_ips)
 
@@ -223,22 +208,90 @@ def scan():
             if device:
                 devices.append(device)
 
-    # Phase 2 — Subnet scan fallback
     if subnet:
-        logger.info(f"ONVIF scan: scanning subnet {subnet}...")
+        logger.info("ONVIF scan: scanning subnet %s...", subnet)
         subnet_devices = _subnet_scan(subnet, list(seen_ips), username, password)
         for d in subnet_devices:
             if d["ip"] not in seen_ips:
                 devices.append(d)
                 seen_ips.add(d["ip"])
-        logger.info(f"Subnet scan found {len(subnet_devices)} additional devices.")
+        logger.info("Subnet scan found %s additional devices.", len(subnet_devices))
 
-    logger.info(f"ONVIF scan complete — {len(devices)} cameras found.")
-    return api_response({
-        "devices":          devices,
-        "multicast_count":  len(multicast_ips),
-        "total":            len(devices),
-    })
+    logger.info("ONVIF scan complete — %s cameras found.", len(devices))
+    return {
+        "devices": devices,
+        "multicast_count": len(multicast_ips),
+        "total": len(devices),
+    }
+
+
+@bp.route("/scan", methods=["POST"])
+@login_required_api
+@admin_required
+def scan():
+    """
+    Discover ONVIF cameras (synchronous). Prefer /scan/async for large subnets.
+    """
+    data = request.get_json(silent=True) or {}
+    username = (data.get("username") or "").strip()
+    password = data.get("password", "")
+    subnet = (data.get("subnet") or "").strip()
+
+    if not username:
+        return api_error("username is required for ONVIF probing.")
+
+    return api_response(_execute_onvif_scan(username, password, subnet))
+
+
+@bp.route("/scan/async", methods=["POST"])
+@login_required_api
+@admin_required
+def scan_async():
+    """
+    Start discovery in a background thread. Poll GET /scan/status/<job_id>.
+    Avoids nginx/upstream timeouts on large subnet scans.
+    """
+    data = request.get_json(silent=True) or {}
+    username = (data.get("username") or "").strip()
+    password = data.get("password", "")
+    subnet = (data.get("subnet") or "").strip()
+
+    if not username:
+        return api_error("username is required for ONVIF probing.")
+
+    job_id = secrets.token_hex(12)
+
+    with _scan_lock:
+        if len(_scan_jobs) > 80:
+            for k in list(_scan_jobs.keys()):
+                if _scan_jobs.get(k, {}).get("status") != "running":
+                    _scan_jobs.pop(k, None)
+
+    def worker():
+        try:
+            result = _execute_onvif_scan(username, password, subnet)
+            with _scan_lock:
+                _scan_jobs[job_id] = {"status": "complete", "result": result}
+        except Exception as e:
+            logger.exception("Async ONVIF scan failed")
+            with _scan_lock:
+                _scan_jobs[job_id] = {"status": "error", "error": str(e)}
+
+    with _scan_lock:
+        _scan_jobs[job_id] = {"status": "running"}
+    threading.Thread(target=worker, daemon=True).start()
+    return api_response({"job_id": job_id})
+
+
+@bp.route("/scan/status/<job_id>", methods=["GET"])
+@login_required_api
+@admin_required
+def scan_status(job_id):
+    with _scan_lock:
+        job = _scan_jobs.get(job_id)
+    if not job:
+        return api_error("Unknown or expired job.", 404)
+    return api_response(job)
 
 
 @bp.route("/add", methods=["POST"])
@@ -308,7 +361,8 @@ def add_cameras():
             rtsp_url=rtsp_url,
             nvr=nvr.id if nvr else None,
             active=True,
-            recording_enabled=True,
+            recording_enabled=False,
+            recording_policy="off",
         )
         stream_sync(cam)
         created.append(name)

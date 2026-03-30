@@ -24,6 +24,8 @@ class User(UserMixin, BaseModel):
     username     = CharField(max_length=50, unique=True)
     password_hash = CharField(max_length=255)
     role         = CharField(max_length=20, default="viewer")  # "admin" | "viewer"
+    can_view_live = BooleanField(default=True)
+    can_view_recordings = BooleanField(default=True)
 
     class Meta:
         table_name = "user"
@@ -55,6 +57,18 @@ class User(UserMixin, BaseModel):
             for row in UserNVR.select().where(UserNVR.user_id == self.id)
         }
 
+    def allowed_camera_ids_subset(self):
+        """
+        If this viewer has rows in user_camera, return that set of camera IDs
+        (further intersected with NVR-visible cameras in access helpers).
+        None means no extra restriction.
+        """
+        if self.is_admin:
+            return None
+        rows = UserCamera.select().where(UserCamera.user_id == self.id)
+        ids = {row.camera_id for row in rows}
+        return ids if ids else None
+
 class NVR(BaseModel):
     id           = AutoField()
     name         = CharField(max_length=50, unique=True)        # slug, e.g. "warehouse-nvr"
@@ -77,6 +91,9 @@ class Camera(BaseModel):
     nvr          = IntegerField(null=True)                      # FK to NVR.id (manual)
     active       = BooleanField(default=True)
     recording_enabled = BooleanField(default=False)
+    # off | continuous | events_only — synced with recording_enabled (off = disabled)
+    recording_policy = CharField(max_length=20, default="continuous")
+    rtsp_substream_url = CharField(max_length=255, null=True)
 
     class Meta:
         table_name = "camera"
@@ -88,6 +105,18 @@ class UserNVR(BaseModel):
 
     class Meta:
         table_name = "user_nvr"
+
+
+class UserCamera(BaseModel):
+    """Optional per-user camera allowlist; intersects with NVR-based access."""
+
+    id        = AutoField()
+    user_id   = IntegerField()
+    camera_id = IntegerField()
+
+    class Meta:
+        table_name = "user_camera"
+        indexes = ((("user_id", "camera_id"), True),)
 
 
 class Recording(BaseModel):
@@ -118,3 +147,26 @@ class Recording(BaseModel):
             # "show me recordings for camera X between time A and B"
             (("camera_name", "started_at"), False),
         )
+
+
+class RecordingEvent(BaseModel):
+    """
+    Motion (or future AI) clip — stored under RECORDINGS_DIR/clips/<camera_name>/.
+    """
+
+    id               = AutoField()
+    camera           = IntegerField(null=True, index=True)
+    camera_name      = CharField(max_length=50, index=True)
+    filename         = CharField(max_length=255)
+    file_path        = CharField(max_length=512)
+    file_size        = BigIntegerField(default=0)
+    started_at       = DateTimeField(index=True)
+    ended_at         = DateTimeField(null=True)
+    duration_seconds = IntegerField(null=True)
+    reason           = CharField(max_length=20, default="motion")
+    recording_id     = IntegerField(null=True)
+    status           = CharField(max_length=20, default="complete")
+
+    class Meta:
+        table_name = "recording_event"
+        indexes = ((("camera_name", "started_at"), False),)

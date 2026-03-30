@@ -5,11 +5,9 @@
 <h1 align="center">Opus NVR</h1>
 
 <p align="center">
-  A lightweight, self-hosted **camera streaming and management platform** designed for environments using IP cameras and/or NVRs.
+  A lightweight, self-hosted **IP camera recorder and viewer**. For new installs, cameras send **RTSP directly to Opus** (live + continuous recording + timeline playback). A vendor NVR is <strong>optional</strong>—the UI still supports importing channels from an existing recorder for <strong>migration</strong> only.
 
-  Opus provides a clean web interface for viewing live feeds, managing cameras/NVRs, and controlling user access — all deployable with **Docker in minutes**.
-
-  Built with a focus on **simplicity, performance, and extensibility**, Opus aims to be a practical alternative to heavier NVR dashboards while remaining developer-friendly.
+  Deploy with <strong>Docker Compose</strong> on Linux (Ubuntu Server is the documented standard).
 </p>
 
 <p align="center">
@@ -28,7 +26,9 @@
 
 ### Live Viewing
 ### Streaming
-### Camera & NVR Management
+### Devices & Configuration
+
+Sites (legacy NVR import), camera list, and **Configuration** (system info, diagnostics, per-site stream table with RTSP edit).
 ### Authentication & Access Control
 
 ---
@@ -39,7 +39,7 @@
 |------|-------------|
 | Backend | [Flask](https://flask.palletsprojects.com/) |
 | Authentication | Flask-Login |
-| Database | Flask-SQLAlchemy (SQLite) |
+| Database | SQLite via Peewee (migrations in `app/migrations/`) |
 | Stream Server | [go2rtc](https://github.com/AlexxIT/go2rtc) |
 | Reverse Proxy | nginx |
 | Frontend | React + Tailwind CSS |
@@ -79,7 +79,7 @@ The app will be available at **http://localhost**.
 |---|---|---|
 | admin | admin | admin |
 
-> **Change this immediately** after first login.
+> **Change this immediately** after first login. Until you change it in the app, it stays **`admin` / `admin`** (your data is in `./instance`, not wiped by rebuilds). If you see the login page again after an update, your session simply expired — sign in with the same credentials.
 
 ---
 
@@ -88,24 +88,55 @@ The app will be available at **http://localhost**.
 ```
 IP Camera (RTSP)
       │
-      ▼
-  go2rtc (:1984)        ← Manages all RTSP connections, transcodes to MSE
-      │
-      ▼
-  nginx (:80)           ← /go2rtc/* proxied to go2rtc, / proxied to Flask
-      │
-      ▼
-  Opus UI               ← React
-      │
-      ▼
-  Browser               ← Receives MSE stream inside an iframe per camera tile
+      ├──────────────────────────────┐
+      ▼                              ▼
+ go2rtc (:1984)                 Recorder + FFmpeg
+ (live / MSE in browser)         (MP4 segments on disk)
+      │                              │
+      └────────── nginx (:80) ───────┘
+                      │
+                 Opus API + React UI
 ```
+
+**Recommended path:** one RTSP URL per camera (main for recording; optional substream for live tiles). **Migration path:** import channels from an existing NVR under Devices → Sites & migration.
+
+### Motion and event-based recording
+
+Opus can record **continuously** (full timeline retention) or in **Events** mode (motion-triggered clips). For Events mode:
+
+- Run the **`processor`** service from Docker Compose (`app.processing_service`). By default it samples the **sub** stream for motion when one exists (lower CPU); **clips** are still captured from **main** (`-c:v copy`). Set **`MOTION_RTSP_MODE=main`** on the processor to force full-res motion sampling. Clips live under `RECORDINGS_DIR/clips/`. Use the **Recordings → Events** tab (playback). **Live view** also prefers **sub** when configured — see [docs/mainstream-substream.md](docs/mainstream-substream.md).
+- Choose the mode per camera under **Recordings → Settings → Camera Recording**: **Off**, **Continuous**, or **Events (motion)**. You can also set `recording_policy` to `events_only` or `continuous` via `PATCH /api/cameras/<id>`.
+- **By default, Events mode does not run 24/7 segment recording** (no always-on FFmpeg writer for those cameras), so the **Playback** timeline stays empty for them — footage lives under **Events** as motion clips. Opus does **not** read camera/NVR “motion only” flags; it decides motion in software using the processor. If you want a **rolling segment buffer** on disk for pre-roll (like a traditional NVR), set **`EVENTS_ONLY_RECORD_SEGMENTS=1`** (or `true` / `yes` / `on`) on the **`recorder`** service — any other value leaves Events as **clip-only** (see [docker-compose.yml](docker-compose.yml) and [docs/hardware-sizing.md](docs/hardware-sizing.md)).
+- Tune behavior with environment variables on the `processor` (and shared retention settings): see [docs/hardware-sizing.md](docs/hardware-sizing.md) for `PROCESSING_POLL_SECONDS`, `CLIP_SECONDS`, `MOTION_COOLDOWN_SECONDS`, `MOTION_RTSP_MODE`, `EVENTS_ONLY_BUFFER_HOURS`, `CLIP_RETENTION_DAYS`, and related notes.
+- If you record through the **go2rtc RTSP relay** (`GO2RTC_RTSP_URL`), use the **same** URL on both the **`recorder`** and **`processor`** services so segments, motion sampling, and clips refer to the same paths (details in [docker-compose.yml](docker-compose.yml)).
+
+---
+
+## Documentation
+
+| Doc | Topic |
+|-----|--------|
+| [docs/certified-cameras.md](docs/certified-cameras.md) | Minimal certified list + short regression checklist |
+| [docs/hardware-sizing.md](docs/hardware-sizing.md) | Bitrate → storage, tiers, filesystems, retention env vars |
+| [docs/streaming-playback.md](docs/streaming-playback.md) | HLS/DASH/WebRTC vs go2rtc + MP4, browser notes |
+| [docs/deployment-profiles.md](docs/deployment-profiles.md) | Pi / NUC / workstation / hosted env defaults |
+| [docs/hw-diagnostics-spec.md](docs/hw-diagnostics-spec.md) | Admin `GET /api/health/diagnostics` JSON schema |
+| [docs/nvr-replacement-lab.md](docs/nvr-replacement-lab.md) | Lab tracks and migration validation |
+| [docs/hosted-ops-outline.md](docs/hosted-ops-outline.md) | Rented-appliance ops outline |
+| [docs/DEV_WORKFLOW.md](docs/DEV_WORKFLOW.md) | Local dev: Windows vs WSL/Linux, Compose vs split loop, Makefile |
+| [docs/mainstream-substream.md](docs/mainstream-substream.md) | Main vs sub streams: recording, motion, live view |
 
 ---
 
 ## Development
 
-To run outside Docker for faster local iteration:
+Step-by-step commands (PowerShell, env vars, Makefile on WSL): **[docs/DEV_WORKFLOW.md](docs/DEV_WORKFLOW.md)**.
+
+**After `git pull`:** run `docker compose up --build -d` so Opus rebuilds from your repo (`docker compose pull` alone only updates pre-built images like nginx/go2rtc, not your app code). The `opus` container syncs the fresh React build into the `static_files` volume on every start so the UI updates without pruning volumes. Do not rely on `docker prune` for routine updates.
+
+**Typical fast loop:** run **go2rtc** with Docker (`docker compose up go2rtc`), run **Flask** (`python run.py`), and run the **Vite** dev server (`cd frontend && npm install && npm run dev`). Set `GO2RTC_URL=http://127.0.0.1:1984` for local Flask so it talks to the published go2rtc port. The frontend proxies `/api` to `localhost:5000` and `/go2rtc` to go2rtc on `localhost:1984` (see `frontend/vite.config.js`). Optional: copy `compose.override.yml.example` to `compose.override.yml` for local compose tweaks (file is gitignored).
+
+To run the backend alone:
 
 ```bash
 # Create a virtual environment
@@ -125,6 +156,8 @@ python run.py
 ```
 
 > You'll still need go2rtc running separately (or skip it — the app works without it, streams just won't load).
+
+**Quick smoke check:** log in, open dashboard live tile, run Discovery (subnet scan uses background job + polling), open Recordings and confirm engine status loads when the recorder service and `RECORDER_INTERNAL_STATUS_URL` are set.
 
 ---
 

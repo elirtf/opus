@@ -69,6 +69,8 @@ def create_app():
     from app.routes.api.recordings import bp as api_recordings_bp
     from app.routes.api.discovery   import bp as api_discovery_bp
     from app.routes.api.recording_settings import bp as api_rec_settings_bp
+    from app.routes.api.events import bp as api_events_bp
+    from app.routes.api.processing_api import bp as api_processing_bp
 
     app.register_blueprint(api_auth_bp)
     app.register_blueprint(api_nvrs_bp)
@@ -78,14 +80,22 @@ def create_app():
     app.register_blueprint(api_recordings_bp)
     app.register_blueprint(api_discovery_bp)
     app.register_blueprint(api_rec_settings_bp)
+    app.register_blueprint(api_events_bp)
+    app.register_blueprint(api_processing_bp)
 
 
     # ── Seed default admin if no users exist ─────────────────────────────────
+    # Recorder/processor/opus may start in parallel on a shared DB; only one insert wins.
+    from peewee import IntegrityError
+
     if User.select().count() == 0:
-        admin = User(username="admin", role="admin")
-        admin.set_password("admin")
-        admin.save(force_insert=True)
-        print("Default admin created — username: admin / password: admin")
+        try:
+            admin = User(username="admin", role="admin")
+            admin.set_password("admin")
+            admin.save(force_insert=True)
+            print("Default admin created — username: admin / password: admin")
+        except IntegrityError:
+            pass
 
     # ── SPA catch-all ────────────────────────────────────────────────────────
     register_spa_catchall(app)

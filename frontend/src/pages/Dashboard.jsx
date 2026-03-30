@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { useNavigate, Link } from 'react-router-dom'
+import { useNavigate, Link, useSearchParams } from 'react-router-dom'
 import { camerasApi } from '../api/cameras'
 import { healthApi } from '../api/health'
 import Spinner from '../components/Spinner'
@@ -8,6 +8,14 @@ import { useAuth } from '../context/AuthContext'
 const GRID_SIZES = [3, 4, 6]
 const HEALTH_POLL_MS = 30000
 
+function siteHeadingFromCameras(cams) {
+  if (!cams.length) return 'Site'
+  const withName = cams.find((c) => c.nvr_name && String(c.nvr_name).trim())
+  if (withName) return String(withName.nvr_name).trim()
+  const id = cams[0].nvr_id
+  if (id != null && id !== '') return `Site #${id}`
+  return 'Standalone'
+}
 
 function StatusDot({ online }) {
   return (
@@ -63,7 +71,7 @@ function CameraTile({ cam, streamName, online, onClick }) {
       <div className="relative w-full" style={{ paddingBottom: '56.25%' }}>
         <iframe
           ref={iframeRef}
-          allow="autoplay"
+          allow="autoplay; fullscreen"
           scrolling="no"
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 0, overflow: 'hidden' }}
         />
@@ -90,6 +98,8 @@ function CameraTile({ cam, streamName, online, onClick }) {
 
 export default function Dashboard() {
   const navigate              = useNavigate()
+  const [searchParams]        = useSearchParams()
+  const siteKey               = searchParams.get('site')
   const { user }              = useAuth()
   const [cameras, setCameras] = useState([])
   const [health, setHealth]   = useState({})
@@ -113,10 +123,24 @@ export default function Dashboard() {
     return () => clearInterval(interval)
   }, [])
 
+  useEffect(() => {
+    setPage(0)
+  }, [siteKey])
+
+  const filtered =
+    siteKey == null || siteKey === ''
+      ? cameras
+      : cameras.filter((c) => String(c.nvr_id ?? 'standalone') === siteKey)
+
+  const siteHeading = siteKey ? siteHeadingFromCameras(filtered) : null
+
   const perPage    = cols * cols
-  const pages      = Math.max(1, Math.ceil(cameras.length / perPage))
-  const slice      = cameras.slice(page * perPage, (page + 1) * perPage)
-  const onlineCount = cameras.filter(c => health[c.name.replace('-main', '-sub')] === true).length
+  const pages      = Math.max(1, Math.ceil(filtered.length / perPage))
+  const slice      = filtered.slice(page * perPage, (page + 1) * perPage)
+  const onlineCount = filtered.filter((c) => {
+    const liveName = c.live_view_stream_name || c.name.replace('-main', '-sub')
+    return health[liveName] === true
+  }).length
 
   function handleSetCols(newCols) {
     setCols(newCols)
@@ -131,12 +155,24 @@ export default function Dashboard() {
     <div className="flex flex-col h-full">
       {/* Toolbar */}
       <div className="px-4 py-2 flex items-center justify-between border-b border-gray-800 bg-gray-900 shrink-0">
-        <div className="flex items-center gap-3">
-          <span className="text-sm font-semibold text-white">Live View</span>
+        <div className="flex items-center gap-3 min-w-0">
+          <span className="text-sm font-semibold text-white shrink-0">Live View</span>
+          {siteHeading && (
+            <>
+              <span className="text-gray-600 shrink-0" aria-hidden>/</span>
+              <span className="text-sm text-gray-300 truncate" title={siteHeading}>{siteHeading}</span>
+              <Link
+                to="/"
+                className="text-xs text-indigo-400 hover:text-indigo-300 shrink-0 whitespace-nowrap"
+              >
+                All sites
+              </Link>
+            </>
+          )}
           {cameras.length > 0 && (
-            <span className="text-xs text-gray-500">
+            <span className="text-xs text-gray-500 shrink-0">
               <span className={onlineCount > 0 ? 'text-green-400' : 'text-gray-500'}>{onlineCount}</span>
-              <span className="text-gray-600">/{cameras.length} online</span>
+              <span className="text-gray-600">/{filtered.length} online</span>
             </span>
           )}
         </div>
@@ -178,7 +214,13 @@ export default function Dashboard() {
       </div>
 
       {/* Grid or empty state */}
-      {cameras.length === 0 ? (
+      {siteKey && filtered.length === 0 ? (
+        <div className="flex-1 flex flex-col items-center justify-center gap-3 px-4 text-center">
+          <p className="text-gray-300 font-medium">No cameras for this site</p>
+          <p className="text-gray-500 text-sm">The link may be outdated or this site has no main streams.</p>
+          <Link to="/" className="text-sm text-indigo-400 hover:text-indigo-300">Show all cameras</Link>
+        </div>
+      ) : cameras.length === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center gap-4">
           <div className="w-16 h-16 rounded-2xl bg-gray-800 flex items-center justify-center">
             <svg className="w-8 h-8 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -192,13 +234,13 @@ export default function Dashboard() {
           </div>
           {user?.role === 'admin' && (
             <div className="flex gap-2 mt-1">
-              <Link to="/nvrs"
+              <Link to="/devices"
                 className="text-sm px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors">
-                Add NVR
+                Devices
               </Link>
-              <Link to="/cameras"
+              <Link to="/discovery"
                 className="text-sm px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg transition-colors">
-                Add Camera
+                Discovery
               </Link>
             </div>
           )}
@@ -215,13 +257,13 @@ export default function Dashboard() {
           }}
         >
           {slice.map(cam => {
-            const subName = cam.name.replace('-main', '-sub')
+            const liveName = cam.live_view_stream_name || cam.name.replace('-main', '-sub')
             return (
               <CameraTile
                 key={cam.id}
                 cam={cam}
-                streamName={subName}
-                online={health[subName]}
+                streamName={liveName}
+                online={health[liveName]}
                 onClick={() => navigate(`/camera/${cam.name}`)}
               />
             )

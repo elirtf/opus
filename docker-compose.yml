@@ -11,6 +11,13 @@
 #   - WS-Discovery multicast won't reach cameras
 #   - Use the subnet CIDR scan in the Discovery page instead
 # ────────────────────────────────────────────────────────────────────────────
+#
+# GO2RTC_RTSP_URL (RTSP relay for FFmpeg): when uncommented or set in .env, it
+# must be identical on every service that reads RTSP for recording or motion —
+# at minimum the **recorder** and **processor** services. Otherwise segment
+# files, motion sampling, and event clips can point at different sources.
+#
+# ────────────────────────────────────────────────────────────────────────────
 
 services:
   opus:
@@ -21,6 +28,19 @@ services:
       - .env
     environment:
       - TZ=America/Chicago
+      # Optional: shown in Configuration → System (defaults to "dev" if unset)
+      # - OPUS_VERSION=1.0.0
+      # Recorder runs in the `recorder` service — proxy status into the API for the dashboard.
+      - RECORDER_INTERNAL_STATUS_URL=http://recorder:5055/status
+      # ── Recording Engine Configuration ── Override any of these in your .env file
+      - RECORDINGS_DIR=/recordings
+      # Which cameras record is controlled in the UI (per-camera toggles + first-run setup), not env.
+      - RECORDING_SEGMENT_MINUTES=15          # Length of each MP4 segment
+      - RECORDING_RETENTION_DAYS=90           # Auto-delete recordings older than this
+      - RECORDING_MAX_STORAGE_GB=25            # 0 = unlimited; set to cap disk usage
+      - RECORDING_MIN_FREE_GB=1               # 0 = off; skip starting new FFmpeg when free space below this
+      - RECORDING_STAGGER_SECONDS=2
+      # - GO2RTC_RTSP_URL=rtsp://go2rtc:8554  # Uncomment to record via go2rtc relay
     volumes:
       - ./instance:/app/instance
       - ./go2rtc:/config
@@ -37,14 +57,23 @@ services:
       - .env
     environment:
       - TZ=America/Chicago
+      - RECORDER_STATUS_PORT=5055
       # ── Recording Engine Configuration ── Override any of these in your .env file
       - RECORDINGS_DIR=/recordings
-      - RECORDING_MODE=all
       - RECORDING_SEGMENT_MINUTES=15
       - RECORDING_RETENTION_DAYS=90
       - RECORDING_MAX_STORAGE_GB=25
+      - RECORDING_MIN_FREE_GB=1
       - RECORDING_STAGGER_SECONDS=2
+      # Events (motion) cameras: 0 = clip-only (default), 1 = rolling segment buffer (see README)
+      # - EVENTS_ONLY_RECORD_SEGMENTS=1
       # - GO2RTC_RTSP_URL=rtsp://go2rtc:8554
+      # FFmpeg hwaccel (optional): segments use stream copy — FFMPEG_HWACCEL has minimal effect on
+      # recording CPU; set for future decode/transcode paths. Intel/AMD Linux: often vaapi or qsv
+      # after passing /dev/dri (see processor service). NVIDIA: cuda + nvidia-container-toolkit.
+      # Raspberry Pi: usually none in Docker; validate outside containers first.
+      # - FFMPEG_HWACCEL=none
+      # - FFMPEG_HWACCEL_DEVICE=0
     volumes:
       - ./instance:/app/instance
       - ./go2rtc:/config
@@ -52,6 +81,36 @@ services:
     depends_on:
       - go2rtc
     command: ["python", "-m", "app.recording_service"]
+    networks:
+      - opusnet
+
+  processor:
+    build: .
+    container_name: opus-processor
+    restart: always
+    env_file:
+      - .env
+    environment:
+      - TZ=America/Chicago
+      - RECORDINGS_DIR=/recordings
+      - PROCESSING_POLL_SECONDS=6
+      - CLIP_SECONDS=45
+      - MOTION_COOLDOWN_SECONDS=75
+      - MOTION_DETECTOR=opencv
+      # auto = sample sub for motion when configured (lighter); main = always main; sub = prefer sub, else main
+      - MOTION_RTSP_MODE=auto
+      - FFMPEG_HWACCEL=none
+      # Match recorder: relay RTSP through go2rtc (uncomment both here and on recorder)
+      # - GO2RTC_RTSP_URL=rtsp://go2rtc:8554
+      # Hwaccel examples (Linux): VAAPI — add devices: /dev/dri, env FFMPEG_HWACCEL=vaapi
+      # Intel QSV — often FFMPEG_HWACCEL=qsv (requires /dev/dri). NVIDIA — FFMPEG_HWACCEL=cuda
+      # plus GPU device/runtime per nvidia-container-toolkit docs. Verify with ffmpeg -hwaccels in the container.
+    volumes:
+      - ./instance:/app/instance
+      - recordings:/recordings
+    depends_on:
+      - go2rtc
+    command: ["python", "-m", "app.processing_service"]
     networks:
       - opusnet
 
@@ -66,6 +125,10 @@ services:
     volumes:
       - ./go2rtc:/config
       - recordings:/recordings
+    # Publish to host so local Flask/Vite (split dev) can reach go2rtc without the full stack.
+    ports:
+      - "1984:1984"
+      - "8554:8554"
     networks:
       - opusnet
 
@@ -91,9 +154,9 @@ networks:
 volumes:
   static_files:
   recordings:
-  # For production with large storage, consider binding to a dedicated disk:
-  # driver: local
-  # driver_opts:
-  #   type: none
-  #   o: bind
-  #   device: /mnt/storage/recordings
+    # For production with large storage, consider binding to a dedicated disk:
+    # driver: local
+    # driver_opts:
+    #   type: none
+    #   o: bind
+    #   device: /mnt/storage/recordings

@@ -5,15 +5,24 @@ import Layout from './components/Layout'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import CameraView from './pages/CameraView'
-import NVRs from './pages/NVRs'
-import Cameras from './pages/Cameras'
+import DeviceSetup from './pages/DeviceSetup'
 import Users from './pages/Users'
 import Recordings from './pages/Recordings'
 import Discovery from './pages/Discovery'
+import Configuration from './pages/Configuration'
 
-function AppLayout({ children, adminOnly = false }) {
+function AppLayout({
+  children,
+  adminOnly = false,
+  requireLiveView = false,
+  requireRecordingsView = false,
+}) {
   return (
-    <ProtectedRoute adminOnly={adminOnly}>
+    <ProtectedRoute
+      adminOnly={adminOnly}
+      requireLiveView={requireLiveView}
+      requireRecordingsView={requireRecordingsView}
+    >
       <Layout>{children}</Layout>
     </ProtectedRoute>
   )
@@ -25,13 +34,15 @@ export default function App() {
       <AuthProvider>
         <Routes>
           <Route path="/login"           element={<Login />} />
-          <Route path="/"                element={<AppLayout><Dashboard /></AppLayout>} />
-          <Route path="/camera/:name"    element={<AppLayout><CameraView /></AppLayout>} />
-          <Route path="/recordings"      element={<AppLayout><Recordings /></AppLayout>} />
+          <Route path="/"                element={<AppLayout requireLiveView><Dashboard /></AppLayout>} />
+          <Route path="/camera/:name"    element={<AppLayout requireLiveView><CameraView /></AppLayout>} />
+          <Route path="/recordings"      element={<AppLayout requireRecordingsView><Recordings /></AppLayout>} />
           <Route path="/discovery"       element={<AppLayout adminOnly><Discovery /></AppLayout>} />
-          <Route path="/nvrs"            element={<AppLayout adminOnly><NVRs /></AppLayout>} />
-          <Route path="/cameras"         element={<AppLayout adminOnly><Cameras /></AppLayout>} />
+          <Route path="/devices"         element={<AppLayout adminOnly><DeviceSetup /></AppLayout>} />
+          <Route path="/nvrs"            element={<Navigate to="/devices" replace />} />
+          <Route path="/cameras"         element={<Navigate to="/devices?tab=cameras" replace />} />
           <Route path="/users"           element={<AppLayout adminOnly><Users /></AppLayout>} />
+          <Route path="/configuration"   element={<AppLayout adminOnly><Configuration /></AppLayout>} />
           <Route path="*"                element={<Navigate to="/" replace />} />
         </Routes>
       </AuthProvider>

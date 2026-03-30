@@ -28,6 +28,8 @@ def login():
         "id":       user.id,
         "username": user.username,
         "role":     user.role,
+        "can_view_live": getattr(user, "can_view_live", True),
+        "can_view_recordings": getattr(user, "can_view_recordings", True),
     }, message="Logged in successfully.")
 
 
@@ -47,4 +49,6 @@ def me():
         "id":       current_user.id,
         "username": current_user.username,
         "role":     current_user.role,
+        "can_view_live": getattr(current_user, "can_view_live", True),
+        "can_view_recordings": getattr(current_user, "can_view_recordings", True),
     })

@@ -10,8 +10,17 @@ export default defineConfig({
   server: {
     // During local dev, proxy API calls to Flask
     proxy: {
-      '/api': 'http://localhost:5000',
-      '/go2rtc': 'http://localhost:80',
+      '/api': {
+        target: 'http://localhost:5000',
+        changeOrigin: true,
+        timeout: 600_000, // discovery scans can run for minutes
+      },
+      // Match nginx: strip /go2rtc prefix and forward to go2rtc API (split dev: compose publishes :1984)
+      '/go2rtc': {
+        target: 'http://localhost:1984',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/go2rtc/, '') || '/',
+      },
     }
   }
 })

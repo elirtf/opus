@@ -117,7 +117,7 @@ def initial_setup():
 
     return api_response(
         {"recordings_dir": recordings_dir, "setup_complete": True},
-        message="Recording setup complete. All main-stream cameras will begin recording."
+        message="Recording storage is configured. Enable recording per camera from the Recordings tab.",
     )
 
 
@@ -208,7 +208,11 @@ def update_settings():
 
     return api_response(
         {"updated": updated},
-        message=f"Updated {len(updated)} setting(s). Restart the recording engine for changes to take effect."
+        message=(
+            f"Updated {len(updated)} setting(s). "
+            "Segment length is picked up by the recorder within a few seconds (FFmpeg restarts automatically). "
+            "Other options may require restarting the recorder container if they do not apply immediately."
+        ),
     )
 
 
@@ -238,6 +242,7 @@ def bulk_toggle_recording():
     data = request.get_json(silent=True) or {}
     camera_ids = data.get("camera_ids", [])
     enabled = bool(data.get("enabled", False))
+    policy_raw = (data.get("recording_policy") or "").strip().lower()
 
     if not camera_ids:
         return api_error("camera_ids is required.", 400)
@@ -245,19 +250,29 @@ def bulk_toggle_recording():
     from app.models import Camera
 
     if enabled:
+        if policy_raw and policy_raw not in ("continuous", "events_only"):
+            return api_error('recording_policy must be "continuous" or "events_only" when enabling.', 400)
+        pol = policy_raw or "continuous"
         main_ids = [
-            c.id for c in Camera.select(Camera.id, Camera.name)
-            .where((Camera.id.in_(camera_ids)) & (Camera.name.endswith("-main")))
+            c.id
+            for c in Camera.select(Camera.id, Camera.name).where(
+                (Camera.id.in_(camera_ids)) & (Camera.name.endswith("-main"))
+            )
         ]
         if not main_ids:
             return api_error("Recording is only supported on main streams.", 400)
         camera_ids = main_ids
-
-    count = (
-        Camera.update(recording_enabled=enabled)
-        .where(Camera.id.in_(camera_ids))
-        .execute()
-    )
+        count = (
+            Camera.update(recording_enabled=True, recording_policy=pol)
+            .where(Camera.id.in_(camera_ids))
+            .execute()
+        )
+    else:
+        count = (
+            Camera.update(recording_enabled=False, recording_policy="off")
+            .where(Camera.id.in_(camera_ids))
+            .execute()
+        )
 
     status = "enabled" if enabled else "disabled"
     return api_response(
@@ -280,7 +295,10 @@ def restart_engine():
             _sync_env_vars()
             engine.start()
             return api_response(message="Recording engine restarted.")
-        else:
-            return api_error("Recording engine not initialized.", 503)
+        return api_error(
+            "Recording runs in the recorder container, not this API process. "
+            "Restart it with: docker restart opus-recorder (or your compose service name).",
+            503,
+        )
     except Exception as e:
         return api_error(f"Failed to restart engine: {e}", 500)

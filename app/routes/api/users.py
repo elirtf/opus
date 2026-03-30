@@ -1,6 +1,6 @@
 from flask import Blueprint, request
 from flask_login import current_user
-from app.models import User, UserNVR, NVR
+from app.models import User, UserNVR, UserCamera, NVR, Camera
 from app.routes.api.utils import api_response, api_error, login_required_api, admin_required
 
 bp = Blueprint("api_users", __name__, url_prefix="/api/users")
@@ -46,6 +46,8 @@ def create_user():
 
     user = User(username=username, role=role)
     user.set_password(password)
+    user.can_view_live = bool(data.get("can_view_live", True))
+    user.can_view_recordings = bool(data.get("can_view_recordings", True))
     user.save(force_insert=True)
     return api_response(user_to_dict(user), message=f'User "{username}" created.', status=201)
 
@@ -77,6 +79,11 @@ def update_user(user_id):
 
     if data.get("password"):
         user.set_password(data["password"])
+
+    if "can_view_live" in data:
+        user.can_view_live = bool(data["can_view_live"])
+    if "can_view_recordings" in data:
+        user.can_view_recordings = bool(data["can_view_recordings"])
 
     user.save()
     return api_response(user_to_dict(user), message="User updated.")
@@ -151,3 +158,53 @@ def set_user_nvrs(user_id):
         UserNVR.create(user_id=user_id, nvr_id=nvr_id)
 
     return api_response(nvr_ids, message=f"NVR access updated for {user.username}.")
+
+
+@bp.route("/<int:user_id>/cameras", methods=["GET"])
+@login_required_api
+@admin_required
+def get_user_cameras(user_id):
+    """Optional per-camera allowlist; empty list means use NVR assignments only."""
+    try:
+        User.get_by_id(user_id)
+    except User.DoesNotExist:
+        return api_error("User not found.", 404)
+
+    assigned = [
+        row.camera_id
+        for row in UserCamera.select().where(UserCamera.user_id == user_id)
+    ]
+    return api_response(assigned)
+
+
+@bp.route("/<int:user_id>/cameras", methods=["POST"])
+@login_required_api
+@admin_required
+def set_user_cameras(user_id):
+    """
+    Replace optional camera allowlist for a viewer.
+    Empty list removes all rows (fall back to NVR-only scoping).
+    Body: { "camera_ids": [1, 2, 3] }
+    """
+    try:
+        user = User.get_by_id(user_id)
+    except User.DoesNotExist:
+        return api_error("User not found.", 404)
+
+    if user.is_admin:
+        return api_error("Admins have full access — per-camera lists don't apply.", 400)
+
+    data = request.get_json(silent=True) or {}
+    cam_ids = data.get("camera_ids", [])
+    if not isinstance(cam_ids, list):
+        return api_error("camera_ids must be a list.")
+
+    for cid in cam_ids:
+        if not Camera.select().where(Camera.id == cid).exists():
+            return api_error(f"Camera {cid} not found.", 404)
+
+    UserCamera.delete().where(UserCamera.user_id == user_id).execute()
+    for cid in cam_ids:
+        UserCamera.create(user_id=user_id, camera_id=cid)
+
+    return api_response(cam_ids, message=f"Camera access updated for {user.username}.")

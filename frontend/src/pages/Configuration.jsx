@@ -131,9 +131,10 @@ function ApiTokenSettings({ onSuccess, onError }) {
     <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 mt-6">
       <h3 className="text-sm font-semibold text-white mb-2">API access (Bearer token)</h3>
       <p className="text-sm text-gray-400 mb-4">
-        For scripts, split-origin web UIs, or tools that cannot use browser cookies, set{' '}
-        <code className="text-gray-300">Authorization: Bearer &lt;token&gt;</code>. Enable{' '}
-        <code className="text-gray-300">CORS_ORIGINS</code> on the server when the UI runs on a different host — see{' '}
+        For scripts or extra websites that can’t use normal login cookies, send{' '}
+        <code className="text-gray-300">Authorization: Bearer &lt;token&gt;</code>. If that tool runs on a{' '}
+        <strong className="text-gray-300">different web address</strong> than Opus, an admin must set{' '}
+        <code className="text-gray-300">CORS_ORIGINS</code> on the server — see the <em>Advanced</em> section in{' '}
         <code className="text-gray-400">docs/remote-viewing.md</code>.
       </p>
       <div className="flex flex-wrap gap-2">

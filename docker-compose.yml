@@ -71,6 +71,8 @@ services:
       - RECORDING_MAX_STORAGE_GB=25
       - RECORDING_MIN_FREE_GB=1
       - RECORDING_STAGGER_SECONDS=2
+      # Optional: reduce RTSP input thread queue warnings when many segment writers run
+      # - FFMPEG_RTSP_THREAD_QUEUE_SIZE=1024
       # Events (motion) cameras: 0 = clip-only (default), 1 = rolling segment buffer (see README)
       # - EVENTS_ONLY_RECORD_SEGMENTS=1
       # - GO2RTC_RTSP_URL=rtsp://go2rtc:8554
@@ -101,8 +103,11 @@ services:
       - RECORDINGS_DIR=/recordings
       - PROCESSING_POLL_SECONDS=6
       - CLIP_SECONDS=45
-      - MOTION_COOLDOWN_SECONDS=75
+      - MOTION_COOLDOWN_SECONDS=60
       - MOTION_DETECTOR=opencv
+      # opencv_mog2 = stronger outdoor motion; raise MOTION_MAX_CONCURRENT on big CPUs (default 4)
+      # - MOTION_MAX_CONCURRENT=6
+      # - MOTION_ANALYSIS_MAX_WIDTH=320
       # auto = sample sub for motion when configured (lighter); main = always main; sub = prefer sub, else main
       - MOTION_RTSP_MODE=auto
       - PROCESSOR_STATUS_PORT=5056

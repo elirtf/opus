@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { camerasApi } from '../api/cameras'
 import { healthApi } from '../api/health'
+import { compareCamerasByDisplayName } from '../utils/naturalCompare'
 
 const HEALTH_POLL_MS = 30000
 
@@ -149,6 +150,9 @@ export default function Sidebar({ mobileOpen = false, onNavigate }) {
     if (!groups[key]) groups[key] = { label, cameras: [] }
     groups[key].cameras.push(cam)
   })
+  Object.values(groups).forEach((g) => {
+    g.cameras.sort(compareCamerasByDisplayName)
+  })
 
   const onlineCount = cameras.filter(c => health[liveStreamKey(c)] === true).length
 
@@ -161,8 +165,7 @@ export default function Sidebar({ mobileOpen = false, onNavigate }) {
     >
       {/* Logo */}
       <div className="px-4 py-4 border-b border-gray-800">
-        <NavLink to="/" onClick={() => onNavigate?.()} className="flex items-center gap-2">
-          <span className="text-xl">🎥</span>
+        <NavLink to="/" onClick={() => onNavigate?.()} className="flex items-center">
           <span className="font-bold text-white tracking-wide">Opus NVR</span>
         </NavLink>
         {canLive && (

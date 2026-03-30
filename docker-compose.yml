@@ -32,6 +32,12 @@ services:
       # - OPUS_VERSION=1.0.0
       # Recorder runs in the `recorder` service — proxy status into the API for the dashboard.
       - RECORDER_INTERNAL_STATUS_URL=http://recorder:5055/status
+      # Processor status for dashboard + alerting (see docs/operations.md)
+      - PROCESSOR_INTERNAL_STATUS_URL=http://processor:5056/status
+      # Optional: POST JSON alerts — disk low, recorder shelved, processor stuck (see docs/operations.md)
+      # - ALERT_WEBHOOK_URL=https://example.com/hooks/opus
+      # - ALERT_DISK_FREE_GB_THRESHOLD=5
+      # - METRICS_TOKEN=secret   # if set, GET /metrics requires Authorization: Bearer <token>
       # ── Recording Engine Configuration ── Override any of these in your .env file
       - RECORDINGS_DIR=/recordings
       # Which cameras record is controlled in the UI (per-camera toggles + first-run setup), not env.
@@ -99,6 +105,7 @@ services:
       - MOTION_DETECTOR=opencv
       # auto = sample sub for motion when configured (lighter); main = always main; sub = prefer sub, else main
       - MOTION_RTSP_MODE=auto
+      - PROCESSOR_STATUS_PORT=5056
       - FFMPEG_HWACCEL=none
       # Match recorder: relay RTSP through go2rtc (uncomment both here and on recorder)
       # - GO2RTC_RTSP_URL=rtsp://go2rtc:8554

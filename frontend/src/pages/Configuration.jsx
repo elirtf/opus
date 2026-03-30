@@ -7,6 +7,7 @@ import { authApi } from '../api/auth'
 import Modal from '../components/Modal'
 import Spinner from '../components/Spinner'
 import { useToast, ToastList } from '../components/Toast'
+import { compareByChannelThenName, naturalCompare } from '../utils/naturalCompare'
 
 const TAB_IDS = ['system', 'maintenance', 'cameras']
 
@@ -340,13 +341,16 @@ function CamerasPanel({ inventory, loading, onEditStreams }) {
     if (!groups[key]) groups[key] = { label, rows: [] }
     groups[key].rows.push(row)
   }
+  for (const g of Object.values(groups)) {
+    g.rows.sort(compareByChannelThenName)
+  }
 
   return (
     <div className="space-y-8">
       <p className="text-sm text-gray-400">
         Per-site stream registry. <strong className="text-gray-300">Online</strong> uses go2rtc producers. Edit RTSP URLs when a camera IP changes; go2rtc is updated automatically.
       </p>
-      {Object.entries(groups).map(([key, g]) => (
+      {Object.entries(groups).sort(([, a], [, b]) => naturalCompare(a.label, b.label)).map(([key, g]) => (
         <div key={key}>
           <h3 className="text-sm font-semibold text-indigo-300 mb-2">{g.label}</h3>
           <div className="overflow-x-auto rounded-xl border border-gray-800">

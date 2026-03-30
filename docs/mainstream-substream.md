@@ -8,7 +8,7 @@ This matches typical NVR/DVR behavior and how streams are wired in Opus.
 The **primary** video feed: highest quality. This is what a DVR/NVR uses when saving footage to its **internal HDD**. Mainstream settings (resolution, bitrate, codec) control **recording file size** and how long you can retain video on disk.
 
 **Substream**  
-The **secondary** feed: lower quality and usually lower bitrate. It is meant for **live or remote viewing** on PCs, phones, or tablets so you do not waste bandwidth on full main-stream quality when a smaller picture is enough.
+The **secondary** feed: lower quality and usually lower bitrate. Use it for **live viewing** (including phones and remote connections) so you save bandwidth while the **main** stream keeps full quality for recording.
 
 ## Application
 

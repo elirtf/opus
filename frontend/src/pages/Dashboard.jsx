@@ -5,6 +5,7 @@ import { healthApi } from '../api/health'
 import Spinner from '../components/Spinner'
 import LivePlayer from '../components/player/LivePlayer'
 import { useAuth } from '../context/AuthContext'
+import { compareCamerasByDisplayName } from '../utils/naturalCompare'
 
 const GRID_SIZES = [3, 4, 6]
 const HEALTH_POLL_MS = 30000
@@ -101,7 +102,11 @@ export default function Dashboard() {
 
   useEffect(() => {
     camerasApi.list()
-      .then(all => setCameras(all.filter(c => c.active && c.is_main)))
+      .then((all) =>
+        setCameras(
+          all.filter((c) => c.active && c.is_main).sort(compareCamerasByDisplayName)
+        )
+      )
       .catch(console.error)
       .finally(() => setLoading(false))
   }, [])

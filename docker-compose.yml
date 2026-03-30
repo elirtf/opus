@@ -97,6 +97,8 @@ services:
       - CLIP_SECONDS=45
       - MOTION_COOLDOWN_SECONDS=75
       - MOTION_DETECTOR=opencv
+      # auto = sample sub for motion when configured (lighter); main = always main; sub = prefer sub, else main
+      - MOTION_RTSP_MODE=auto
       - FFMPEG_HWACCEL=none
       # Match recorder: relay RTSP through go2rtc (uncomment both here and on recorder)
       # - GO2RTC_RTSP_URL=rtsp://go2rtc:8554

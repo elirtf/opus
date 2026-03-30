@@ -110,6 +110,8 @@ docker compose down
 
 ## Split dev (UI / API — faster iteration)
 
+**Optional:** use this when you are **editing the React UI** on your machine (for example **mobile** layout, PWA, or HLS). If you only run Opus with full Docker, you **do not** need `npm` locally — the image builds `frontend` for you.
+
 Use Docker only for **go2rtc**, run **Flask** and **Vite** on the host.
 
 **1. go2rtc**

@@ -38,6 +38,7 @@ class ProcessingEngine:
         self._running = False
         self._thread = None
         self._last_clip_at = {}
+        self._last_tick_ts = 0.0
         self._detector = self._make_detector()
 
     @staticmethod
@@ -159,6 +160,15 @@ class ProcessingEngine:
         from app.models import Camera
         from app.routes.api.recording_settings import get_setting
 
+        ts = time.time()
+        self._last_tick_ts = ts
+        try:
+            from app.ops_metrics import processor_last_tick_unixtime
+
+            processor_last_tick_unixtime.set(ts)
+        except Exception:
+            pass
+
         if get_setting("setup_complete", "false") != "true":
             return
 
@@ -180,6 +190,12 @@ class ProcessingEngine:
                 motion = self._detector.detect_motion(src_motion)
             except Exception:
                 logger.exception("detector failed: %s", cam.name)
+                try:
+                    from app.ops_metrics import processor_detector_errors_total
+
+                    processor_detector_errors_total.inc()
+                except Exception:
+                    pass
                 continue
             if not motion:
                 continue
@@ -226,27 +242,40 @@ class ProcessingEngine:
             "-y",
             fp,
         ]
+        def _fail_clip():
+            try:
+                from app.ops_metrics import processor_clips_failed_total
+
+                processor_clips_failed_total.inc()
+            except Exception:
+                pass
+
         try:
             r = subprocess.run(cmd, capture_output=True, timeout=CLIP_SECONDS + 60)
         except subprocess.TimeoutExpired:
             logger.warning("clip ffmpeg timeout: %s", cam.name)
+            _fail_clip()
             return None
         except Exception:
             logger.exception("clip ffmpeg failed: %s", cam.name)
+            _fail_clip()
             return None
         if r.returncode != 0:
             err = (r.stderr or b"").decode(errors="replace")[-200:]
             logger.warning("clip ffmpeg rc=%s %s", r.returncode, err)
+            _fail_clip()
             return None
         try:
             sz = os.path.getsize(fp)
         except OSError:
+            _fail_clip()
             return None
         if sz < 10240:
             try:
                 os.remove(fp)
             except OSError:
                 pass
+            _fail_clip()
             return None
         started = datetime.now()
         RecordingEvent.create(
@@ -262,6 +291,12 @@ class ProcessingEngine:
             recording_id=None,
             status="complete",
         )
+        try:
+            from app.ops_metrics import processor_clips_written_total
+
+            processor_clips_written_total.inc()
+        except Exception:
+            pass
         return True
 
     def get_status(self):
@@ -272,6 +307,7 @@ class ProcessingEngine:
             "clip_seconds": CLIP_SECONDS,
             "cooldown_seconds": MOTION_COOLDOWN_SECONDS,
             "motion_rtsp_mode": MOTION_RTSP_MODE,
+            "last_tick_unix": self._last_tick_ts,
         }
 
 

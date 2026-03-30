@@ -39,7 +39,7 @@ def main():
     status_port = int(os.environ.get("RECORDER_STATUS_PORT", "5055"))
     start_recorder_status_server(rec_engine, port=status_port)
     app.logger.info(
-        "Recorder status HTTP on 0.0.0.0:%s (path /status)", status_port
+        "Recorder status HTTP on 0.0.0.0:%s (/status, /metrics)", status_port
     )
 
     app.logger.info("Recording service started and supervising FFmpeg processes")

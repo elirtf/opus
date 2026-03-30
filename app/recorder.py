@@ -267,6 +267,12 @@ class RecordingEngine:
                     continue
 
                 rt = time.time() - p["started_at"]
+                try:
+                    from app.ops_metrics import recorder_ffmpeg_process_exits_total
+
+                    recorder_ffmpeg_process_exits_total.inc()
+                except Exception:
+                    pass
                 cr = p.get("crashes", 0) + 1
                 p["crashes"] = cr
 
@@ -283,6 +289,12 @@ class RecordingEngine:
                 if cr >= MAX_CRASHES:
                     if cr == MAX_CRASHES:
                         logger.warning("Shelving %s (%d crashes)", name, cr)
+                        try:
+                            from app.ops_metrics import recorder_shelved_incidents_total
+
+                            recorder_shelved_incidents_total.inc()
+                        except Exception:
+                            pass
                     p["shelved"] = True
                     p["retry_at"] = time.time() + SHELVE_RETRY_MIN * 60
                     continue
@@ -366,6 +378,12 @@ class RecordingEngine:
             "shelved": False, "wait_until": None, "retry_at": None,
             "segment_minutes": seg_min,
         }
+        try:
+            from app.ops_metrics import recorder_ffmpeg_launches_total
+
+            recorder_ffmpeg_launches_total.inc()
+        except Exception:
+            pass
         logger.info("Recording: %s PID=%d src=%s", cam.name, proc.pid, src)
 
     def _kill(self, name):
@@ -493,6 +511,12 @@ class RecordingEngine:
                     logger.debug("Insert skip %s: %s", fn, exc)
 
         if added:
+            try:
+                from app.ops_metrics import recordings_segments_registered_total
+
+                recordings_segments_registered_total.inc(added)
+            except Exception:
+                pass
             logger.info("Scan: registered %d new segments", added)
 
     @staticmethod
@@ -743,6 +767,12 @@ class RecordingEngine:
             disk = {"total_gb": round(du.total / 1024**3, 2),
                     "free_gb": free_gb,
                     "percent_used": round(du.used / du.total * 100, 1)}
+            try:
+                from app.ops_metrics import recordings_disk_free_gb
+
+                recordings_disk_free_gb.set(free_gb)
+            except Exception:
+                pass
 
         pressure = self._disk_pressure()
 

@@ -1,10 +1,12 @@
-"""Tiny HTTP JSON /status for the recorder process (API container proxies here)."""
+"""Tiny HTTP JSON /status + Prometheus /metrics for the recorder process."""
 
 from __future__ import annotations
 
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+
+from app.ops_metrics import prometheus_response_body
 
 
 def start_recorder_status_server(engine, host: str = "0.0.0.0", port: int = 5055):
@@ -13,6 +15,18 @@ def start_recorder_status_server(engine, host: str = "0.0.0.0", port: int = 5055
     class _Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             path = self.path.split("?")[0].rstrip("/")
+            if path == "/metrics":
+                try:
+                    body, ctype = prometheus_response_body()
+                except Exception as exc:
+                    body = ("# error %s\n" % exc).encode("utf-8")
+                    ctype = "text/plain; charset=utf-8"
+                self.send_response(200)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
             if path != "/status":
                 self.send_response(404)
                 self.end_headers()

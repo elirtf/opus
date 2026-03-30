@@ -162,6 +162,13 @@ def create_nvr():
         max_channels=max_ch,
     )
     created, skipped, unreachable = import_cameras(nvr)
+    if unreachable:
+        try:
+            from app.ops_metrics import nvr_channel_probe_failures_total
+
+            nvr_channel_probe_failures_total.inc(unreachable)
+        except Exception:
+            pass
     cam_total = Camera.select().where(Camera.nvr == nvr.id).count()
     result = nvr_to_dict(nvr, cam_total, admin=True)
     result["imported"] = created
@@ -233,6 +240,13 @@ def sync_nvr(nvr_id):
         return api_error("NVR not found.", 404)
 
     created, skipped, unreachable = import_cameras(nvr)
+    if unreachable:
+        try:
+            from app.ops_metrics import nvr_channel_probe_failures_total
+
+            nvr_channel_probe_failures_total.inc(unreachable)
+        except Exception:
+            pass
     return api_response(
         {
             "created": created,

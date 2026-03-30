@@ -13,11 +13,60 @@ const SPEEDS = [
   { rate: 0.25,  label: "¼×" },
   { rate: 0.5,   label: "½×" },
   { rate: 1,     label: "1×" },
+  { rate: 1.5,  label: "1.5×" },
   { rate: 2,     label: "2×" },
+  { rate: 3,     label: "3×" },
   { rate: 4,     label: "4×" },
   { rate: 8,     label: "8×" },
   { rate: 16,    label: "16×" },
 ];
+
+/** Fine-tuning for local NVR playback (browser only). */
+const PB_LS = {
+  speed: "opus.playback.speed",
+  autoAdvance: "opus.playback.autoAdvance",
+  frameStepFps: "opus.playback.frameStepFps",
+  preload: "opus.playback.preload",
+};
+
+function readPlaybackSpeed() {
+  try {
+    const v = parseFloat(localStorage.getItem(PB_LS.speed) || "");
+    if (SPEEDS.some((s) => s.rate === v)) return v;
+    if (Number.isFinite(v) && v >= 0.0625 && v <= 16) return v;
+  } catch {
+    /* ignore */
+  }
+  return 1;
+}
+
+function readPlaybackAutoAdvance() {
+  try {
+    return localStorage.getItem(PB_LS.autoAdvance) !== "0";
+  } catch {
+    return true;
+  }
+}
+
+function readFrameStepFps() {
+  try {
+    const v = parseInt(localStorage.getItem(PB_LS.frameStepFps) || "30", 10);
+    if ([24, 25, 30, 50, 60].includes(v)) return v;
+  } catch {
+    /* ignore */
+  }
+  return 30;
+}
+
+function readPreload() {
+  try {
+    const p = localStorage.getItem(PB_LS.preload);
+    if (p === "auto" || p === "metadata" || p === "none") return p;
+  } catch {
+    /* ignore */
+  }
+  return "metadata";
+}
 const fmtSize = (bytes) => {
   if (!bytes) return "0 B";
   if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(1) + " GB";
@@ -83,7 +132,10 @@ export default function RecordingsPage() {
   const [setupStatus, setSetupStatus] = useState(null);
   const [setupDir, setSetupDir] = useState("/recordings");
   const [setupSaving, setSetupSaving] = useState(false);
-  const [speed, setSpeed] = useState(1);
+  const [speed, setSpeed] = useState(readPlaybackSpeed);
+  const [autoAdvance, setAutoAdvance] = useState(readPlaybackAutoAdvance);
+  const [frameStepFps, setFrameStepFps] = useState(readFrameStepFps);
+  const [preloadMode, setPreloadMode] = useState(readPreload);
   const videoRef = useRef(null);
   const [pollError, setPollError] = useState(null);
   /** When set, bulk apply is running for this NVR group key (`standalone` or nvr id string). */
@@ -177,6 +229,44 @@ export default function RecordingsPage() {
   useEffect(() => {
     setPlaying(null);
   }, [tab]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(PB_LS.speed, String(speed));
+    } catch {
+      /* ignore */
+    }
+  }, [speed]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(PB_LS.autoAdvance, autoAdvance ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }, [autoAdvance]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(PB_LS.frameStepFps, String(frameStepFps));
+    } catch {
+      /* ignore */
+    }
+  }, [frameStepFps]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(PB_LS.preload, preloadMode);
+    } catch {
+      /* ignore */
+    }
+  }, [preloadMode]);
+
+  useEffect(() => {
+    if (videoRef.current && playing?.url) {
+      videoRef.current.playbackRate = speed;
+    }
+  }, [playing?.url, speed]);
 
   // ── Load settings ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -338,15 +428,14 @@ export default function RecordingsPage() {
     if (videoRef.current) videoRef.current.playbackRate = newSpeed;
   };
 
-  // Step forward/back one frame (~1/30s per frame)
   const stepFrame = (direction) => {
     if (!videoRef.current) return;
     videoRef.current.pause();
-    videoRef.current.currentTime += direction * (1 / 30);
+    videoRef.current.currentTime += direction * (1 / frameStepFps);
   };
 
   const onVideoEnded = () => {
-    if (!playing || !segments.length) return;
+    if (!autoAdvance || !playing || !segments.length) return;
     const idx = segments.findIndex((s) => s.filename === playing.filename);
     if (idx >= 0 && idx < segments.length - 1) playSeg(segments[idx + 1]);
   };
@@ -616,7 +705,15 @@ export default function RecordingsPage() {
                 {/* Video player */}
                 <div style={S.playerWrap}>
                   {playing ? (
-                    <video ref={videoRef} controls autoPlay onEnded={onVideoEnded} style={S.video}>
+                    <video
+                      ref={videoRef}
+                      controls
+                      autoPlay
+                      playsInline
+                      preload={preloadMode}
+                      onEnded={onVideoEnded}
+                      style={S.video}
+                    >
                       <source src={playing.url} type="video/mp4" />
                     </video>
                   ) : (
@@ -631,30 +728,76 @@ export default function RecordingsPage() {
 
                 {/* Playback speed controls */}
                 {playing && (
-                  <div style={S.speedBar}>
-                    <button
-                      onClick={() => stepFrame(-1)}
-                      style={S.speedFrameBtn}
-                      title="Step back 1 frame"
-                    >◀▮</button>
-                    {SPEEDS.map((s) => (
+                  <>
+                    <div style={S.speedBar}>
                       <button
-                        key={s.rate}
-                        onClick={() => changeSpeed(s.rate)}
-                        style={{
-                          ...S.speedBtn,
-                          ...(speed === s.rate ? S.speedBtnActive : {}),
-                        }}
+                        type="button"
+                        onClick={() => stepFrame(-1)}
+                        style={S.speedFrameBtn}
+                        title={`Step back 1 frame (~${frameStepFps} fps)`}
                       >
-                        {s.label}
+                        ◀▮
                       </button>
-                    ))}
-                    <button
-                      onClick={() => stepFrame(1)}
-                      style={S.speedFrameBtn}
-                      title="Step forward 1 frame"
-                    >▮▶</button>
-                  </div>
+                      {SPEEDS.map((s) => (
+                        <button
+                          type="button"
+                          key={s.rate}
+                          onClick={() => changeSpeed(s.rate)}
+                          style={{
+                            ...S.speedBtn,
+                            ...(speed === s.rate ? S.speedBtnActive : {}),
+                          }}
+                        >
+                          {s.label}
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => stepFrame(1)}
+                        style={S.speedFrameBtn}
+                        title={`Step forward 1 frame (~${frameStepFps} fps)`}
+                      >
+                        ▮▶
+                      </button>
+                    </div>
+                    <div style={S.playbackPrefs}>
+                      <label style={S.playbackPrefItem}>
+                        <span style={S.playbackPrefLabel}>Frame step</span>
+                        <select
+                          value={frameStepFps}
+                          onChange={(e) => setFrameStepFps(parseInt(e.target.value, 10))}
+                          style={S.playbackSelect}
+                        >
+                          {[24, 25, 30, 50, 60].map((fps) => (
+                            <option key={fps} value={fps}>
+                              {fps} fps
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label style={S.playbackPrefItem}>
+                        <input
+                          type="checkbox"
+                          checked={autoAdvance}
+                          onChange={(e) => setAutoAdvance(e.target.checked)}
+                        />
+                        <span style={{ color: "#cbd5e1", fontSize: 11 }}>Auto-next segment</span>
+                      </label>
+                      <label style={S.playbackPrefItem}>
+                        <span style={S.playbackPrefLabel}>Buffer</span>
+                        <select
+                          value={preloadMode}
+                          onChange={(e) => setPreloadMode(e.target.value)}
+                          style={S.playbackSelect}
+                          title="Metadata = less bandwidth until play; Auto = start buffering earlier"
+                        >
+                          <option value="none">None</option>
+                          <option value="metadata">Metadata</option>
+                          <option value="auto">Auto</option>
+                        </select>
+                      </label>
+                    </div>
+                  </>
                 )}
 
                 {/* Date nav */}
@@ -1282,6 +1425,35 @@ const S = {
     padding: "4px 8px", borderRadius: 4, border: "1px solid #334155",
     background: "#1e293b", color: "#64748b", cursor: "pointer",
     fontSize: 10, fontFamily: "inherit", letterSpacing: -1,
+  },
+  playbackPrefs: {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: "12px 16px",
+    padding: "8px 16px 10px",
+    background: "#0b1120",
+    borderBottom: "1px solid #1e293b",
+    fontSize: 11,
+    color: "#94a3b8",
+  },
+  playbackPrefItem: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    cursor: "pointer",
+    userSelect: "none",
+  },
+  playbackPrefLabel: { color: "#64748b", fontSize: 10, textTransform: "uppercase", letterSpacing: 0.4 },
+  playbackSelect: {
+    padding: "3px 6px",
+    borderRadius: 4,
+    border: "1px solid #334155",
+    background: "#1e293b",
+    color: "#e2e8f0",
+    fontSize: 11,
+    fontFamily: "inherit",
+    cursor: "pointer",
   },
 
   // Date nav

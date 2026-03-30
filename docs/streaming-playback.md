@@ -1,4 +1,4 @@
-# Streaming, playback, and browser behavior (Opus)
+# Streaming, playback, and browser behavior
 
 How **live** and **recorded** video flow in Opus today, and how that compares to common NVR/streaming patterns.
 

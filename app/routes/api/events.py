@@ -5,7 +5,7 @@ Event clips API (motion / future AI) — files live under RECORDINGS_DIR/clips/<
 import os
 from datetime import datetime
 
-from flask import Blueprint, request, send_from_directory
+from flask import Blueprint, request
 from flask_login import current_user
 
 from app.config import get_recordings_dir
@@ -16,6 +16,7 @@ from app.routes.api.utils import (
     login_required_api,
     accessible_camera_names,
     to_iso,
+    serve_mp4_file,
 )
 
 bp = Blueprint("api_events", __name__, url_prefix="/api/events")
@@ -163,23 +164,5 @@ def events_timeline():
 @bp.route("/<camera_name>/<filename>", methods=["GET"])
 @login_required_api
 def serve_event_clip(camera_name, filename):
-    if ".." in camera_name or ".." in filename:
-        return api_error("Invalid path.", 400)
-    if not filename.endswith(".mp4"):
-        return api_error("Invalid file type.", 400)
-
-    allowed = accessible_camera_names(current_user)
-    if allowed is not None and camera_name not in allowed:
-        return api_error("Access denied.", 403)
-
-    clip_dir = os.path.join(get_recordings_dir(), "clips", camera_name)
-    filepath = os.path.join(clip_dir, filename)
-    if not os.path.exists(filepath):
-        return api_error("Clip not found.", 404)
-
-    return send_from_directory(
-        clip_dir,
-        filename,
-        as_attachment=False,
-        mimetype="video/mp4",
-    )
+    clips_dir = os.path.join(get_recordings_dir(), "clips")
+    return serve_mp4_file(clips_dir, camera_name, filename)

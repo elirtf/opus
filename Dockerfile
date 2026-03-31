@@ -34,5 +34,8 @@ ENV FLASK_ENV=production
 
 EXPOSE 5000
 
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+    CMD curl -fsS http://127.0.0.1:5000/healthz || exit 1
+
 ENTRYPOINT ["/docker-entrypoint-opus.sh"]
 CMD ["python", "run.py"]

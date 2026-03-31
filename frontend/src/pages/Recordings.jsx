@@ -3,6 +3,7 @@ import { useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { compareCamerasByDisplayName, naturalCompare } from "../utils/naturalCompare";
 import { apiFetch, withOrigin } from "../api/client";
+import { useToast, ToastList } from "../components/Toast";
 
 // ── API helpers ──────────────────────────────────────────────────────────────
 const api = (url, opts = {}) => apiFetch(url, opts);
@@ -128,7 +129,7 @@ export default function RecordingsPage() {
   const [storageStats, setStorageStats] = useState(null);
   const [settings, setSettings] = useState(null);
   const [saving, setSaving] = useState(false);
-  const [toast, setToast] = useState(null);
+  const toast = useToast();
   const [search, setSearch] = useState("");
   const [setupStatus, setSetupStatus] = useState(null);
   const [setupDir, setSetupDir] = useState("/recordings");
@@ -143,9 +144,9 @@ export default function RecordingsPage() {
   const [bulkApplyingKey, setBulkApplyingKey] = useState(null);
 
   const showToast = useCallback((msg, ok = true) => {
-    setToast({ msg, ok });
-    setTimeout(() => setToast(null), 3000);
-  }, []);
+    if (ok) toast.success(msg);
+    else toast.error(msg);
+  }, [toast]);
 
   const isOriginalAdmin = setupStatus?.is_original_admin ?? false;
 
@@ -157,11 +158,18 @@ export default function RecordingsPage() {
 
     if (camParam) {
       setSelectedCam(camParam);
+      // Auto-switch tab based on recording policy once cameras are loaded
+      const cam = cameras.find((c) => c.name === camParam);
+      if (cam && tab !== "settings") {
+        const wantsEvents =
+          cam.recording_enabled && cam.recording_policy === "events_only";
+        setTab(wantsEvents ? "events" : "playback");
+      }
     }
     if (dateParam) {
       setDate(dateParam);
     }
-  }, [location.search]);
+  }, [location.search, cameras, tab]);
 
   // ── Check setup status on mount ─────────────────────────────────────────
   useEffect(() => {
@@ -471,17 +479,17 @@ export default function RecordingsPage() {
       c.recording_policy === "events_only"
   ).length;
 
-  /** Pick a camera; auto-switch to Event clips if it's motion-only. */
-  const selectCamera = (cam) => {
-    setSelectedCam(cam.name);
-    const isMotionOnly =
-      cam.recording_enabled && cam.recording_policy === "events_only";
-    if (isMotionOnly && tab !== "settings") {
-      setTab("events");
-    } else if (!isMotionOnly && tab === "events") {
-      setTab("playback");
-    }
-  };
+  /** Pick a camera; auto-switch to Event clips if it's motion-only, Playback otherwise. */
+  const selectCamera = useCallback(
+    (cam) => {
+      setSelectedCam(cam.name);
+      if (tab === "settings") return;
+      const wantsEvents =
+        cam.recording_enabled && cam.recording_policy === "events_only";
+      setTab(wantsEvents ? "events" : "playback");
+    },
+    [tab],
+  );
 
   const shiftDate = (days) => {
     const d = new Date(date + "T00:00:00");
@@ -573,11 +581,7 @@ export default function RecordingsPage() {
   // ═══════════════════════════════════════════════════════════════════════════
   return (
     <div style={S.page}>
-      {toast && (
-        <div style={{ ...S.toast, background: toast.ok ? "#059669" : "#dc2626" }}>
-          {toast.msg}
-        </div>
-      )}
+      <ToastList toasts={toast.toasts} onDismiss={toast.dismiss} />
       {pollError && (
         <div
           style={{
@@ -1338,12 +1342,7 @@ const S = {
     fontSize: 13, fontWeight: 500, fontFamily: "inherit",
   },
   tabActive: { background: "#1e293b", color: "#f8fafc" },
-  toast: {
-    position: "fixed", top: 16, right: 16, zIndex: 999,
-    padding: "10px 18px", borderRadius: 8, color: "#fff",
-    fontSize: 13, fontWeight: 500, boxShadow: "0 4px 20px rgba(0,0,0,0.4)",
-    fontFamily: "'JetBrains Mono', monospace",
-  },
+  // (toast styling is now handled by the shared ToastList component)
 
   // Setup
   setupWrap: {

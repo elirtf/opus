@@ -11,8 +11,7 @@ Settings hierarchy: DB settings > env vars > defaults
 
 import os
 from flask import Blueprint, request
-from flask_login import current_user
-from app.routes.api.utils import api_response, api_error, login_required_api, admin_required
+from app.routes.api.utils import api_response, api_error, login_required_api, admin_required, is_original_admin
 from app.database import db
 
 bp = Blueprint("api_recording_settings", __name__, url_prefix="/api/recordings/settings")
@@ -70,13 +69,6 @@ def set_setting(key, value):
     )
 
 
-def _is_original_admin():
-    return (
-            current_user.is_authenticated
-            and current_user.is_admin
-            and current_user.id == 1
-    )
-
 
 # ── Setup status ──────────────────────────────────────────────────────────────
 
@@ -88,7 +80,7 @@ def setup_status():
     complete = get_setting("setup_complete", "false") == "true"
     return api_response({
         "setup_complete":    complete,
-        "is_original_admin": _is_original_admin(),
+        "is_original_admin": is_original_admin(),
         "recordings_dir":    get_setting("recordings_dir", "/recordings"),
     })
 
@@ -102,7 +94,7 @@ def initial_setup():
     First-run setup — only the original admin can complete this.
     Body: { "recordings_dir": "/recordings" }
     """
-    if not _is_original_admin():
+    if not is_original_admin():
         return api_error("Only the original administrator can configure recording setup.", 403)
 
     data = request.get_json(silent=True) or {}
@@ -141,7 +133,7 @@ def get_settings():
     except: settings["stagger_seconds"] = 2
 
     settings["setup_complete"]    = settings.get("setup_complete", "false") == "true"
-    settings["is_original_admin"] = _is_original_admin()
+    settings["is_original_admin"] = is_original_admin()
 
     return api_response(settings)
 
@@ -152,7 +144,7 @@ def get_settings():
 @login_required_api
 def update_settings():
     """Only the original administrator can update recording settings."""
-    if not _is_original_admin():
+    if not is_original_admin():
         return api_error("Only the original administrator can change recording settings.", 403)
 
     data = request.get_json(silent=True) or {}
@@ -236,7 +228,7 @@ def _sync_env_vars():
 @login_required_api
 def bulk_toggle_recording():
     """Only the original administrator can bulk-toggle recording."""
-    if not _is_original_admin():
+    if not is_original_admin():
         return api_error("Only the original administrator can change recording settings.", 403)
 
     data = request.get_json(silent=True) or {}
@@ -286,7 +278,7 @@ def bulk_toggle_recording():
 @bp.route("/engine/restart", methods=["POST"])
 @login_required_api
 def restart_engine():
-    if not _is_original_admin():
+    if not is_original_admin():
         return api_error("Only the original administrator can restart the recording engine.", 403)
     try:
         from app.recorder import engine

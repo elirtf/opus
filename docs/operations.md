@@ -1,40 +1,4 @@
-# Operations: metrics, alerts, backup, and DR
-
-## Prometheus-style metrics
-
-Opus exposes the [Prometheus text exposition format](https://prometheus.io/docs/instrumenting/exposition_formats/) on **three** HTTP endpoints (one per process — each has its own metric registry):
-
-| Endpoint | Process | Examples |
-| -------- | ------- | -------- |
-| `GET http://opus:5000/metrics` | API (Flask) | `opus_nvr_channel_probe_failures_total` |
-| `GET http://recorder:5055/metrics` | Recorder | `opus_recordings_segments_registered_total`, `opus_recorder_ffmpeg_*`, `opus_recordings_disk_free_gigabytes` |
-| `GET http://processor:5056/metrics` | Processor | `opus_processor_clips_*`, `opus_processor_last_tick_unixtime` |
-
-Outside Docker, use your hostnames/ports (e.g. `http://127.0.0.1:5000/metrics`).
-
-**Optional auth:** set `METRICS_TOKEN` on the API container. Then `GET /metrics` requires `Authorization: Bearer <token>` or `?token=<token>`.
-
-**Example Prometheus `scrape_configs`:**
-
-```yaml
-scrape_configs:
-  - job_name: opus-api
-    static_configs:
-      - targets: ["opus:5000"]
-    metrics_path: /metrics
-  - job_name: opus-recorder
-    static_configs:
-      - targets: ["recorder:5055"]
-    metrics_path: /metrics
-  - job_name: opus-processor
-    static_configs:
-      - targets: ["processor:5056"]
-    metrics_path: /metrics
-```
-
-Use metric names (e.g. `rate(opus_recordings_segments_registered_total[5m])`) in Grafana or Alertmanager rules to replace rough “tier table” sizing with data from **your** cameras and host.
-
----
+# Operations: alerts, backup, and DR
 
 ## Webhook alerting (API process)
 
@@ -43,17 +7,33 @@ When `ALERT_WEBHOOK_URL` is set on the **opus** (API) container, a background th
 1. **Disk** — free space or used % on the filesystem that hosts `RECORDINGS_DIR` (same path the app uses).
 2. **Recorder shelved** — `RECORDER_INTERNAL_STATUS_URL` returns `shelved_count > 0` (FFmpeg writers stopped after repeated crashes).
 3. **Processor stuck** — `PROCESSOR_INTERNAL_STATUS_URL` shows `engine_running` but no tick for longer than `ALERT_PROCESSOR_STUCK_SECONDS` (default scales with poll interval).
+4. **Camera stream offline** — go2rtc reports no active producer for an **active** camera’s health stream (same `-main` / `-sub` pairing rules as the dashboard). Alerts on a transition from online to offline, with cooldown per camera.
 
-Each alert is sent as **JSON POST** to `ALERT_WEBHOOK_URL`. Payload shape:
+Each alert is sent as **JSON POST** to `ALERT_WEBHOOK_URL` with `Content-Type: application/json`. Payload shape:
 
 ```json
 {
   "source": "opus",
-  "alert": "disk_low | recorder_shelved | processor_stuck",
-  "severity": "warning | critical",
+  "alert": "disk_low | recorder_shelved | processor_stuck | camera_offline | camera_online",
+  "severity": "warning | critical | info",
   "detail": { }
 }
 ```
+
+**`camera_offline` / `camera_online` detail** (v1):
+
+```json
+{
+  "camera_name": "site-ch1-main",
+  "display_name": "Front door",
+  "stream_key": "site-ch1-sub",
+  "nvr_id": 1,
+  "nvr_name": "Warehouse",
+  "online": false
+}
+```
+
+`camera_online` is only sent when `ALERT_CAMERA_ONLINE_ENABLED` is enabled (see below).
 
 **Environment variables (API):**
 
@@ -67,8 +47,17 @@ Each alert is sent as **JSON POST** to `ALERT_WEBHOOK_URL`. Payload shape:
 | `RECORDER_INTERNAL_STATUS_URL` | e.g. `http://recorder:5055/status`. |
 | `PROCESSOR_INTERNAL_STATUS_URL` | e.g. `http://processor:5056/status`. |
 | `ALERT_PROCESSOR_STUCK_SECONDS` | Override default stuck detection window. |
+| `ALERT_CAMERA_OFFLINE_ENABLED` | If `0` / `false` / `off`, skip camera stream checks. Default: on. |
+| `ALERT_CAMERA_ONLINE_ENABLED` | If `1` / `true` / `on`, also POST when a camera recovers. Default: off. |
 
 Email/SMTP is **not** built in; point `ALERT_WEBHOOK_URL` at a bridge (e.g. Apprise, n8n, or your own forwarder) if you need mail or Slack.
+
+### Mobile push (v1)
+
+Opus does not ship FCM/APNs. It POSTs **application/json** to `ALERT_WEBHOOK_URL`. Most push apps expect plain text or their own JSON, so use a **short relay**:
+
+- **[ntfy](https://ntfy.sh)** — Subscribe to a topic in the ntfy app. Run something between Opus and ntfy (e.g. [n8n](https://n8n.io) Webhook → HTTP Request) that maps Opus fields into ntfy’s [HTTP API](https://docs.ntfy.sh/publish/) (e.g. `Title` / `Priority` headers and a text body such as `camera_offline: warehouse-ch1-main`).
+- **Pushover, Telegram, email, Slack** — **[Apprise](https://github.com/caronc/apprise)** can listen for HTTP and forward to many providers; configure it to read Opus’s `alert` and `detail` and format the message your way.
 
 ---
 

@@ -174,12 +174,6 @@ class ProcessingEngine:
 
         ts = time.time()
         self._last_tick_ts = ts
-        try:
-            from app.ops_metrics import processor_last_tick_unixtime
-
-            processor_last_tick_unixtime.set(ts)
-        except Exception:
-            pass
 
         if get_setting("setup_complete", "false") != "true":
             return
@@ -207,12 +201,6 @@ class ProcessingEngine:
                 return cam, self._detector.detect_motion(src_motion, stream_key=cam.name)
             except Exception:
                 logger.exception("detector failed: %s", cam.name)
-                try:
-                    from app.ops_metrics import processor_detector_errors_total
-
-                    processor_detector_errors_total.inc()
-                except Exception:
-                    pass
                 return cam, False
 
         workers = min(MOTION_MAX_CONCURRENT, len(eligible))
@@ -269,40 +257,27 @@ class ProcessingEngine:
             "-y",
             fp,
         ]
-        def _fail_clip():
-            try:
-                from app.ops_metrics import processor_clips_failed_total
-
-                processor_clips_failed_total.inc()
-            except Exception:
-                pass
-
         try:
             r = subprocess.run(cmd, capture_output=True, timeout=CLIP_SECONDS + 60)
         except subprocess.TimeoutExpired:
             logger.warning("clip ffmpeg timeout: %s", cam.name)
-            _fail_clip()
             return None
         except Exception:
             logger.exception("clip ffmpeg failed: %s", cam.name)
-            _fail_clip()
             return None
         if r.returncode != 0:
             err = (r.stderr or b"").decode(errors="replace")[-200:]
             logger.warning("clip ffmpeg rc=%s %s", r.returncode, err)
-            _fail_clip()
             return None
         try:
             sz = os.path.getsize(fp)
         except OSError:
-            _fail_clip()
             return None
         if sz < 10240:
             try:
                 os.remove(fp)
             except OSError:
                 pass
-            _fail_clip()
             return None
         started = datetime.now()
         RecordingEvent.create(
@@ -318,12 +293,6 @@ class ProcessingEngine:
             recording_id=None,
             status="complete",
         )
-        try:
-            from app.ops_metrics import processor_clips_written_total
-
-            processor_clips_written_total.inc()
-        except Exception:
-            pass
         return True
 
     def get_status(self):

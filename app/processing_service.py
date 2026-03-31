@@ -33,7 +33,7 @@ def main():
     )
     status_port = int(os.environ.get("PROCESSOR_STATUS_PORT", "5056"))
     start_processor_status_server(eng, port=status_port)
-    app.logger.info("Processor status HTTP on 0.0.0.0:%s (/status, /metrics)", status_port)
+    app.logger.info("Processor status HTTP on 0.0.0.0:%s (/status)", status_port)
     try:
         while True:
             time.sleep(3600)

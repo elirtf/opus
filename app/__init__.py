@@ -132,21 +132,6 @@ def create_app():
         except IntegrityError:
             pass
 
-    # ── Prometheus metrics (API process: NVR probe counters) ─────────────────
-    @app.route("/metrics")
-    def prometheus_metrics():
-        from flask import Response, request
-
-        token = os.environ.get("METRICS_TOKEN", "").strip()
-        if token:
-            auth = request.headers.get("Authorization", "") or ""
-            if auth != "Bearer %s" % token and request.args.get("token") != token:
-                return Response("Forbidden", status=403)
-        from app.ops_metrics import prometheus_response_body
-
-        body, ctype = prometheus_response_body()
-        return Response(body, mimetype=ctype)
-
     from app.ops_alerts import start_ops_alerts_thread
 
     start_ops_alerts_thread(app)

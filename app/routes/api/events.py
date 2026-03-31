@@ -17,6 +17,8 @@ from app.routes.api.utils import (
     accessible_camera_names,
     to_iso,
     serve_mp4_file,
+    parse_timeline_params,
+    to_hms,
 )
 
 bp = Blueprint("api_events", __name__, url_prefix="/api/events")
@@ -98,29 +100,10 @@ def list_events():
 @login_required_api
 def events_timeline():
     """Same shape as recordings timeline for UI reuse: one day per camera."""
-    from datetime import timedelta
-
-    camera_names = request.args.getlist("camera")
-    date_str = request.args.get("date")
-    if not camera_names:
-        return api_error("At least one 'camera' query param is required.", 400)
-
-    allowed = accessible_camera_names(current_user)
-    if allowed is not None:
-        camera_names = [c for c in camera_names if c in allowed]
-        if not camera_names:
-            return api_error("Access denied to the requested cameras.", 403)
-
-    if date_str:
-        try:
-            target_date = datetime.fromisoformat(date_str).date()
-        except ValueError:
-            return api_error("Invalid 'date' format.", 400)
-    else:
-        target_date = datetime.now().date()
-
-    day_start = datetime.combine(target_date, datetime.min.time())
-    day_end = day_start + timedelta(days=1)
+    result = parse_timeline_params()
+    if not isinstance(result, tuple):
+        return result
+    camera_names, target_date, day_start, day_end = result
 
     evs = (
         RecordingEvent.select()
@@ -132,32 +115,19 @@ def events_timeline():
         )
         .order_by(RecordingEvent.started_at.asc())
     )
+
     cameras = {name: [] for name in camera_names}
     for ev in evs:
-        st = ev.started_at
-        if isinstance(st, str):
-            start_hms = st.split("T")[-1].split(" ")[-1][:8]
-        else:
-            start_hms = st.strftime("%H:%M:%S") if st else None
-        et = ev.ended_at
-        if et:
-            if isinstance(et, str):
-                end_hms = et.split("T")[-1].split(" ")[-1][:8]
-            else:
-                end_hms = et.strftime("%H:%M:%S")
-        else:
-            end_hms = None
-        cameras.setdefault(ev.camera_name, []).append(
-            {
-                "id": ev.id,
-                "start": start_hms,
-                "end": end_hms,
-                "filename": ev.filename,
-                "size_mb": round(ev.file_size / (1024 * 1024), 1),
-                "duration": ev.duration_seconds,
-                "reason": ev.reason,
-            }
-        )
+        cameras.setdefault(ev.camera_name, []).append({
+            "id": ev.id,
+            "start": to_hms(ev.started_at),
+            "end": to_hms(ev.ended_at),
+            "filename": ev.filename,
+            "size_mb": round(ev.file_size / (1024 * 1024), 1),
+            "duration": ev.duration_seconds,
+            "reason": ev.reason,
+        })
+
     return api_response({"date": target_date.isoformat(), "cameras": cameras})
 
 

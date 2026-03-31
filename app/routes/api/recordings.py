@@ -14,7 +14,7 @@ Key improvements over the original:
 
 import os
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime
 from flask import Blueprint, request, current_app
 from flask_login import current_user
 from app.config import get_recordings_dir
@@ -27,6 +27,8 @@ from app.routes.api.utils import (
     accessible_camera_names,
     to_iso,
     serve_mp4_file,
+    parse_timeline_params,
+    to_hms,
 )
 
 bp = Blueprint("api_recordings", __name__, url_prefix="/api/recordings")
@@ -154,50 +156,18 @@ def list_recordings():
 @login_required_api
 def timeline():
     """
-    Returns a compact timeline of recording availability for one or more cameras.
+    Compact timeline of recording availability for one or more cameras.
     Designed for the playback UI timeline scrubber.
 
     Query params:
       camera  — camera name (required, can repeat for multiple cameras)
       date    — ISO date string, e.g. "2024-01-15" (default: today)
-
-    Returns: {
-      "date": "2024-01-15",
-      "cameras": {
-        "warehouse-ch1-main": [
-          {"start": "08:00:00", "end": "08:15:00", "filename": "...", "id": 1},
-          {"start": "08:15:00", "end": "08:30:00", "filename": "...", "id": 2},
-          ...
-        ]
-      }
-    }
     """
-    camera_names = request.args.getlist("camera")
-    date_str     = request.args.get("date")
+    result = parse_timeline_params()
+    if not isinstance(result, tuple):
+        return result
+    camera_names, target_date, day_start, day_end = result
 
-    if not camera_names:
-        return api_error("At least one 'camera' query param is required.", 400)
-
-    # Access control
-    allowed_cameras = _get_allowed_camera_names()
-    if allowed_cameras is not None:
-        camera_names = [c for c in camera_names if c in allowed_cameras]
-        if not camera_names:
-            return api_error("Access denied to the requested cameras.", 403)
-
-    # Parse date
-    if date_str:
-        try:
-            target_date = datetime.fromisoformat(date_str).date()
-        except ValueError:
-            return api_error("Invalid 'date' format. Use ISO 8601 (YYYY-MM-DD).", 400)
-    else:
-        target_date = datetime.now().date()
-
-    day_start = datetime.combine(target_date, datetime.min.time())
-    day_end   = day_start + timedelta(days=1)
-
-    # Query recordings for the day
     recs = (
         Recording.select()
         .where(
@@ -209,44 +179,18 @@ def timeline():
         .order_by(Recording.started_at.asc())
     )
 
-    # Group by camera
     cameras = {name: [] for name in camera_names}
     for rec in recs:
-        # started_at/ended_at may be strings (from raw SQL inserts) or datetimes
-        start_str = None
-        if rec.started_at:
-            if isinstance(rec.started_at, str):
-                # "2024-01-15 08:00:00" or "2024-01-15T08:00:00"
-                try:
-                    start_str = rec.started_at.split("T")[-1].split(" ")[-1][:8]
-                except Exception:
-                    start_str = rec.started_at
-            else:
-                start_str = rec.started_at.strftime("%H:%M:%S")
-
-        end_str = None
-        if rec.ended_at:
-            if isinstance(rec.ended_at, str):
-                try:
-                    end_str = rec.ended_at.split("T")[-1].split(" ")[-1][:8]
-                except Exception:
-                    end_str = rec.ended_at
-            else:
-                end_str = rec.ended_at.strftime("%H:%M:%S")
-
         cameras.setdefault(rec.camera_name, []).append({
             "id":       rec.id,
-            "start":    start_str,
-            "end":      end_str,
+            "start":    to_hms(rec.started_at),
+            "end":      to_hms(rec.ended_at),
             "filename": rec.filename,
             "size_mb":  round(rec.file_size / (1024 * 1024), 1),
             "duration": rec.duration_seconds,
         })
 
-    return api_response({
-        "date":    target_date.isoformat(),
-        "cameras": cameras,
-    })
+    return api_response({"date": target_date.isoformat(), "cameras": cameras})
 
 
 # ── Available dates (for date picker) ────────────────────────────────────────

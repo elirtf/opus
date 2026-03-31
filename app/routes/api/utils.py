@@ -1,6 +1,6 @@
 import os
 from functools import wraps
-from flask import jsonify
+from flask import jsonify, send_from_directory
 from flask_login import current_user
 
 
@@ -136,3 +136,24 @@ def env_bool(name: str, default: bool = False) -> bool:
     if s == "":
         return default
     return s in ("1", "true", "yes", "on")
+
+
+def serve_mp4_file(base_dir: str, camera_name: str, filename: str):
+    """
+    Shared handler for serving .mp4 files with path-traversal guard and access control.
+    Returns a Flask response or an api_error tuple.
+    """
+    if ".." in camera_name or ".." in filename:
+        return api_error("Invalid path.", 400)
+    if not filename.endswith(".mp4"):
+        return api_error("Invalid file type.", 400)
+
+    allowed = accessible_camera_names(current_user)
+    if allowed is not None and camera_name not in allowed:
+        return api_error("Access denied.", 403)
+
+    file_dir = os.path.join(base_dir, camera_name)
+    if not os.path.isfile(os.path.join(file_dir, filename)):
+        return api_error("File not found.", 404)
+
+    return send_from_directory(file_dir, filename, as_attachment=False, mimetype="video/mp4")

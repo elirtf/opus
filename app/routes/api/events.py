@@ -8,6 +8,7 @@ from datetime import datetime
 from flask import Blueprint, request, send_from_directory
 from flask_login import current_user
 
+from app.config import get_recordings_dir
 from app.models import RecordingEvent
 from app.routes.api.utils import (
     api_response,
@@ -18,8 +19,6 @@ from app.routes.api.utils import (
 )
 
 bp = Blueprint("api_events", __name__, url_prefix="/api/events")
-
-RECORDINGS_DIR = os.environ.get("RECORDINGS_DIR", "/recordings")
 
 
 def event_to_dict(ev: RecordingEvent) -> dict:
@@ -173,7 +172,7 @@ def serve_event_clip(camera_name, filename):
     if allowed is not None and camera_name not in allowed:
         return api_error("Access denied.", 403)
 
-    clip_dir = os.path.join(RECORDINGS_DIR, "clips", camera_name)
+    clip_dir = os.path.join(get_recordings_dir(), "clips", camera_name)
     filepath = os.path.join(clip_dir, filename)
     if not os.path.exists(filepath):
         return api_error("Clip not found.", 404)

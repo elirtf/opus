@@ -1,5 +1,5 @@
 # ── Stage 1: Build React frontend ──
-FROM node:20-alpine AS frontend
+FROM node:20.19-alpine AS frontend
 WORKDIR /frontend
 COPY frontend/package*.json ./
 RUN npm ci
@@ -8,7 +8,7 @@ RUN npm run build
 
 
 # ── Stage 2: Python backend ──
-FROM python:3.12-slim
+FROM python:3.12-slim-bookworm
 
 WORKDIR /app
 

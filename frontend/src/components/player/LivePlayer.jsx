@@ -118,6 +118,11 @@ function HlsVideo({ src, cameraName, nativeControls = true }) {
       const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: true,
+        liveSyncDurationCount: 1,
+        liveMaxLatencyDurationCount: 3,
+        maxBufferLength: 4,
+        maxMaxBufferLength: 8,
+        backBufferLength: 0,
       });
       hlsRef.current = hls;
       hls.loadSource(src);

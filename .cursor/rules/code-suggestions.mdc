@@ -1,5 +1,5 @@
 ---
-description: Ensure the assistant applies suggested code directly in files and includes simple explanatory comments when helpful
+description: 
 alwaysApply: true
 ---
 
@@ -9,6 +9,7 @@ alwaysApply: true
   - Edit the actual project files directly, rather than only showing snippets.
   - Clearly identify which file is being changed and which area (function, class, or block) is affected.
   - Prefer small, focused patches so it is easy to review what changed.
+  - Be organized
 
 - For code clarity, the assistant should:
   - Add brief, simple comments where intent or behavior may not be obvious from the code alone.
@@ -18,4 +19,3 @@ alwaysApply: true
 - When showing code in responses:
   - Use references tied to specific files and line ranges whenever possible.
   - Only include longer code blocks when they are necessary to understand the change.
-

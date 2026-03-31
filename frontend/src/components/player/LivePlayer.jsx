@@ -3,11 +3,21 @@ import Hls from "hls.js";
 import { withOrigin } from "../../api/client";
 
 /**
- * Prefer HLS on phones/tablets — Safari plays native HLS; others use hls.js (MSE).
- * MSE via go2rtc iframe is less reliable on some mobile browsers.
+ * Prefer HLS when:
+ *  - Touch/tablet device (Safari plays native HLS; hls.js uses MSE elsewhere)
+ *  - Safari on any platform — Safari's MSE path frequently produces green/corrupt
+ *    frames for common H.264 profiles and H.265 streams. Native HLS is rock-solid.
+ *  - Narrow viewport (< 1024px)
  */
+const isSafari = (() => {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent;
+  return /^((?!chrome|android).)*safari/i.test(ua);
+})();
+
 export function shouldPreferHlsForDevice() {
   if (typeof window === "undefined") return false;
+  if (isSafari) return true;
   if (window.matchMedia("(pointer: coarse)").matches) return true;
   if (window.matchMedia("(max-width: 1024px)").matches) return true;
   return false;

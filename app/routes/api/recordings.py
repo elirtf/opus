@@ -15,7 +15,7 @@ Key improvements over the original:
 import os
 import requests
 from datetime import datetime, timedelta
-from flask import Blueprint, request, current_app, send_from_directory
+from flask import Blueprint, request, current_app
 from flask_login import current_user
 from app.config import get_recordings_dir
 from app.models import Recording, Camera
@@ -26,6 +26,7 @@ from app.routes.api.utils import (
     admin_required,
     accessible_camera_names,
     to_iso,
+    serve_mp4_file,
 )
 
 bp = Blueprint("api_recordings", __name__, url_prefix="/api/recordings")
@@ -314,28 +315,7 @@ def available_dates():
 @login_required_api
 def serve_recording(camera_name, filename):
     """Serve a recording file for download or in-browser playback."""
-    # Sanitize — prevent path traversal
-    if ".." in camera_name or ".." in filename:
-        return api_error("Invalid path.", 400)
-    if not filename.endswith(".mp4"):
-        return api_error("Invalid file type.", 400)
-
-    # Access control — resolve camera to its NVR
-    allowed_cameras = _get_allowed_camera_names()
-    if allowed_cameras is not None and camera_name not in allowed_cameras:
-        return api_error("Access denied.", 403)
-
-    cam_dir = os.path.join(get_recordings_dir(), camera_name)
-    filepath = os.path.join(cam_dir, filename)
-    if not os.path.isfile(filepath):
-        return api_error("Recording not found.", 404)
-
-    return send_from_directory(
-        cam_dir,
-        filename,
-        as_attachment=False,  # allows in-browser playback via <video> tag
-        mimetype="video/mp4",
-    )
+    return serve_mp4_file(get_recordings_dir(), camera_name, filename)
 
 
 # ── Delete a recording ───────────────────────────────────────────────────────

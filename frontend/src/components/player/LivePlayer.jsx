@@ -1,23 +1,17 @@
-import { useMemo, useEffect, useRef, useState } from "react";
+import { useMemo, useEffect, useRef, useState, useCallback } from "react";
 import Hls from "hls.js";
 import { withOrigin } from "../../api/client";
 
 /**
- * Prefer HLS when:
- *  - Touch/tablet device (Safari plays native HLS; hls.js uses MSE elsewhere)
- *  - Safari on any platform — Safari's MSE path frequently produces green/corrupt
- *    frames for common H.264 profiles and H.265 streams. Native HLS is rock-solid.
- *  - Narrow viewport (< 1024px)
+ * Prefer HLS only on touch / narrow-viewport devices.
+ * Safari desktop stays on MSE iframe — Safari's MSE works fine for H.264
+ * and avoids the go2rtc HLS endpoint which creates one server-side FFmpeg
+ * process per consumer. Forcing all Safari to HLS caused runaway process
+ * creation (thousands of ffmpeg processes) when segments failed and the
+ * native HLS player retried aggressively.
  */
-const isSafari = (() => {
-  if (typeof navigator === "undefined") return false;
-  const ua = navigator.userAgent;
-  return /^((?!chrome|android).)*safari/i.test(ua);
-})();
-
 export function shouldPreferHlsForDevice() {
   if (typeof window === "undefined") return false;
-  if (isSafari) return true;
   if (window.matchMedia("(pointer: coarse)").matches) return true;
   if (window.matchMedia("(max-width: 1024px)").matches) return true;
   return false;
@@ -30,26 +24,22 @@ function resolveMode(playbackMode) {
   return playbackMode;
 }
 
+const MAX_HLS_RETRIES = 2;
+const RETRY_DELAY_MS = 3000;
+
 /**
  * LivePlayer
- * - `cameraName`: stream name in go2rtc (e.g. "FrontDoor-main")
- * - `enabled`: when false, player stays idle (used for lazy-loading in grids)
- * - `nativeVideoControls`: HLS path only — false hides Safari/Chrome’s big play + timeline on small tiles.
- *
- * Uses go2rtc `stream.html` in an iframe for mse/webrtc, or HLS (native video + hls.js).
- * HLS URL: `/go2rtc/api/stream.m3u8?src=...` (proxied like stream.html).
+ * - Uses go2rtc `stream.html` iframe for MSE/WebRTC (desktop).
+ * - Falls back to HLS (<video> + hls.js / native) on touch/narrow devices.
+ * - `nativeVideoControls` (HLS path only): false hides browser play/timeline chrome.
  */
 export default function LivePlayer({
   cameraName,
-  /** Optional go2rtc stream key from API (`live_view_stream_name`); overrides name/sub heuristic. */
   streamName: streamNameProp,
   enabled = true,
   className = "",
-  /** Use -sub for *-main when `streamName` is not provided (lower bitrate). */
   preferSubStream = true,
-  /** `auto` picks HLS on coarse pointer / narrow viewports; `mse` for tiles on desktop. */
   playbackMode = "auto",
-  /** Show browser default &lt;video&gt; controls (timeline, play). Prefer false on dashboard tiles. */
   nativeVideoControls = true,
 }) {
   const mode = resolveMode(playbackMode);
@@ -104,13 +94,25 @@ export default function LivePlayer({
 function HlsVideo({ src, cameraName, nativeControls = true }) {
   const videoRef = useRef(null);
   const hlsRef = useRef(null);
+  const retryCount = useRef(0);
+  const retryTimer = useRef(null);
   const [err, setErr] = useState(null);
+
+  const cleanup = useCallback(() => {
+    clearTimeout(retryTimer.current);
+    retryTimer.current = null;
+    if (hlsRef.current) {
+      hlsRef.current.destroy();
+      hlsRef.current = null;
+    }
+  }, []);
 
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !src) return;
 
     setErr(null);
+    retryCount.current = 0;
     video.controls = nativeControls;
     video.playsInline = true;
     video.setAttribute("playsinline", "");
@@ -124,7 +126,10 @@ function HlsVideo({ src, cameraName, nativeControls = true }) {
 
     let cancelled = false;
 
-    if (Hls.isSupported()) {
+    function startHlsJs() {
+      cleanup();
+      if (cancelled) return;
+
       const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: true,
@@ -137,40 +142,78 @@ function HlsVideo({ src, cameraName, nativeControls = true }) {
       hlsRef.current = hls;
       hls.loadSource(src);
       hls.attachMedia(video);
+
       hls.on(Hls.Events.ERROR, (_, data) => {
         if (cancelled) return;
-        if (data.fatal) {
-          setErr(data.type === "networkError" ? "Network error" : "Playback error");
+        if (!data.fatal) return;
+
+        hls.destroy();
+        hlsRef.current = null;
+
+        if (retryCount.current < MAX_HLS_RETRIES) {
+          retryCount.current++;
+          retryTimer.current = setTimeout(() => {
+            if (!cancelled) startHlsJs();
+          }, RETRY_DELAY_MS);
+        } else {
+          setErr("Stream unavailable");
         }
       });
+
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         if (cancelled) return;
+        retryCount.current = 0;
         video.play().catch(() => {});
       });
-    } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+    }
+
+    function startNativeHls() {
+      if (cancelled) return;
       video.src = src;
+
+      const onError = () => {
+        if (cancelled) return;
+        video.removeAttribute("src");
+        video.load();
+
+        if (retryCount.current < MAX_HLS_RETRIES) {
+          retryCount.current++;
+          retryTimer.current = setTimeout(() => {
+            if (!cancelled) startNativeHls();
+          }, RETRY_DELAY_MS);
+        } else {
+          setErr("Stream unavailable");
+        }
+      };
+
+      video.addEventListener("error", onError, { once: true });
       video.addEventListener(
         "loadedmetadata",
         () => {
           if (cancelled) return;
+          video.removeEventListener("error", onError);
+          retryCount.current = 0;
           video.play().catch(() => {});
         },
         { once: true },
       );
+    }
+
+    if (Hls.isSupported()) {
+      startHlsJs();
+    } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+      startNativeHls();
     } else {
       setErr("HLS not supported in this browser");
     }
 
     return () => {
       cancelled = true;
-      if (hlsRef.current) {
-        hlsRef.current.destroy();
-        hlsRef.current = null;
-      }
+      cleanup();
       video.removeAttribute("src");
       video.load();
     };
-  }, [src, nativeControls]);
+  }, [src, nativeControls, cleanup]);
 
   return (
     <>

@@ -16,6 +16,7 @@ import logging
 from datetime import datetime, timedelta
 
 from app.ffmpeg_config import get_video_pipeline_summary
+from app.routes.api.utils import env_bool
 
 logger = logging.getLogger("opus.recorder")
 
@@ -36,24 +37,9 @@ STAGGER_DELAY        = float(os.environ.get("RECORDING_STAGGER_SECONDS", "2"))
 EVENTS_ONLY_BUFFER_HOURS = int(os.environ.get("EVENTS_ONLY_BUFFER_HOURS", "48"))
 
 
-def _env_opt_in(name: str, default: bool = False) -> bool:
-    """
-    True only when env is explicitly 1/true/yes/on.
-    Avoids accidental enable from typos or unknown values (older code used opt-out logic where
-    almost any string turned segment recording on for events_only cameras).
-    """
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    s = str(raw).strip().lower()
-    if s == "":
-        return default
-    return s in ("1", "true", "yes", "on")
-
-
 # When True, events_only cameras get 24/7 FFmpeg segment recording (rolling buffer up to EVENTS_ONLY_BUFFER_HOURS).
 # When False (default), events_only does not run segment recording — only motion clips from the processor.
-EVENTS_ONLY_RECORD_SEGMENTS = _env_opt_in("EVENTS_ONLY_RECORD_SEGMENTS", False)
+EVENTS_ONLY_RECORD_SEGMENTS = env_bool("EVENTS_ONLY_RECORD_SEGMENTS", False)
 
 
 def _norm_recording_policy(cam) -> str:

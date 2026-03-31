@@ -12,6 +12,8 @@ Env (API / opus container):
   RECORDER_INTERNAL_STATUS_URL   — same as recordings API (e.g. http://recorder:5055/status)
   PROCESSOR_INTERNAL_STATUS_URL  — processor /status (e.g. http://processor:5056/status)
   ALERT_PROCESSOR_STUCK_SECONDS   — no tick for this long → stuck (default max(180, 5 * PROCESSING_POLL_SECONDS) inferred from status)
+  ALERT_CAMERA_OFFLINE_ENABLED    — if 0/false/off, skip camera stream checks (default: on)
+  ALERT_CAMERA_ONLINE_ENABLED     — if 1/true/on, also alert when a camera recovers (default: off)
 """
 
 from __future__ import annotations
@@ -24,9 +26,18 @@ import time
 
 import requests
 
+from app.services.camera_stream_health import (
+    camera_online_from_health_map,
+    fetch_stream_online_map,
+    health_lookup_stream_name,
+)
+
 logger = logging.getLogger("opus.alerts")
 
 _last_fired: dict[str, float] = {}
+
+# Per-camera last known online bool for transition detection (not persisted).
+_camera_prev_online: dict[str, bool | None] = {}
 
 
 def _cooldown_ok(key: str, cooldown: float) -> bool:
@@ -36,6 +47,13 @@ def _cooldown_ok(key: str, cooldown: float) -> bool:
         return False
     _last_fired[key] = now
     return True
+
+
+def _env_truthy(name: str, default: bool = True) -> bool:
+    v = (os.environ.get(name) or "").strip().lower()
+    if not v:
+        return default
+    return v in ("1", "true", "yes", "on")
 
 
 def _post_webhook(url: str, payload: dict) -> None:
@@ -174,6 +192,86 @@ def _check_processor_stuck(webhook: str, cooldown: float) -> None:
     )
 
 
+def _check_camera_streams(app, webhook: str, cooldown: float) -> None:
+    if not _env_truthy("ALERT_CAMERA_OFFLINE_ENABLED", True):
+        return
+    go2rtc = (app.config.get("GO2RTC_URL") or os.environ.get("GO2RTC_URL") or "").strip()
+    if not go2rtc:
+        return
+    health_map = fetch_stream_online_map(go2rtc)
+    if health_map is None:
+        return
+    online_alerts = _env_truthy("ALERT_CAMERA_ONLINE_ENABLED", False)
+
+    from app.models import Camera, NVR
+
+    nvr_map = {n.id: n for n in NVR.select()}
+    rows = list(Camera.select().where(Camera.active == True))
+
+    global _camera_prev_online
+    for cam in rows:
+        raw = camera_online_from_health_map(cam.name, health_map)
+        cur_bool = bool(raw) if raw is not None else False
+        stream_key = health_lookup_stream_name(cam.name)
+        prev = _camera_prev_online.get(cam.name)
+
+        if prev is None:
+            _camera_prev_online[cam.name] = cur_bool
+            continue
+
+        nvr = nvr_map.get(cam.nvr) if cam.nvr else None
+        nvr_name = nvr.display_name if nvr else None
+
+        if prev is True and not cur_bool:
+            if _cooldown_ok(f"camera_offline:{cam.name}", cooldown):
+                _post_webhook(
+                    webhook,
+                    {
+                        "source": "opus",
+                        "alert": "camera_offline",
+                        "severity": "warning",
+                        "detail": {
+                            "camera_name": cam.name,
+                            "display_name": cam.display_name,
+                            "stream_key": stream_key,
+                            "nvr_id": cam.nvr,
+                            "nvr_name": nvr_name,
+                            "online": False,
+                        },
+                    },
+                )
+                logger.warning("Alert camera_offline: %s (webhook sent)", cam.name)
+            _camera_prev_online[cam.name] = False
+        elif online_alerts and prev is False and cur_bool:
+            if _cooldown_ok(f"camera_online:{cam.name}", cooldown):
+                _post_webhook(
+                    webhook,
+                    {
+                        "source": "opus",
+                        "alert": "camera_online",
+                        "severity": "info",
+                        "detail": {
+                            "camera_name": cam.name,
+                            "display_name": cam.display_name,
+                            "stream_key": stream_key,
+                            "nvr_id": cam.nvr,
+                            "nvr_name": nvr_name,
+                            "online": True,
+                        },
+                    },
+                )
+                logger.info("Alert camera_online: %s (webhook sent)", cam.name)
+            _camera_prev_online[cam.name] = True
+        else:
+            _camera_prev_online[cam.name] = cur_bool
+
+    # Drop state for deleted cameras
+    kept = {c.name for c in rows}
+    for name in list(_camera_prev_online.keys()):
+        if name not in kept:
+            del _camera_prev_online[name]
+
+
 def ops_alert_loop(app):
     webhook = (os.environ.get("ALERT_WEBHOOK_URL") or "").strip()
     if not webhook:
@@ -186,6 +284,7 @@ def ops_alert_loop(app):
             time.sleep(interval)
             with app.app_context():
                 _check_disk(app, webhook, cooldown)
+                _check_camera_streams(app, webhook, cooldown)
             _check_recorder_shelved(webhook, cooldown)
             _check_processor_stuck(webhook, cooldown)
         except Exception:

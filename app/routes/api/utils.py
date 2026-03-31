@@ -157,3 +157,48 @@ def serve_mp4_file(base_dir: str, camera_name: str, filename: str):
         return api_error("File not found.", 404)
 
     return send_from_directory(file_dir, filename, as_attachment=False, mimetype="video/mp4")
+
+
+def parse_timeline_params():
+    """
+    Shared param parsing for /timeline endpoints.
+    Returns (camera_names, target_date, day_start, day_end) or a Flask error response.
+    """
+    from datetime import datetime, timedelta
+    from flask import request as req
+
+    camera_names = req.args.getlist("camera")
+    date_str = req.args.get("date")
+
+    if not camera_names:
+        return api_error("At least one 'camera' query param is required.", 400)
+
+    allowed = accessible_camera_names(current_user)
+    if allowed is not None:
+        camera_names = [c for c in camera_names if c in allowed]
+        if not camera_names:
+            return api_error("Access denied to the requested cameras.", 403)
+
+    if date_str:
+        try:
+            target_date = datetime.fromisoformat(date_str).date()
+        except ValueError:
+            return api_error("Invalid 'date' format. Use ISO 8601 (YYYY-MM-DD).", 400)
+    else:
+        target_date = datetime.now().date()
+
+    day_start = datetime.combine(target_date, datetime.min.time())
+    day_end = day_start + timedelta(days=1)
+    return camera_names, target_date, day_start, day_end
+
+
+def to_hms(val) -> str | None:
+    """Extract HH:MM:SS from a datetime or ISO string (handles mixed types from Peewee/SQLite)."""
+    if val is None:
+        return None
+    if isinstance(val, str):
+        try:
+            return val.split("T")[-1].split(" ")[-1][:8]
+        except Exception:
+            return val
+    return val.strftime("%H:%M:%S")

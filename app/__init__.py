@@ -136,6 +136,10 @@ def create_app():
 
     start_ops_alerts_thread(app)
 
+    @app.get("/healthz")
+    def healthz():
+        return {"status": "ok"}, 200
+
     # ── SPA catch-all ────────────────────────────────────────────────────────
     register_spa_catchall(app)
 

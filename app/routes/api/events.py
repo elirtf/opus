@@ -14,19 +14,12 @@ from app.routes.api.utils import (
     api_error,
     login_required_api,
     accessible_camera_names,
+    to_iso,
 )
 
 bp = Blueprint("api_events", __name__, url_prefix="/api/events")
 
 RECORDINGS_DIR = os.environ.get("RECORDINGS_DIR", "/recordings")
-
-
-def _to_iso(val):
-    if val is None:
-        return None
-    if isinstance(val, str):
-        return val
-    return val.isoformat()
 
 
 def event_to_dict(ev: RecordingEvent) -> dict:
@@ -36,8 +29,8 @@ def event_to_dict(ev: RecordingEvent) -> dict:
         "filename": ev.filename,
         "file_size": ev.file_size,
         "size_mb": round(ev.file_size / (1024 * 1024), 1),
-        "started_at": _to_iso(ev.started_at),
-        "ended_at": _to_iso(ev.ended_at),
+        "started_at": to_iso(ev.started_at),
+        "ended_at": to_iso(ev.ended_at),
         "duration_seconds": ev.duration_seconds,
         "reason": ev.reason,
         "download_url": f"/api/events/{ev.camera_name}/{ev.filename}",

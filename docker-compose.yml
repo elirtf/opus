@@ -34,10 +34,9 @@ services:
       - RECORDER_INTERNAL_STATUS_URL=http://recorder:5055/status
       # Processor status for dashboard + alerting (see docs/operations.md)
       - PROCESSOR_INTERNAL_STATUS_URL=http://processor:5056/status
-      # Optional: POST JSON alerts — disk low, recorder shelved, processor stuck (see docs/operations.md)
+      # Optional: POST JSON alerts — disk, recorder shelved, processor stuck, camera offline (see docs/operations.md)
       # - ALERT_WEBHOOK_URL=https://example.com/hooks/opus
       # - ALERT_DISK_FREE_GB_THRESHOLD=5
-      # - METRICS_TOKEN=secret   # if set, GET /metrics requires Authorization: Bearer <token>
       # ── Recording Engine Configuration ── Override any of these in your .env file
       - RECORDINGS_DIR=/recordings
       # Which cameras record is controlled in the UI (per-camera toggles + first-run setup), not env.

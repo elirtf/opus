@@ -114,7 +114,7 @@ svg {
 /* Smooth UI transitions */
 /* ------------------------------------------------ */
 
-* {
+*:not(video):not(iframe):not(canvas) {
   transition-property: color, background-color, border-color, opacity;
   transition-duration: 150ms;
 }
@@ -123,10 +123,10 @@ svg {
 /* Accessibility: respect system preference */
 /* ------------------------------------------------ */
 
-/* Dashboard tiles: belt-and-suspenders if a browser still paints controls chrome */
-video.live-tile-video::-webkit-media-controls,
-video.live-tile-video::-webkit-media-controls-enclosure {
-  display: none !important;
+/* Dashboard tiles: gentle hide of any residual controls chrome (Safari) */
+video.live-tile-video::-webkit-media-controls-panel {
+  opacity: 0;
+  pointer-events: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -18,6 +18,7 @@ from app.routes.api.utils import (
     camera_catalog_allowed,
     live_playback_allowed,
     accessible_camera_names,
+    is_original_admin,
 )
 
 RECORDING_POLICIES = frozenset({"off", "continuous", "events_only"})
@@ -79,18 +80,6 @@ def _sync_policy_and_enabled(cam: Camera):
         cam.recording_enabled = False
     else:
         cam.recording_enabled = True
-
-
-def _is_original_admin():
-    """
-    Restrict certain sensitive operations to the original admin account.
-    (Matches your existing design: admin + user id == 1)
-    """
-    return (
-            current_user.is_authenticated
-            and current_user.is_admin
-            and current_user.id == 1
-    )
 
 
 def _fetch_go2rtc_streams():
@@ -262,7 +251,7 @@ def update_camera(cam_id):
         cam.rtsp_substream_url = (v or "").strip() or None
 
     if "recording_policy" in data:
-        if not _is_original_admin():
+        if not is_original_admin():
             return api_error("Only the original administrator can change recording settings.", 403)
         pol = (data.get("recording_policy") or "").strip().lower()
         if pol not in RECORDING_POLICIES:
@@ -274,7 +263,7 @@ def update_camera(cam_id):
 
     # Recording enable/disable is restricted and only allowed on main streams.
     if "recording_enabled" in data:
-        if not _is_original_admin():
+        if not is_original_admin():
             return api_error("Only the original administrator can change recording settings.", 403)
         if bool(data["recording_enabled"]) and not cam.name.endswith("-main"):
             return api_error("Recording is only supported on main streams.", 400)
@@ -299,7 +288,7 @@ def update_camera(cam_id):
 @login_required_api
 def toggle_recording(cam_id):
     """Enable/disable recording for a camera (restricted)."""
-    if not _is_original_admin():
+    if not is_original_admin():
         return api_error("Only the original administrator can change recording settings.", 403)
 
     try:

@@ -1,3 +1,4 @@
+import os
 from functools import wraps
 from flask import jsonify
 from flask_login import current_user
@@ -104,3 +105,34 @@ def recordings_view_allowed(f):
             return api_error("Recorded footage access is disabled for this account.", 403)
         return f(*args, **kwargs)
     return decorated
+
+
+# ── Shared helpers ────────────────────────────────────────────────────────────
+
+def to_iso(val):
+    """Convert a value to ISO string — handles both datetime objects and raw strings."""
+    if val is None:
+        return None
+    if isinstance(val, str):
+        return val
+    return val.isoformat()
+
+
+def is_original_admin() -> bool:
+    """True only for the first admin account (id == 1). Used to gate sensitive settings."""
+    return (
+        current_user.is_authenticated
+        and current_user.is_admin
+        and current_user.id == 1
+    )
+
+
+def env_bool(name: str, default: bool = False) -> bool:
+    """Parse an env var as boolean (1/true/yes/on). Missing or empty → *default*."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    s = str(raw).strip().lower()
+    if s == "":
+        return default
+    return s in ("1", "true", "yes", "on")

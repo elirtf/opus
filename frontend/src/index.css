@@ -118,3 +118,25 @@ svg {
   transition-property: color, background-color, border-color, opacity;
   transition-duration: 150ms;
 }
+
+/* ------------------------------------------------ */
+/* Accessibility: respect system preference */
+/* ------------------------------------------------ */
+
+/* Dashboard tiles: belt-and-suspenders if a browser still paints controls chrome */
+video.live-tile-video::-webkit-media-controls,
+video.live-tile-video::-webkit-media-controls-enclosure {
+  display: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+}

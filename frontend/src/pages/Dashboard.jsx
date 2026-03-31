@@ -1,12 +1,29 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate, Link, useSearchParams } from 'react-router-dom'
 import { camerasApi } from '../api/cameras'
 import { healthApi } from '../api/health'
 import Spinner from '../components/Spinner'
+import LivePlayer from '../components/player/LivePlayer'
 import { useAuth } from '../context/AuthContext'
+import { compareCamerasByDisplayName } from '../utils/naturalCompare'
 
 const GRID_SIZES = [3, 4, 6]
 const HEALTH_POLL_MS = 30000
+
+/** 'all' | 'problems' | 'offlineFirst' */
+const VIEW_MODES = [
+  { id: 'all', label: 'All' },
+  { id: 'problems', label: 'Problems' },
+  { id: 'offlineFirst', label: 'Offline first' },
+]
+
+function liveStreamName(cam) {
+  return cam.live_view_stream_name || cam.name.replace('-main', '-sub')
+}
+
+function isProblemCamera(health, cam) {
+  return health[liveStreamName(cam)] !== true
+}
 
 function siteHeadingFromCameras(cams) {
   if (!cams.length) return 'Site'
@@ -28,18 +45,6 @@ function StatusDot({ online }) {
 }
 
 function CameraTile({ cam, streamName, online, onClick }) {
-  const iframeRef = useRef(null)
-
-  useEffect(() => {
-    return () => { if (iframeRef.current) iframeRef.current.src = '' }
-  }, [])
-
-  useEffect(() => {
-    if (iframeRef.current) {
-      iframeRef.current.src = `/go2rtc/stream.html?src=${streamName}&mode=mse`
-    }
-  }, [streamName])
-
   const label = cam.display_name
     .replace(' — ', ' ')
     .replace(' Main', '')
@@ -58,8 +63,8 @@ function CameraTile({ cam, streamName, online, onClick }) {
       )}
 
       {/* Hover overlay — fullscreen hint */}
-      <div className="absolute inset-0 z-10 bg-black/0 group-hover:bg-black/30 transition-colors duration-150 flex items-center justify-center">
-        <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-150 bg-black/60 rounded-full p-2">
+      <div className="absolute inset-0 z-10 bg-black/0 group-hover:bg-black/30 transition-colors duration-150 motion-reduce:transition-none motion-reduce:duration-0 flex items-center justify-center">
+        <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-150 motion-reduce:transition-none motion-reduce:duration-0 bg-black/60 rounded-full p-2">
           <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round"
               d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
@@ -67,14 +72,19 @@ function CameraTile({ cam, streamName, online, onClick }) {
         </div>
       </div>
 
-      {/* Stream */}
+      {/* Stream — HLS on touch / narrow viewports, MSE iframe on desktop */}
       <div className="relative w-full" style={{ paddingBottom: '56.25%' }}>
-        <iframe
-          ref={iframeRef}
-          allow="autoplay; fullscreen"
-          scrolling="no"
-          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 0, overflow: 'hidden' }}
-        />
+        <div className="absolute inset-0 overflow-hidden">
+          {/* HLS tiles: go2rtc stream.html always enables native video controls (bad on Mac/Safari). */}
+          <LivePlayer
+            cameraName={cam.name}
+            streamName={streamName}
+            enabled={true}
+            playbackMode="hls"
+            nativeVideoControls={false}
+            className="h-full"
+          />
+        </div>
       </div>
 
       {/* Label bar */}
@@ -85,7 +95,10 @@ function CameraTile({ cam, streamName, online, onClick }) {
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {cam.recording_enabled && (
-            <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" title="Recording" />
+            <span
+              className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse motion-reduce:animate-none"
+              title="Recording"
+            />
           )}
           {cam.nvr_name && (
             <span className="text-xs text-gray-500 truncate max-w-[6rem]">{cam.nvr_name}</span>
@@ -106,10 +119,15 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [cols, setCols]       = useState(3)
   const [page, setPage]       = useState(0)
+  const [viewMode, setViewMode] = useState('all')
 
   useEffect(() => {
     camerasApi.list()
-      .then(all => setCameras(all.filter(c => c.active && c.is_main)))
+      .then((all) =>
+        setCameras(
+          all.filter((c) => c.active && c.is_main).sort(compareCamerasByDisplayName)
+        )
+      )
       .catch(console.error)
       .finally(() => setLoading(false))
   }, [])
@@ -125,7 +143,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     setPage(0)
-  }, [siteKey])
+  }, [siteKey, viewMode])
 
   const filtered =
     siteKey == null || siteKey === ''
@@ -134,13 +152,25 @@ export default function Dashboard() {
 
   const siteHeading = siteKey ? siteHeadingFromCameras(filtered) : null
 
+  let gridCameras = [...filtered]
+  if (viewMode === 'problems') {
+    gridCameras = gridCameras.filter((c) => isProblemCamera(health, c))
+  }
+  if (viewMode === 'offlineFirst') {
+    gridCameras.sort((a, b) => {
+      const ra = health[liveStreamName(a)] === true ? 2 : health[liveStreamName(a)] === false ? 0 : 1
+      const rb = health[liveStreamName(b)] === true ? 2 : health[liveStreamName(b)] === false ? 0 : 1
+      if (ra !== rb) return ra - rb
+      return compareCamerasByDisplayName(a, b)
+    })
+  } else {
+    gridCameras.sort(compareCamerasByDisplayName)
+  }
+
   const perPage    = cols * cols
-  const pages      = Math.max(1, Math.ceil(filtered.length / perPage))
-  const slice      = filtered.slice(page * perPage, (page + 1) * perPage)
-  const onlineCount = filtered.filter((c) => {
-    const liveName = c.live_view_stream_name || c.name.replace('-main', '-sub')
-    return health[liveName] === true
-  }).length
+  const pages      = Math.max(1, Math.ceil(gridCameras.length / perPage))
+  const slice      = gridCameras.slice(page * perPage, (page + 1) * perPage)
+  const onlineCount = filtered.filter((c) => health[liveStreamName(c)] === true).length
 
   function handleSetCols(newCols) {
     setCols(newCols)
@@ -154,7 +184,7 @@ export default function Dashboard() {
   return (
     <div className="flex flex-col h-full">
       {/* Toolbar */}
-      <div className="px-4 py-2 flex items-center justify-between border-b border-gray-800 bg-gray-900 shrink-0">
+      <div className="px-4 py-2 flex flex-wrap items-center justify-between gap-y-2 border-b border-gray-800 bg-gray-900 shrink-0">
         <div className="flex items-center gap-3 min-w-0">
           <span className="text-sm font-semibold text-white shrink-0">Live View</span>
           {siteHeading && (
@@ -173,10 +203,38 @@ export default function Dashboard() {
             <span className="text-xs text-gray-500 shrink-0">
               <span className={onlineCount > 0 ? 'text-green-400' : 'text-gray-500'}>{onlineCount}</span>
               <span className="text-gray-600">/{filtered.length} online</span>
+              {viewMode === 'problems' && (
+                <span className="text-gray-600"> · {gridCameras.length} in filter</span>
+              )}
             </span>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 justify-end">
+          <div
+            className="flex items-center bg-gray-800 rounded-lg p-0.5"
+            role="group"
+            aria-label="Filter by stream status"
+          >
+            {VIEW_MODES.map(({ id, label }) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setViewMode(id)}
+                title={
+                  id === 'problems'
+                    ? 'Show offline or unknown streams only'
+                    : id === 'offlineFirst'
+                      ? 'Sort with offline first, then unknown, then online'
+                      : 'Show all cameras'
+                }
+                className={`px-2 py-1 rounded text-xs font-medium transition-colors motion-reduce:transition-none ${
+                  viewMode === id ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-white'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           {/* Grid size */}
           <div className="flex items-center bg-gray-800 rounded-lg p-0.5">
             {GRID_SIZES.map(s => (
@@ -220,6 +278,21 @@ export default function Dashboard() {
           <p className="text-gray-500 text-sm">The link may be outdated or this site has no main streams.</p>
           <Link to="/" className="text-sm text-indigo-400 hover:text-indigo-300">Show all cameras</Link>
         </div>
+      ) : viewMode === 'problems' && gridCameras.length === 0 && filtered.length > 0 ? (
+        <div className="flex-1 flex flex-col items-center justify-center gap-3 px-4 text-center">
+          <p className="text-gray-300 font-medium">No problem streams</p>
+          <p className="text-gray-500 text-sm max-w-sm">
+            Every camera in this view is online. Switch to <span className="text-gray-400">All</span> or{' '}
+            <span className="text-gray-400">Offline first</span> to see the full grid.
+          </p>
+          <button
+            type="button"
+            onClick={() => setViewMode('all')}
+            className="text-sm text-indigo-400 hover:text-indigo-300"
+          >
+            Show all cameras
+          </button>
+        </div>
       ) : cameras.length === 0 ? (
         <div className="flex-1 flex flex-col items-center justify-center gap-4">
           <div className="w-16 h-16 rounded-2xl bg-gray-800 flex items-center justify-center">
@@ -256,8 +329,8 @@ export default function Dashboard() {
             backgroundColor: '#111827',
           }}
         >
-          {slice.map(cam => {
-            const liveName = cam.live_view_stream_name || cam.name.replace('-main', '-sub')
+          {slice.map((cam) => {
+            const liveName = liveStreamName(cam)
             return (
               <CameraTile
                 key={cam.id}

@@ -16,6 +16,9 @@ export function AuthProvider({ children }) {
   }, [])
 
   async function login(username, password) {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem('opus_bearer_token')
+    }
     const userData = await authApi.login(username, password)
     setUser(userData)
     return userData
@@ -23,6 +26,9 @@ export function AuthProvider({ children }) {
 
   async function logout() {
     await authApi.logout().catch(() => {})
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem('opus_bearer_token')
+    }
     setUser(false)
   }
 

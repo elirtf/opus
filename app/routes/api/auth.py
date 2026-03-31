@@ -1,5 +1,8 @@
+import secrets
+
 from flask import Blueprint, request
 from flask_login import login_user, logout_user, current_user
+from werkzeug.security import generate_password_hash
 from app.models import User
 from app.routes.api.utils import api_response, api_error, login_required_api
 
@@ -52,3 +55,25 @@ def me():
         "can_view_live": getattr(current_user, "can_view_live", True),
         "can_view_recordings": getattr(current_user, "can_view_recordings", True),
     })
+
+
+@bp.route("/token", methods=["POST"])
+@login_required_api
+def create_api_token():
+    """
+    Issue a new API token for the current user (replaces any existing token).
+    The plaintext token is returned once; store it as Bearer for non-cookie clients.
+    """
+    raw = secrets.token_urlsafe(32)
+    current_user.api_token_hash = generate_password_hash(raw)
+    current_user.save()
+    return api_response({"token": raw}, message="API token created. Store it securely; it will not be shown again.")
+
+
+@bp.route("/token", methods=["DELETE"])
+@login_required_api
+def revoke_api_token():
+    """Remove API token for the current user."""
+    current_user.api_token_hash = None
+    current_user.save()
+    return api_response(message="API token revoked.")

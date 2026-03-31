@@ -5,6 +5,11 @@ from flask import Blueprint, request, current_app
 from flask_login import current_user
 
 from app.models import Camera, NVR
+from app.services.camera_stream_health import (
+    camera_online_from_health_map,
+    fetch_stream_online_map,
+    health_lookup_stream_name,
+)
 from app.routes.api.utils import (
     api_response,
     api_error,
@@ -110,12 +115,9 @@ def _get_stream_health_cached():
         return _state_cache["health"]
 
     try:
-        streams = _fetch_go2rtc_streams()
-        health = {}
-        for name, info in streams.items():
-            producers = info.get("producers") or []
-            health[name] = len(producers) > 0
-
+        health = fetch_stream_online_map(current_app.config["GO2RTC_URL"])
+        if health is None:
+            raise RuntimeError("go2rtc unreachable")
         _state_cache["ts"] = now
         _state_cache["health"] = health
         return health
@@ -123,13 +125,6 @@ def _get_stream_health_cached():
         current_app.logger.warning(f"go2rtc health fetch failed: {e}")
         # Don’t blow up the UI—return the last known cache or empty.
         return _state_cache.get("health", {}) or {}
-
-
-def _health_lookup_stream_name(cam_name: str) -> str:
-    """Live tiles treat paired -sub as the health signal for -main streams when both exist."""
-    if cam_name.endswith("-main"):
-        return cam_name.replace("-main", "-sub", 1)
-    return cam_name
 
 
 def _live_view_stream_name(cam, all_camera_names=None):
@@ -159,10 +154,7 @@ def camera_to_dict(cam, nvr_map=None, health_map=None, all_camera_names=None):
 
     online = None
     if health_map is not None:
-        key = _health_lookup_stream_name(cam.name)
-        online = health_map.get(key)
-        if online is None and key != cam.name:
-            online = health_map.get(cam.name)
+        online = camera_online_from_health_map(cam.name, health_map)
 
     sub = getattr(cam, "rtsp_substream_url", None)
     return {
@@ -452,10 +444,7 @@ def camera_status(name: str):
         return api_error("Forbidden.", 403)
 
     health = _get_stream_health_cached()
-    hkey = _health_lookup_stream_name(cam.name)
-    online = health.get(hkey)
-    if online is None and hkey != cam.name:
-        online = health.get(cam.name)
+    online = camera_online_from_health_map(cam.name, health)
 
     name_set = {r.name for r in Camera.select(Camera.name)}
 

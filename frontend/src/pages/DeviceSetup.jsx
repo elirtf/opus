@@ -7,6 +7,7 @@ import Modal from '../components/Modal'
 import ConfirmModal from '../components/ConfirmModal'
 import Spinner from '../components/Spinner'
 import { useToast, ToastList } from '../components/Toast'
+import { compareCamerasByDisplayName } from '../utils/naturalCompare'
 
 const EMPTY_FORM = { name: '', display_name: '', ip_address: '', username: '', password: '', max_channels: 64, active: true }
 
@@ -237,7 +238,7 @@ export default function DeviceSetup() {
     success(`Updated ${cam.display_name}`)
   }
 
-  const mains = cameras.filter(c => c.active && c.is_main).sort((a, b) => a.display_name.localeCompare(b.display_name))
+  const mains = cameras.filter(c => c.active && c.is_main).sort(compareCamerasByDisplayName)
 
   return (
     <div className="max-w-5xl mx-auto px-6 py-6 w-full">

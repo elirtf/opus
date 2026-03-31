@@ -3,6 +3,8 @@ import { useState, useEffect } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { camerasApi } from '../api/cameras'
 import { healthApi } from '../api/health'
+import { compareCamerasByDisplayName } from '../utils/naturalCompare'
+import { mergeNvrOpenState, readSavedNvrOpen, writeSavedNvrOpen } from '../utils/sidebarNvrOpen'
 
 const HEALTH_POLL_MS = 30000
 
@@ -20,7 +22,7 @@ function StatusDot({ online }) {
   )
 }
 
-function NVRGroup({ groupKey, name, cameras, health, isOpen, onToggle, siteFilter }) {
+function NVRGroup({ groupKey, name, cameras, health, isOpen, onToggle, siteFilter, onNavigate }) {
   const online = cameras.filter(c => health[liveStreamKey(c)] === true).length
   const total  = cameras.length
   const keyStr = String(groupKey)
@@ -28,11 +30,12 @@ function NVRGroup({ groupKey, name, cameras, health, isOpen, onToggle, siteFilte
 
   return (
     <div className="mb-1">
-      <div className="flex items-stretch rounded-lg overflow-hidden border border-transparent hover:border-gray-700/80 transition-colors">
+      <div className="flex items-stretch rounded-lg overflow-hidden border border-transparent hover:border-gray-700/80 transition-colors motion-reduce:transition-none">
         <Link
           to={`/?site=${encodeURIComponent(keyStr)}`}
           title="Live view: cameras on this site only"
-          className={`flex-1 flex items-center justify-between gap-2 min-w-0 px-3 py-1.5 text-left transition-colors ${
+          onClick={() => onNavigate?.()}
+          className={`flex-1 flex items-center justify-between gap-2 min-w-0 px-3 py-1.5 text-left transition-colors motion-reduce:transition-none ${
             siteActive
               ? 'bg-indigo-600/30 text-indigo-100'
               : 'text-gray-400 hover:text-white hover:bg-gray-800'
@@ -46,13 +49,13 @@ function NVRGroup({ groupKey, name, cameras, health, isOpen, onToggle, siteFilte
         <button
           type="button"
           onClick={() => onToggle()}
-          className={`shrink-0 px-1.5 flex items-center border-l border-gray-800/80 transition-colors ${
+          className={`shrink-0 px-1.5 flex items-center border-l border-gray-800/80 transition-colors motion-reduce:transition-none ${
             siteActive ? 'bg-indigo-600/20 text-indigo-200' : 'text-gray-500 hover:text-white hover:bg-gray-800'
           }`}
           aria-expanded={isOpen}
           aria-label={isOpen ? 'Collapse camera list' : 'Expand camera list'}
         >
-          <span className={`text-xs transition-transform inline-block ${isOpen ? 'rotate-90' : ''}`}>›</span>
+          <span className={`text-xs transition-transform motion-reduce:transition-none inline-block ${isOpen ? 'rotate-90' : ''}`}>›</span>
         </button>
       </div>
 
@@ -64,6 +67,7 @@ function NVRGroup({ groupKey, name, cameras, health, isOpen, onToggle, siteFilte
               <NavLink
                 key={cam.id}
                 to={`/camera/${cam.name}`}
+                onClick={() => onNavigate?.()}
                 className={({ isActive }) =>
                   `flex items-center gap-2 pl-4 pr-3 py-1.5 rounded-lg text-sm transition-colors truncate ${
                     isActive
@@ -91,7 +95,7 @@ function NVRGroup({ groupKey, name, cameras, health, isOpen, onToggle, siteFilte
   )
 }
 
-export default function Sidebar() {
+export default function Sidebar({ mobileOpen = false, onNavigate }) {
   const { user, logout }      = useAuth()
   const canLive = user?.role === 'admin' || user?.can_view_live !== false
   const canRec  = user?.role === 'admin' || user?.can_view_recordings !== false
@@ -108,12 +112,12 @@ export default function Sidebar() {
       return
     }
     camerasApi.list()
-      .then(all => {
-        const mains = all.filter(c => c.active && c.is_main)
+      .then((all) => {
+        const mains = all.filter((c) => c.active && c.is_main)
         setCameras(mains)
-        const groups = {}
-        mains.forEach(c => { groups[c.nvr_id ?? 'standalone'] = true })
-        setOpen(groups)
+        const groupKeys = [...new Set(mains.map((c) => String(c.nvr_id ?? 'standalone')))]
+        const saved = readSavedNvrOpen()
+        setOpen(mergeNvrOpenState(saved, groupKeys))
       })
       .catch(console.error)
   }, [canLive])
@@ -137,7 +141,17 @@ export default function Sidebar() {
   }
 
   function toggleGroup(key) {
-    setOpen(prev => ({ ...prev, [key]: !prev[key] }))
+    const k = String(key)
+    setOpen((prev) => {
+      const keys = [...new Set(cameras.map((c) => String(c.nvr_id ?? 'standalone')))]
+      const wasOpen = prev[k] ?? true
+      const next = {}
+      for (const gk of keys) {
+        next[gk] = gk === k ? !wasOpen : (prev[gk] ?? true)
+      }
+      writeSavedNvrOpen(next)
+      return next
+    })
   }
 
   const groups = {}
@@ -147,15 +161,22 @@ export default function Sidebar() {
     if (!groups[key]) groups[key] = { label, cameras: [] }
     groups[key].cameras.push(cam)
   })
+  Object.values(groups).forEach((g) => {
+    g.cameras.sort(compareCamerasByDisplayName)
+  })
 
   const onlineCount = cameras.filter(c => health[liveStreamKey(c)] === true).length
 
   return (
-    <aside className="w-56 bg-gray-900 border-r border-gray-800 flex flex-col h-screen shrink-0">
+    <aside
+      className={`w-56 bg-gray-900 border-r border-gray-800 flex flex-col h-screen shrink-0
+        max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-50 max-md:transition-transform max-md:duration-200 ease-out
+        ${mobileOpen ? 'max-md:translate-x-0' : 'max-md:-translate-x-full'}
+        md:relative md:translate-x-0`}
+    >
       {/* Logo */}
       <div className="px-4 py-4 border-b border-gray-800">
-        <NavLink to="/" className="flex items-center gap-2">
-          <span className="text-xl">🎥</span>
+        <NavLink to="/" onClick={() => onNavigate?.()} className="flex items-center">
           <span className="font-bold text-white tracking-wide">Opus NVR</span>
         </NavLink>
         {canLive && (
@@ -171,6 +192,7 @@ export default function Sidebar() {
           <div className="px-3 pt-3">
             <NavLink
               to="/" end
+              onClick={() => onNavigate?.()}
               className={({ isActive }) => {
                 const allSites = isActive && (siteFilter == null || siteFilter === '')
                 return `flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
@@ -195,6 +217,7 @@ export default function Sidebar() {
                 isOpen={open[key] ?? true}
                 onToggle={() => toggleGroup(key)}
                 siteFilter={siteFilter}
+                onNavigate={onNavigate}
               />
             ))}
           </div>
@@ -208,6 +231,7 @@ export default function Sidebar() {
         <div className={`px-3 ${canLive ? 'py-2' : 'pt-3'} border-t border-gray-800`}>
           <NavLink
             to="/recordings"
+            onClick={() => onNavigate?.()}
             className={({ isActive }) =>
               `flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
                 isActive ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-800'
@@ -232,6 +256,7 @@ export default function Sidebar() {
             { to: '/users',      label: 'Users',      icon: <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" /> },
           ].map(({ to, label, icon }) => (
             <NavLink key={to} to={to}
+              onClick={() => onNavigate?.()}
               className={({ isActive }) =>
                 `flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-sm transition-colors ${
                   isActive ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-800'

@@ -1,6 +1,16 @@
-# Streaming, playback, and browser behavior (Opus)
+# Streaming, playback, and browser behavior
 
 How **live** and **recorded** video flow in Opus today, and how that compares to common NVR/streaming patterns.
+
+## Phones and tablets (short version)
+
+- Opus is a **website**: use Safari, Chrome, or another mobile browser the same way you would on a desktop (after you can reach the server from outside the building; see [remote-viewing.md](remote-viewing.md)).
+- For **live** view on **small screens**, the UI often uses **HLS** (standard HTTP video). That tends to behave better on phones and on slower links than some low-level browser paths.
+- **Recorded** footage plays as normal **MP4** files through the same site.
+- **iOS** is picky about autoplay and codecs; **H.264** is the safest choice for the widest phone support.
+- An **optional store app** still shows this same site inside a shell — see [mobile/README](../mobile/README.md).
+
+The sections below are the technical detail for installers and developers.
 
 ## Current Opus stack (anchor)
 
@@ -8,6 +18,7 @@ How **live** and **recorded** video flow in Opus today, and how that compares to
 | Path           | Mechanism                                                                                       |
 | -------------- | ----------------------------------------------------------------------------------------------- |
 | **Live**       | Browser → **nginx** `/go2rtc/` → **go2rtc** (MSE, WebRTC-related paths, etc. per go2rtc config) |
+| **Live (HLS)** | Same proxy — **go2rtc** playlist at `/go2rtc/api/stream.m3u8?src=<stream>` (native Safari; **hls.js** elsewhere). The React UI uses this on coarse-pointer / narrow viewports by default. |
 | **Recordings** | **FFmpeg** segment writer → **MP4** on disk; UI/API serves files (Flask) for playback           |
 
 
@@ -43,14 +54,6 @@ nginx proxies go2rtc under `[/go2rtc/](../nginx/nginx.conf)`. Hardware decode/en
 - **Autoplay:** Often requires user gesture or muted playback; affects auto-starting live tiles.
 - **HLS:** Safari plays **native HLS** without MSE; if you add HLS later, test **native** vs **hls.js** paths separately.
 - **Codecs:** **H.264** is the safe baseline for broad browser support; **HEVC** support is **not** uniform across browsers/OS builds.
-
-## Other NVR Platforms: Frigate vs Blue Iris
-
-**Frigate (public docs / common setup):** Web UI with live views backed by streaming integrations (often **go2rtc** or similar relays); recordings/clips as **files** or API-backed media—browser uses **video elements** and/or **MSE** depending on configuration. Philosophy: lightweight UI, heavy lifting in FFmpeg and sidecar processes.
-
-**Blue Iris (vendor product):** Typically **desktop-first** or embedded web players; exact transport depends on version and settings (often proprietary or direct URL patterns to the BI server). Not reverse-engineered here—treat as “validate in your own lab if comparing UX.”
-
-**Opus alignment:** Same **broad** pattern: **go2rtc for live**, **FFmpeg + MP4** for segments/clips.
 
 ## When to add HLS/DASH
 

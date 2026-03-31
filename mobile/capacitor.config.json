@@ -1,0 +1,12 @@
+{
+  "appId": "com.opus.nvr.viewer",
+  "appName": "Opus Viewer",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https",
+    "cleartext": false
+  },
+  "ios": {
+    "preferredContentMode": "mobile"
+  }
+}

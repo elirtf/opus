@@ -1,0 +1,20 @@
+{
+  "name": "opus-viewer-shell",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Capacitor shell: save your Opus HTTPS URL and open the full web UI in a WebView.",
+  "scripts": {
+    "cap": "cap",
+    "sync": "cap sync",
+    "open:ios": "cap open ios",
+    "open:android": "cap open android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.2.0",
+    "@capacitor/core": "^6.2.0",
+    "@capacitor/ios": "^6.2.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.2.0"
+  }
+}

@@ -70,6 +70,19 @@ Segment FFmpeg arguments follow the same copy-record / RTSP input pattern as [Fr
 
 Documented in [docker-compose.yml](../docker-compose.yml) comments and recorder code.
 
+### Motion / FFmpeg tuning (recorder + processor)
+
+| Variable | Role |
+| -------- | ---- |
+| `FFMPEG_RTSP_THREAD_QUEUE_SIZE` | Larger `-thread_queue_size` before `-i` (try `512`–`1024`) if logs show thread message queue blocking under many cameras. |
+| `MOTION_MAX_CONCURRENT` | **Processor:** parallel OpenCV/RTSP motion checks per tick (default `4`). Raise on many-core hosts; lower on Pi. |
+| `MOTION_ANALYSIS_MAX_WIDTH` | Downscale frames before motion math (default `320`; `0` = full resolution, heavier). |
+| `MOTION_SKIP_FRAMES` | Frames to drop after first grab before compare (default `8`). |
+| `MOTION_DIFF_THRESHOLD` | Mean absdiff threshold for `MOTION_DETECTOR=opencv` (default `5`). |
+| `MOTION_GAUSSIAN_KSIZE` | Odd blur kernel before diff (`5` typical); `0` = off. |
+| `MOTION_DETECTOR` | `opencv` (frame diff), `opencv_mog2` (adaptive background — stronger outdoors, higher CPU), or `stub`. |
+| `MOTION_MOG2_FG_RATIO` / `MOTION_MOG2_HISTORY` / `MOTION_MOG2_VAR_THRESHOLD` | Tune MOG2 sensitivity (see `app/processing/detectors.py` docstring). |
+
 ## Camera count vs hardware tier (order-of-magnitude)
 
 **Not benchmarks**—starting points for design. Measure with `top`, `docker stats`, and recorder status on **your** streams.
@@ -102,4 +115,4 @@ Documented in [docker-compose.yml](../docker-compose.yml) comments and recorder 
 2. `ffprobe -v error -show_entries format=bit_rate -of default=noprint_wrappers=1:nokey=1 <file.mp4>` on a segment.
 3. Under load, watch `iostat -x 1` (disk) and CPU per `ffmpeg` PID.
 
-See also [deployment-profiles.md](deployment-profiles.md) and [streaming-playback.md](streaming-playback.md).
+See also [deployment-profiles.md](deployment-profiles.md), [streaming-playback.md](streaming-playback.md), and [operations.md](operations.md) (ops snapshot, webhook alerts, backup/DR).

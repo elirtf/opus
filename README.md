@@ -66,12 +66,16 @@ cd opus
       # GO2RTC_URL=http://go2rtc:1984 (Default)
       # GO2RTC_RTSP_URL=rtsp://go2rtc:8554 (Default)
       # SECRET_KEY=secret-key
+      # Optional: comma-separated browser origins for split-host UIs (enables flask-cors)
+      # CORS_ORIGINS=https://app.example.com,http://localhost:5173
 
 # 3. Build and start
 docker compose up --build
 ```
 
 The app will be available at **http://localhost**.
+
+You do **not** need Node.js or `npm` on your PC for this — the Docker build installs frontend dependencies and produces the UI inside the image. Run `npm install` / `npm run dev` in `frontend` only when you are **developing or testing the web UI yourself** (especially **mobile**: layout, PWA, live view on a phone). See [docs/DEV_WORKFLOW.md](docs/DEV_WORKFLOW.md) for that optional workflow.
 
 ### Default Login
 
@@ -125,6 +129,9 @@ Opus can record **continuously** (full timeline retention) or in **Events** mode
 | [docs/hosted-ops-outline.md](docs/hosted-ops-outline.md) | Rented-appliance ops outline |
 | [docs/DEV_WORKFLOW.md](docs/DEV_WORKFLOW.md) | Local dev: Windows vs WSL/Linux, Compose vs split loop, Makefile |
 | [docs/mainstream-substream.md](docs/mainstream-substream.md) | Main vs sub streams: recording, motion, live view |
+| [docs/operations.md](docs/operations.md) | Webhook alerts, backup/restore, DR notes |
+| [docs/remote-viewing.md](docs/remote-viewing.md) | Watching Opus from **outside the local network** (HTTPS, VPN, tunnel, or port forward) |
+| [mobile/README.md](mobile/README.md) | Optional **App Store / Play** wrapper around the same Opus website |
 
 ---
 
@@ -134,7 +141,7 @@ Step-by-step commands (PowerShell, env vars, Makefile on WSL): **[docs/DEV_WORKF
 
 **After `git pull`:** run `docker compose up --build -d` so Opus rebuilds from your repo (`docker compose pull` alone only updates pre-built images like nginx/go2rtc, not your app code). The `opus` container syncs the fresh React build into the `static_files` volume on every start so the UI updates without pruning volumes. Do not rely on `docker prune` for routine updates.
 
-**Typical fast loop:** run **go2rtc** with Docker (`docker compose up go2rtc`), run **Flask** (`python run.py`), and run the **Vite** dev server (`cd frontend && npm install && npm run dev`). Set `GO2RTC_URL=http://127.0.0.1:1984` for local Flask so it talks to the published go2rtc port. The frontend proxies `/api` to `localhost:5000` and `/go2rtc` to go2rtc on `localhost:1984` (see `frontend/vite.config.js`). Optional: copy `compose.override.yml.example` to `compose.override.yml` for local compose tweaks (file is gitignored).
+**Typical fast loop** (optional — for **developing the frontend**, including **mobile**; not required if you only use full Docker): run **go2rtc** with Docker (`docker compose up go2rtc`), run **Flask** (`python run.py`), and run the **Vite** dev server (`cd frontend && npm install && npm run dev`). Set `GO2RTC_URL=http://127.0.0.1:1984` for local Flask so it talks to the published go2rtc port. The frontend proxies `/api` to `localhost:5000` and `/go2rtc` to go2rtc on `localhost:1984` (see `frontend/vite.config.js`). Optional: copy `compose.override.yml.example` to `compose.override.yml` for local compose tweaks (file is gitignored).
 
 To run the backend alone:
 

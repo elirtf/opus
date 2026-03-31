@@ -3,9 +3,11 @@ import { useSearchParams } from 'react-router-dom'
 import { healthApi } from '../api/health'
 import { camerasApi } from '../api/cameras'
 import { api } from '../api/client'
+import { authApi } from '../api/auth'
 import Modal from '../components/Modal'
 import Spinner from '../components/Spinner'
 import { useToast, ToastList } from '../components/Toast'
+import { compareByChannelThenName, naturalCompare } from '../utils/naturalCompare'
 
 const TAB_IDS = ['system', 'maintenance', 'cameras']
 
@@ -81,6 +83,78 @@ function SystemPanel({ about, loading, error }) {
             Volume: {disk.used_gb} / {disk.total_gb} GiB used ({disk.free_gb} GiB free)
           </p>
         )}
+      </div>
+    </div>
+  )
+}
+
+function ApiTokenSettings({ onSuccess, onError }) {
+  const [busy, setBusy] = useState(false)
+
+  async function generate() {
+    setBusy(true)
+    try {
+      const data = await authApi.createToken()
+      const token = data?.token
+      if (token) {
+        try {
+          await navigator.clipboard.writeText(token)
+        } catch {
+          /* ignore */
+        }
+        onSuccess(
+          'New API token created (copied to clipboard if permitted). Store it securely; you will not see it again. For browser clients on a different origin than Opus, paste it into localStorage key opus_bearer_token or your client config.'
+        )
+      }
+    } catch (e) {
+      onError(e.message || 'Could not create token')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function revoke() {
+    setBusy(true)
+    try {
+      await authApi.revokeToken()
+      if (typeof localStorage !== 'undefined') {
+        localStorage.removeItem('opus_bearer_token')
+      }
+      onSuccess('API token revoked.')
+    } catch (e) {
+      onError(e.message || 'Could not revoke token')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 mt-6">
+      <h3 className="text-sm font-semibold text-white mb-2">API access (Bearer token)</h3>
+      <p className="text-sm text-gray-400 mb-4">
+        For scripts or extra websites that can’t use normal login cookies, send{' '}
+        <code className="text-gray-300">Authorization: Bearer &lt;token&gt;</code>. If that tool runs on a{' '}
+        <strong className="text-gray-300">different web address</strong> than Opus, an admin must set{' '}
+        <code className="text-gray-300">CORS_ORIGINS</code> on the server — see the <em>Advanced</em> section in{' '}
+        <code className="text-gray-400">docs/remote-viewing.md</code>.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={generate}
+          className="px-3 py-1.5 rounded-lg text-sm bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white"
+        >
+          Generate new token
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={revoke}
+          className="px-3 py-1.5 rounded-lg text-sm border border-gray-600 hover:bg-gray-800 disabled:opacity-50 text-gray-300"
+        >
+          Revoke token
+        </button>
       </div>
     </div>
   )
@@ -267,13 +341,16 @@ function CamerasPanel({ inventory, loading, onEditStreams }) {
     if (!groups[key]) groups[key] = { label, rows: [] }
     groups[key].rows.push(row)
   }
+  for (const g of Object.values(groups)) {
+    g.rows.sort(compareByChannelThenName)
+  }
 
   return (
     <div className="space-y-8">
       <p className="text-sm text-gray-400">
         Per-site stream registry. <strong className="text-gray-300">Online</strong> uses go2rtc producers. Edit RTSP URLs when a camera IP changes; go2rtc is updated automatically.
       </p>
-      {Object.entries(groups).map(([key, g]) => (
+      {Object.entries(groups).sort(([, a], [, b]) => naturalCompare(a.label, b.label)).map(([key, g]) => (
         <div key={key}>
           <h3 className="text-sm font-semibold text-indigo-300 mb-2">{g.label}</h3>
           <div className="overflow-x-auto rounded-xl border border-gray-800">
@@ -479,7 +556,12 @@ export default function Configuration() {
         </div>
       </div>
 
-      {tab === 'system' && <SystemPanel about={about} loading={aboutLoading} error={aboutErr} />}
+      {tab === 'system' && (
+        <>
+          <SystemPanel about={about} loading={aboutLoading} error={aboutErr} />
+          <ApiTokenSettings onSuccess={success} onError={toastError} />
+        </>
+      )}
 
       {tab === 'maintenance' && (
         <MaintenancePanel

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate, Link, useSearchParams } from 'react-router-dom'
 import { camerasApi } from '../api/cameras'
 import { healthApi } from '../api/health'
@@ -7,12 +7,8 @@ import LivePlayer from '../components/player/LivePlayer'
 import { useAuth } from '../context/AuthContext'
 import { compareCamerasByDisplayName } from '../utils/naturalCompare'
 
-const FIXED_COLS = [3, 4, 6]
+const GRID_SIZES = [3, 4, 6]
 const HEALTH_POLL_MS = 30000
-const LABEL_BAR_H = 30
-const GRID_GAP = 2
-/** Tile width threshold: above this, use main stream for higher quality. */
-const MAIN_STREAM_MIN_WIDTH = 640
 
 const VIEW_MODES = [
   { id: 'all', label: 'All' },
@@ -20,14 +16,12 @@ const VIEW_MODES = [
   { id: 'offlineFirst', label: 'Offline first' },
 ]
 
-function liveStreamName(cam, useMain) {
-  if (useMain) return cam.name
+function liveStreamName(cam) {
   return cam.live_view_stream_name || cam.name.replace('-main', '-sub')
 }
 
 function isProblemCamera(health, cam) {
-  const sub = cam.live_view_stream_name || cam.name.replace('-main', '-sub')
-  return health[sub] !== true
+  return health[liveStreamName(cam)] !== true
 }
 
 function siteHeadingFromCameras(cams) {
@@ -37,26 +31,6 @@ function siteHeadingFromCameras(cams) {
   const id = cams[0].nvr_id
   if (id != null && id !== '') return `Site #${id}`
   return 'Standalone'
-}
-
-/**
- * Given a container size and camera count, find the optimal column count
- * so all cameras fit without scrolling, maximising tile size.
- */
-function calcFillCols(containerW, containerH, count) {
-  if (count <= 0 || containerW <= 0 || containerH <= 0) return 1
-  let best = count
-  for (let c = 1; c <= count; c++) {
-    const tileW = (containerW - (c - 1) * GRID_GAP) / c
-    const tileH = tileW * 9 / 16 + LABEL_BAR_H
-    const rows = Math.ceil(count / c)
-    const totalH = rows * tileH + (rows - 1) * GRID_GAP
-    if (totalH <= containerH) {
-      best = c
-      break
-    }
-  }
-  return Math.max(1, Math.min(best, count))
 }
 
 function StatusDot({ online }) {
@@ -69,7 +43,7 @@ function StatusDot({ online }) {
   )
 }
 
-function CameraTile({ cam, streamName, online, onClick, useMainStream }) {
+function CameraTile({ cam, streamName, online, onClick }) {
   const label = cam.display_name
     .replace(' — ', ' ')
     .replace(' Main', '')
@@ -106,7 +80,6 @@ function CameraTile({ cam, streamName, online, onClick, useMainStream }) {
             enabled={true}
             playbackMode="auto"
             nativeVideoControls={false}
-            preferSubStream={!useMainStream}
             className="h-full"
           />
         </div>
@@ -125,9 +98,6 @@ function CameraTile({ cam, streamName, online, onClick, useMainStream }) {
               title="Recording"
             />
           )}
-          {useMainStream && (
-            <span className="text-[10px] text-blue-400 font-medium" title="High quality (main stream)">HD</span>
-          )}
           {cam.nvr_name && (
             <span className="text-xs text-gray-500 truncate max-w-[6rem]">{cam.nvr_name}</span>
           )}
@@ -145,11 +115,9 @@ export default function Dashboard() {
   const [cameras, setCameras] = useState([])
   const [health, setHealth]   = useState({})
   const [loading, setLoading] = useState(true)
-  const [gridMode, setGridMode] = useState('fill') // 'fill' | 3 | 4 | 6
+  const [cols, setCols]       = useState(3)
   const [page, setPage]       = useState(0)
   const [viewMode, setViewMode] = useState('all')
-  const gridRef               = useRef(null)
-  const [gridSize, setGridSize] = useState({ w: 0, h: 0 })
 
   useEffect(() => {
     camerasApi.list()
@@ -171,78 +139,41 @@ export default function Dashboard() {
     return () => clearInterval(interval)
   }, [])
 
-  // Measure grid container for fill mode
-  useEffect(() => {
-    const el = gridRef.current
-    if (!el) return
-    const ro = new ResizeObserver(([entry]) => {
-      const { width, height } = entry.contentRect
-      setGridSize({ w: Math.floor(width), h: Math.floor(height) })
-    })
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [])
-
   useEffect(() => {
     setPage(0)
   }, [siteKey, viewMode])
 
-  const filtered = useMemo(() =>
+  const filtered =
     siteKey == null || siteKey === ''
       ? cameras
-      : cameras.filter((c) => String(c.nvr_id ?? 'standalone') === siteKey),
-    [cameras, siteKey],
-  )
+      : cameras.filter((c) => String(c.nvr_id ?? 'standalone') === siteKey)
 
   const siteHeading = siteKey ? siteHeadingFromCameras(filtered) : null
 
-  const gridCameras = useMemo(() => {
-    let result = [...filtered]
-    if (viewMode === 'problems') {
-      result = result.filter((c) => isProblemCamera(health, c))
-    }
-    if (viewMode === 'offlineFirst') {
-      result.sort((a, b) => {
-        const subA = a.live_view_stream_name || a.name.replace('-main', '-sub')
-        const subB = b.live_view_stream_name || b.name.replace('-main', '-sub')
-        const ra = health[subA] === true ? 2 : health[subA] === false ? 0 : 1
-        const rb = health[subB] === true ? 2 : health[subB] === false ? 0 : 1
-        if (ra !== rb) return ra - rb
-        return compareCamerasByDisplayName(a, b)
-      })
-    } else {
-      result.sort(compareCamerasByDisplayName)
-    }
-    return result
-  }, [filtered, health, viewMode])
+  let gridCameras = [...filtered]
+  if (viewMode === 'problems') {
+    gridCameras = gridCameras.filter((c) => isProblemCamera(health, c))
+  }
+  if (viewMode === 'offlineFirst') {
+    gridCameras.sort((a, b) => {
+      const ra = health[liveStreamName(a)] === true ? 2 : health[liveStreamName(a)] === false ? 0 : 1
+      const rb = health[liveStreamName(b)] === true ? 2 : health[liveStreamName(b)] === false ? 0 : 1
+      if (ra !== rb) return ra - rb
+      return compareCamerasByDisplayName(a, b)
+    })
+  } else {
+    gridCameras.sort(compareCamerasByDisplayName)
+  }
 
-  const isFillMode = gridMode === 'fill'
-  const fillCols = useMemo(
-    () => calcFillCols(gridSize.w, gridSize.h, gridCameras.length),
-    [gridSize.w, gridSize.h, gridCameras.length],
-  )
-  const cols = isFillMode ? fillCols : gridMode
+  const perPage    = cols * cols
+  const pages      = Math.max(1, Math.ceil(gridCameras.length / perPage))
+  const slice      = gridCameras.slice(page * perPage, (page + 1) * perPage)
+  const onlineCount = filtered.filter((c) => health[liveStreamName(c)] === true).length
 
-  // In fill mode show all cameras; in fixed mode paginate
-  const perPage    = isFillMode ? gridCameras.length : cols * cols
-  const pages      = isFillMode ? 1 : Math.max(1, Math.ceil(gridCameras.length / perPage))
-  const slice      = isFillMode ? gridCameras : gridCameras.slice(page * perPage, (page + 1) * perPage)
-
-  // Tile width for main-stream decision
-  const tileWidth = gridSize.w > 0 && cols > 0
-    ? (gridSize.w - (cols - 1) * GRID_GAP) / cols
-    : 0
-  const useMainStream = tileWidth >= MAIN_STREAM_MIN_WIDTH
-
-  const onlineCount = filtered.filter((c) => {
-    const sub = c.live_view_stream_name || c.name.replace('-main', '-sub')
-    return health[sub] === true
-  }).length
-
-  const handleSetCols = useCallback((mode) => {
-    setGridMode(mode)
+  function handleSetCols(newCols) {
+    setCols(newCols)
     setPage(0)
-  }, [])
+  }
 
   if (loading) {
     return <div className="flex-1 flex items-center justify-center"><Spinner className="w-6 h-6" /></div>
@@ -304,23 +235,14 @@ export default function Dashboard() {
             ))}
           </div>
 
-          {/* Grid size: Fill + fixed options */}
+          {/* Grid size */}
           <div className="flex items-center bg-gray-800 rounded-lg p-0.5">
-            <button
-              onClick={() => handleSetCols('fill')}
-              title="Auto-fit all cameras without pagination"
-              className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
-                isFillMode ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-white'
-              }`}
-            >
-              Fill
-            </button>
-            {FIXED_COLS.map(s => (
+            {GRID_SIZES.map(s => (
               <button
                 key={s}
                 onClick={() => handleSetCols(s)}
                 className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
-                  !isFillMode && gridMode === s ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-white'
+                  cols === s ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-white'
                 }`}
               >
                 {s}×
@@ -328,15 +250,8 @@ export default function Dashboard() {
             ))}
           </div>
 
-          {/* Stream quality indicator */}
-          {useMainStream && (
-            <span className="text-[10px] bg-blue-900/50 text-blue-300 border border-blue-700/40 px-1.5 py-0.5 rounded font-medium" title="Tiles are large enough for main stream quality">
-              HD
-            </span>
-          )}
-
-          {/* Pagination — only in fixed-column mode */}
-          {!isFillMode && pages > 1 && (
+          {/* Pagination */}
+          {pages > 1 && (
             <div className="flex items-center gap-1">
               <button
                 onClick={() => setPage(p => Math.max(0, p - 1))}
@@ -405,27 +320,23 @@ export default function Dashboard() {
         </div>
       ) : (
         <div
-          ref={gridRef}
-          className="flex-1 overflow-hidden"
+          className="flex-1"
           style={{
             display: 'grid',
             gridTemplateColumns: `repeat(${cols}, 1fr)`,
             gridAutoRows: 'min-content',
-            gap: `${GRID_GAP}px`,
+            gap: '2px',
             backgroundColor: '#111827',
-            alignContent: 'start',
           }}
         >
           {slice.map((cam) => {
-            const sub = cam.live_view_stream_name || cam.name.replace('-main', '-sub')
-            const streamName = useMainStream ? cam.name : sub
+            const liveName = liveStreamName(cam)
             return (
               <CameraTile
                 key={cam.id}
                 cam={cam}
-                streamName={streamName}
-                online={health[sub]}
-                useMainStream={useMainStream}
+                streamName={liveName}
+                online={health[liveName]}
                 onClick={() => navigate(`/camera/${cam.name}`)}
               />
             )

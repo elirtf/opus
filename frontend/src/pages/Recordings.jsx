@@ -471,6 +471,18 @@ export default function RecordingsPage() {
       c.recording_policy === "events_only"
   ).length;
 
+  /** Pick a camera; auto-switch to Event clips if it's motion-only. */
+  const selectCamera = (cam) => {
+    setSelectedCam(cam.name);
+    const isMotionOnly =
+      cam.recording_enabled && cam.recording_policy === "events_only";
+    if (isMotionOnly && tab !== "settings") {
+      setTab("events");
+    } else if (!isMotionOnly && tab === "events") {
+      setTab("playback");
+    }
+  };
+
   const shiftDate = (days) => {
     const d = new Date(date + "T00:00:00");
     d.setDate(d.getDate() + days);
@@ -659,7 +671,7 @@ export default function RecordingsPage() {
                       <CamItem
                         key={c.id} cam={c}
                         selected={selectedCam === c.name}
-                        onSelect={() => setSelectedCam(c.name)}
+                        onSelect={() => selectCamera(c)}
                         engineStatus={engineStatus}
                       />
                     ))}
@@ -679,7 +691,7 @@ export default function RecordingsPage() {
                       <CamItem
                         key={c.id} cam={c}
                         selected={selectedCam === c.name}
-                        onSelect={() => setSelectedCam(c.name)}
+                        onSelect={() => selectCamera(c)}
                         engineStatus={engineStatus}
                       />
                     ))}

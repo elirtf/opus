@@ -26,6 +26,7 @@ import time
 
 import requests
 
+from app.routes.api.utils import env_bool
 from app.services.camera_stream_health import (
     camera_online_from_health_map,
     fetch_stream_online_map,
@@ -48,12 +49,6 @@ def _cooldown_ok(key: str, cooldown: float) -> bool:
     _last_fired[key] = now
     return True
 
-
-def _env_truthy(name: str, default: bool = True) -> bool:
-    v = (os.environ.get(name) or "").strip().lower()
-    if not v:
-        return default
-    return v in ("1", "true", "yes", "on")
 
 
 def _post_webhook(url: str, payload: dict) -> None:
@@ -193,7 +188,7 @@ def _check_processor_stuck(webhook: str, cooldown: float) -> None:
 
 
 def _check_camera_streams(app, webhook: str, cooldown: float) -> None:
-    if not _env_truthy("ALERT_CAMERA_OFFLINE_ENABLED", True):
+    if not env_bool("ALERT_CAMERA_OFFLINE_ENABLED", True):
         return
     go2rtc = (app.config.get("GO2RTC_URL") or os.environ.get("GO2RTC_URL") or "").strip()
     if not go2rtc:
@@ -201,7 +196,7 @@ def _check_camera_streams(app, webhook: str, cooldown: float) -> None:
     health_map = fetch_stream_online_map(go2rtc)
     if health_map is None:
         return
-    online_alerts = _env_truthy("ALERT_CAMERA_ONLINE_ENABLED", False)
+    online_alerts = env_bool("ALERT_CAMERA_ONLINE_ENABLED", False)
 
     from app.models import Camera, NVR
 

@@ -26,6 +26,7 @@ import time
 
 import requests
 
+from app.config import get_recordings_dir
 from app.routes.api.utils import env_bool
 from app.services.camera_stream_health import (
     camera_online_from_health_map,
@@ -65,7 +66,7 @@ def _check_disk(app, webhook: str, cooldown: float) -> None:
     pct_thr = float(os.environ.get("ALERT_DISK_PERCENT_USED_THRESHOLD") or "0")
     if free_thr <= 0 and pct_thr <= 0:
         return
-    rd = app.config.get("RECORDINGS_DIR") or os.environ.get("RECORDINGS_DIR", "/recordings")
+    rd = get_recordings_dir()
     try:
         if not os.path.exists(rd):
             os.makedirs(rd, exist_ok=True)

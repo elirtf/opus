@@ -15,9 +15,9 @@ import os
 import requests as http
 import logging
 
-logger = logging.getLogger(__name__)
+from app.config import get_recordings_dir
 
-RECORDINGS_DIR = os.environ.get("RECORDINGS_DIR", "/recordings")
+logger = logging.getLogger(__name__)
 
 
 def _go2rtc_url():
@@ -31,7 +31,7 @@ def record_path(camera_name: str) -> str:
     {dt} is replaced by go2rtc with the segment start datetime.
     Creates one file per hour by default.
     """
-    cam_dir = os.path.join(RECORDINGS_DIR, camera_name)
+    cam_dir = os.path.join(get_recordings_dir(), camera_name)
     return f"record://{cam_dir}/{{dt}}.mp4"
 
 
@@ -56,7 +56,7 @@ def stream_sync(camera) -> bool:
 
         # Add or remove record: output based on flag
         if camera.recording_enabled:
-            os.makedirs(os.path.join(RECORDINGS_DIR, name), exist_ok=True)
+            os.makedirs(os.path.join(get_recordings_dir(), name), exist_ok=True)
             http.put(
                 f"{base_url}/api/streams",
                 params={"name": name, "src": record_path(name)},

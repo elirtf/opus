@@ -8,6 +8,7 @@ import platform
 import shutil
 import subprocess
 
+from app.config import get_recordings_dir
 from app.ffmpeg_config import get_video_pipeline_summary
 
 
@@ -42,7 +43,7 @@ def _parse_ffmpeg_hwaccels(combined_output: str):
 
 
 def collect_host_diagnostics():
-    recordings_dir = os.environ.get("RECORDINGS_DIR", "/recordings")
+    recordings_dir = get_recordings_dir()
 
     out = {
         "schema_version": "1",

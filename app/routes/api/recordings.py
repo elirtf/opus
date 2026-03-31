@@ -17,6 +17,7 @@ import requests
 from datetime import datetime, timedelta
 from flask import Blueprint, request, current_app, send_from_directory
 from flask_login import current_user
+from app.config import get_recordings_dir
 from app.models import Recording, Camera
 from app.routes.api.utils import (
     api_response,
@@ -29,7 +30,6 @@ from app.routes.api.utils import (
 
 bp = Blueprint("api_recordings", __name__, url_prefix="/api/recordings")
 
-RECORDINGS_DIR = os.environ.get("RECORDINGS_DIR", "/recordings")
 # Docker: set to http://recorder:5055/status so the API can show recorder process status.
 RECORDER_INTERNAL_STATUS_URL = os.environ.get("RECORDER_INTERNAL_STATUS_URL", "").strip()
 
@@ -325,7 +325,7 @@ def serve_recording(camera_name, filename):
     if allowed_cameras is not None and camera_name not in allowed_cameras:
         return api_error("Access denied.", 403)
 
-    cam_dir = os.path.join(RECORDINGS_DIR, camera_name)
+    cam_dir = os.path.join(get_recordings_dir(), camera_name)
     filepath = os.path.join(cam_dir, filename)
     if not os.path.isfile(filepath):
         return api_error("Recording not found.", 404)
@@ -414,19 +414,6 @@ def bulk_delete():
 
 # ── Storage stats ─────────────────────────────────────────────────────────────
 
-def _resolved_recordings_dir():
-    """DB `recordings_dir` (settings) then env — matches recorder/processor volume."""
-    try:
-        from app.routes.api.recording_settings import get_setting
-
-        p = (get_setting("recordings_dir") or "").strip()
-        if p.startswith("/"):
-            return p
-    except Exception:
-        pass
-    return os.environ.get("RECORDINGS_DIR", RECORDINGS_DIR)
-
-
 def _scan_mp4_folder(folder):
     """Non-recursive MP4 count/size under folder. Returns (count, bytes, oldest, newest)."""
     cam_count = 0
@@ -464,7 +451,7 @@ def storage_stats():
     """
     import shutil
 
-    recordings_dir = _resolved_recordings_dir()
+    recordings_dir = get_recordings_dir()
     by_cam = {}
     total_segment_files = 0
     total_clip_files = 0
@@ -641,9 +628,8 @@ def force_rescan():
     after_count = Recording.select().count()
 
     # Also report what's on disk
-    import os
     disk_report = {}
-    recordings_dir = os.environ.get("RECORDINGS_DIR", "/recordings")
+    recordings_dir = get_recordings_dir()
     if os.path.exists(recordings_dir):
         for cam_name in sorted(os.listdir(recordings_dir)):
             cam_dir = os.path.join(recordings_dir, cam_name)

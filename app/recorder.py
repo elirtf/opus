@@ -15,12 +15,13 @@ import shutil
 import logging
 from datetime import datetime, timedelta
 
+from app.config import get_recordings_dir
 from app.ffmpeg_config import get_video_pipeline_summary
 from app.routes.api.utils import env_bool
 
 logger = logging.getLogger("opus.recorder")
 
-RECORDINGS_DIR       = os.environ.get("RECORDINGS_DIR", "/recordings")
+RECORDINGS_DIR       = get_recordings_dir()
 SEGMENT_MINUTES      = int(os.environ.get("RECORDING_SEGMENT_MINUTES", "15"))
 RETENTION_DAYS       = int(os.environ.get("RECORDING_RETENTION_DAYS", "90"))
 CLIP_RETENTION_DAYS  = int(os.environ.get("CLIP_RETENTION_DAYS", "90"))

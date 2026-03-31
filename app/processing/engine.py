@@ -14,6 +14,8 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
+from app.config import get_recordings_dir
+
 logger = logging.getLogger("opus.processing")
 
 GO2RTC_RTSP_URL = os.environ.get("GO2RTC_RTSP_URL", "")
@@ -39,7 +41,7 @@ else:
 class ProcessingEngine:
     def __init__(self, app):
         self.app = app
-        self.recordings_dir = app.config.get("RECORDINGS_DIR", "/recordings")
+        self.recordings_dir = get_recordings_dir()
         self._running = False
         self._thread = None
         self._last_clip_at = {}

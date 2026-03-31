@@ -373,8 +373,6 @@ def storage_stats():
     Filesystem-backed stats: rolling segments under <dir>/<camera>/ and motion clips
     under <dir>/clips/<camera>/ (events_only). Uses the same recordings path as settings.
     """
-    import shutil
-
     recordings_dir = get_recordings_dir()
     by_cam = {}
     total_segment_files = 0
@@ -443,18 +441,7 @@ def storage_stats():
         row["total_gb"] = round(tb / (1024**3), 2) if tb else 0.0
         cameras.append(row)
 
-    disk = None
-    if os.path.exists(recordings_dir):
-        try:
-            usage = shutil.disk_usage(recordings_dir)
-            disk = {
-                "total_gb": round(usage.total / (1024**3), 2),
-                "used_gb":  round(usage.used / (1024**3), 2),
-                "free_gb":  round(usage.free / (1024**3), 2),
-                "percent_used": round(usage.used / usage.total * 100, 1),
-            }
-        except OSError:
-            pass
+    from app.services.disk_usage import get_disk_usage
 
     return api_response({
         "recordings_dir":  recordings_dir,
@@ -464,7 +451,7 @@ def storage_stats():
         "total_files":     total_segment_files + total_clip_files,
         "total_gb":        round(all_bytes / (1024**3), 2),
         "total_bytes":     all_bytes,
-        "disk":            disk,
+        "disk":            get_disk_usage(recordings_dir),
     })
 
 

@@ -24,6 +24,7 @@ from app.routes.api.utils import (
     login_required_api,
     admin_required,
     accessible_camera_names,
+    to_iso,
 )
 
 bp = Blueprint("api_recordings", __name__, url_prefix="/api/recordings")
@@ -46,15 +47,6 @@ def _recordings_perm():
     return api_error("Recorded footage access is disabled for this account.", 403)
 
 
-def _to_iso(val):
-    """Convert a value to ISO string — handles both datetime objects and strings."""
-    if val is None:
-        return None
-    if isinstance(val, str):
-        return val
-    return val.isoformat()
-
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def recording_to_dict(rec: Recording) -> dict:
@@ -64,8 +56,8 @@ def recording_to_dict(rec: Recording) -> dict:
         "filename":         rec.filename,
         "file_size":        rec.file_size,
         "size_mb":          round(rec.file_size / (1024 * 1024), 1),
-        "started_at":       _to_iso(rec.started_at),
-        "ended_at":         _to_iso(rec.ended_at),
+        "started_at":       to_iso(rec.started_at),
+        "ended_at":         to_iso(rec.ended_at),
         "duration_seconds": rec.duration_seconds,
         "status":           rec.status,
         "download_url":     f"/api/recordings/{rec.camera_name}/{rec.filename}",

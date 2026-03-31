@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import logging
 import os
-import shutil
 import threading
 import time
 
@@ -62,20 +61,20 @@ def _post_webhook(url: str, payload: dict) -> None:
 
 
 def _check_disk(app, webhook: str, cooldown: float) -> None:
+    from app.services.disk_usage import get_disk_usage
+
     free_thr = float(os.environ.get("ALERT_DISK_FREE_GB_THRESHOLD") or "0")
     pct_thr = float(os.environ.get("ALERT_DISK_PERCENT_USED_THRESHOLD") or "0")
     if free_thr <= 0 and pct_thr <= 0:
         return
     rd = get_recordings_dir()
-    try:
-        if not os.path.exists(rd):
-            os.makedirs(rd, exist_ok=True)
-        du = shutil.disk_usage(rd)
-        free_gb = du.free / 1024**3
-        pct_used = round(du.used / du.total * 100, 1) if du.total else 0
-    except OSError as e:
-        logger.debug("disk alert: %s", e)
+    if not os.path.exists(rd):
+        os.makedirs(rd, exist_ok=True)
+    du = get_disk_usage(rd)
+    if du is None:
         return
+    free_gb = du["free_gb"]
+    pct_used = du["percent_used"]
 
     fire = False
     reason = []
@@ -98,7 +97,7 @@ def _check_disk(app, webhook: str, cooldown: float) -> None:
             "severity": "warning",
             "detail": {
                 "recordings_dir": rd,
-                "free_gb": round(free_gb, 3),
+                "free_gb": free_gb,
                 "percent_used": pct_used,
                 "thresholds": {"free_gb_min": free_thr or None, "percent_used_max": pct_thr or None},
                 "reason": reason,

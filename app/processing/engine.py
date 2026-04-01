@@ -369,96 +369,6 @@ class ProcessingEngine:
         except OSError:
             return False
 
-    @staticmethod
-    def _ffprobe_duration_seconds(path: str) -> float | None:
-        try:
-            r = subprocess.run(
-                [
-                    "ffprobe",
-                    "-v",
-                    "error",
-                    "-show_entries",
-                    "format=duration",
-                    "-of",
-                    "default=noprint_wrappers=1:nokey=1",
-                    path,
-                ],
-                capture_output=True,
-                text=True,
-                timeout=20,
-            )
-            if r.returncode != 0:
-                return None
-            return max(0.0, float((r.stdout or "").strip() or 0))
-        except (ValueError, subprocess.TimeoutExpired, OSError):
-            return None
-
-    @staticmethod
-    def _log_primary_video_codec(path: str) -> None:
-        try:
-            r = subprocess.run(
-                [
-                    "ffprobe",
-                    "-v",
-                    "error",
-                    "-select_streams",
-                    "v:0",
-                    "-show_entries",
-                    "stream=codec_name",
-                    "-of",
-                    "default=noprint_wrappers=1:nokey=1",
-                    path,
-                ],
-                capture_output=True,
-                text=True,
-                timeout=15,
-            )
-            if r.returncode == 0 and (r.stdout or "").strip():
-                c = (r.stdout or "").strip().lower()
-                if c in ("hevc", "h265"):
-                    logger.warning(
-                        "Event clip is %s — Firefox often cannot play this in the browser; use H.264 on the camera or Chrome/Edge.",
-                        c,
-                    )
-        except (subprocess.TimeoutExpired, OSError):
-            pass
-
-    @staticmethod
-    def _finalize_event_clip(path: str) -> bool:
-        """Remux with +faststart so moov is early (fixes many NS_ERROR_DOM_MEDIA_METADATA_ERR cases)."""
-        dur = ProcessingEngine._ffprobe_duration_seconds(path)
-        if dur is None or dur <= 0:
-            logger.warning("clip failed ffprobe (no duration): %s", path)
-            return False
-        tmp = path + ".fst.mp4"
-        try:
-            cmd = [
-                "ffmpeg",
-                "-y",
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-i",
-                path,
-                "-c",
-                "copy",
-                "-movflags",
-                "+faststart",
-                tmp,
-            ]
-            r = subprocess.run(cmd, capture_output=True, timeout=300)
-            if r.returncode == 0 and os.path.exists(tmp) and os.path.getsize(tmp) > 1024:
-                os.replace(tmp, path)
-            ProcessingEngine._log_primary_video_codec(path)
-            dur2 = ProcessingEngine._ffprobe_duration_seconds(path)
-            return dur2 is not None and dur2 > 0
-        finally:
-            if os.path.exists(tmp):
-                try:
-                    os.remove(tmp)
-                except OSError:
-                    pass
-
     def _write_clip(self, cam):
         from app.models import RecordingEvent
         from app.processing.motion_settings import read_motion_clip_settings
@@ -513,13 +423,12 @@ class ProcessingEngine:
                         cam.name,
                     )
                     os.replace(tmp_main.name, fp)
-            elif pre > 0 and not CLIP_CONCAT_PRE:
-                logger.debug(
-                    "CLIP_CONCAT_PRE disabled — skipping pre-roll concat for %s",
-                    cam.name,
-                )
-                os.replace(tmp_main.name, fp)
             else:
+                if pre > 0 and not CLIP_CONCAT_PRE:
+                    logger.debug(
+                        "CLIP_CONCAT_PRE disabled — skipping pre-roll concat for %s",
+                        cam.name,
+                    )
                 os.replace(tmp_main.name, fp)
         finally:
             for p in (tmp_main.name, tmp_pre_path):
@@ -529,22 +438,6 @@ class ProcessingEngine:
                     except OSError:
                         pass
 
-        try:
-            sz = os.path.getsize(fp)
-        except OSError:
-            return None
-        if sz < 10240:
-            try:
-                os.remove(fp)
-            except OSError:
-                pass
-            return None
-        if not self._finalize_event_clip(fp):
-            try:
-                os.remove(fp)
-            except OSError:
-                pass
-            return None
         try:
             sz = os.path.getsize(fp)
         except OSError:

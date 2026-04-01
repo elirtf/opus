@@ -11,6 +11,7 @@ def create_app():
     app.config["DATABASE_PATH"]     = os.environ.get("DATABASE_PATH", "/app/instance/opus.db")
     app.config["DATABASE_URL"]      = os.environ.get("DATABASE_URL")
     app.config["GO2RTC_URL"]        = os.environ.get("GO2RTC_URL", "http://go2rtc:1984")
+    app.config["GO2RTC_CONFIG_PATH"] = os.environ.get("GO2RTC_CONFIG_PATH", "/config/go2rtc.yaml")
     app.config["RECORDINGS_DIR"]    = os.environ.get("RECORDINGS_DIR", "/recordings")
 
     # ── Database - Peewee init ───────────────────────────────────────────────
@@ -104,6 +105,7 @@ def create_app():
     from app.routes.api.recordings import bp as api_recordings_bp
     from app.routes.api.discovery   import bp as api_discovery_bp
     from app.routes.api.recording_settings import bp as api_rec_settings_bp
+    from app.routes.api.go2rtc_settings import bp as api_go2rtc_settings_bp
     from app.routes.api.events import bp as api_events_bp
     from app.routes.api.processing_api import bp as api_processing_bp
 
@@ -115,6 +117,7 @@ def create_app():
     app.register_blueprint(api_recordings_bp)
     app.register_blueprint(api_discovery_bp)
     app.register_blueprint(api_rec_settings_bp)
+    app.register_blueprint(api_go2rtc_settings_bp)
     app.register_blueprint(api_events_bp)
     app.register_blueprint(api_processing_bp)
 
@@ -135,6 +138,13 @@ def create_app():
     from app.ops_alerts import start_ops_alerts_thread
 
     start_ops_alerts_thread(app)
+
+    with app.app_context():
+        from app.go2rtc_config import write_go2rtc_yaml
+        from app.go2rtc import sync_all_on_startup
+
+        write_go2rtc_yaml(app)
+        sync_all_on_startup()
 
     @app.get("/healthz")
     def healthz():

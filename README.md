@@ -28,7 +28,7 @@
 ### Streaming
 ### Devices & Configuration
 
-Sites (legacy NVR import), camera list, and **Configuration** (system info, diagnostics, per-site stream table with RTSP edit).
+Sites (legacy NVR import), camera list, and **Configuration** (system info, **Streaming** / go2rtc hardening, diagnostics, per-site stream table with RTSP edit).
 ### Authentication & Access Control
 
 ---
@@ -64,7 +64,9 @@ cd opus
 # 2. Create your environment file
 # Edit .env and set SECRET_KEY, and optionally GO2RTC_URL
       # GO2RTC_URL=http://go2rtc:1984 (Default)
+      # GO2RTC_CONFIG_PATH=/config/go2rtc.yaml (Default — Opus writes this from Configuration → Streaming)
       # GO2RTC_RTSP_URL=rtsp://go2rtc:8554 (Default)
+      # GO2RTC_ALLOW_ARBITRARY_EXEC=false (Optional — overrides UI “allow exec sources” when set)
       # SECRET_KEY=secret-key
       # Optional: comma-separated browser origins for split-host UIs (enables flask-cors)
       # CORS_ORIGINS=https://app.example.com,http://localhost:5173

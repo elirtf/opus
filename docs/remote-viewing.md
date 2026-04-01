@@ -97,5 +97,5 @@ If you **split** the site and API across different host names, or use automation
 | Doc | Why open it |
 |-----|-------------|
 | [streaming-playback.md](streaming-playback.md) | How live and recorded video works in the browser (phones included). |
-| [hosted-ops-outline.md](hosted-ops-outline.md) | Security and operations for shipped / rented boxes. |
+| [deployment-profiles.md](deployment-profiles.md) | Hosted / appliance deployment notes; [operations.md](operations.md) for alerts and backups. |
 | [mobile/README](../mobile/README.md) | Optional installable app that wraps the same Opus website. |

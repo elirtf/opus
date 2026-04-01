@@ -71,7 +71,7 @@ Reference **defaults** for `.env` and `docker-compose` overrides. Tune for **you
 | ---------------- | ----------------------------------------------------------------------- |
 | Config           | Single `.env.example` per SKU copied to customer appliance              |
 | `FFMPEG_HWACCEL` | Pin per SKU after QA (often `none` or one validated path)               |
-| Updates          | Controlled rollouts; see [hosted-ops-outline.md](hosted-ops-outline.md) |
+| Updates          | Controlled rollouts; pin image tags, canary then fleet; [operations.md](operations.md) for backups before upgrades |
 | Secrets          | Rotate `SECRET_KEY` per tenant; never ship defaults                     |
 
 

@@ -77,7 +77,6 @@ Deliver the scope above as a **recorder and control plane**: direct camera → O
 | [deployment-profiles.md](deployment-profiles.md) | Suggested settings for small devices (e.g. Pi), PCs, or hosted appliances.        |
 | [streaming-playback.md](streaming-playback.md)   | How live and recorded video reach the browser (plain-language + technical notes). |
 | [hw-diagnostics-spec.md](hw-diagnostics-spec.md) | What the admin diagnostics API returns (for tooling and support).                 |
-| [hosted-ops-outline.md](hosted-ops-outline.md)   | Checklist for **rented or shipped appliances** with a fixed hardware SKU.         |
 | [DEV_WORKFLOW.md](DEV_WORKFLOW.md)               | How developers run and update the project locally.                                |
 
 The **[README](../README.md)** in the repo root has setup commands and a compact feature overview.

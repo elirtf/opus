@@ -68,6 +68,7 @@ async function jsonRequest(method, path, body) {
 export const api = {
   get:    (path)        => apiFetch(path, { method: 'GET' }),
   post:   (path, body)  => jsonRequest('POST', path, body),
+  put:    (path, body)  => jsonRequest('PUT', path, body),
   patch:  (path, body)  => jsonRequest('PATCH', path, body),
   delete: (path)        => apiFetch(path, { method: 'DELETE' }),
 }

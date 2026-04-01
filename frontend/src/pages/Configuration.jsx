@@ -3,13 +3,14 @@ import { useSearchParams } from 'react-router-dom'
 import { healthApi } from '../api/health'
 import { camerasApi } from '../api/cameras'
 import { api } from '../api/client'
+import { go2rtcApi } from '../api/go2rtc'
 import { authApi } from '../api/auth'
 import Modal from '../components/Modal'
 import Spinner from '../components/Spinner'
 import { useToast, ToastList } from '../components/Toast'
 import { compareByChannelThenName, naturalCompare } from '../utils/naturalCompare'
 
-const TAB_IDS = ['system', 'maintenance', 'cameras']
+const TAB_IDS = ['system', 'streaming', 'maintenance', 'cameras']
 
 function TabButton({ active, children, onClick }) {
   return (
@@ -85,6 +86,150 @@ function SystemPanel({ about, loading, error }) {
         )}
       </div>
     </div>
+  )
+}
+
+function StreamingPanel({ isOriginalAdmin, onSuccess, onError }) {
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [candidatesText, setCandidatesText] = useState('')
+  const [allowArbitrary, setAllowArbitrary] = useState(false)
+  const [allowExecMod, setAllowExecMod] = useState(false)
+  const [envLocked, setEnvLocked] = useState(false)
+  const [configPath, setConfigPath] = useState('')
+  const [restartHint, setRestartHint] = useState('')
+
+  useEffect(() => {
+    if (!isOriginalAdmin) {
+      setLoading(false)
+      return
+    }
+    let alive = true
+    setLoading(true)
+    go2rtcApi
+      .getSettings()
+      .then((d) => {
+        if (!alive) return
+        setCandidatesText((d.webrtc_candidates || []).join('\n'))
+        setAllowArbitrary(!!d.allow_arbitrary_exec)
+        setAllowExecMod(!!d.allow_exec_module)
+        setEnvLocked(!!d.arbitrary_exec_env_locked)
+        setConfigPath(d.config_path || '')
+        setRestartHint(d.restart_hint || '')
+      })
+      .catch((e) => onError(e.message || 'Failed to load streaming settings'))
+      .finally(() => {
+        if (alive) setLoading(false)
+      })
+    return () => {
+      alive = false
+    }
+  }, [isOriginalAdmin])
+
+  async function handleSave(e) {
+    e.preventDefault()
+    setSaving(true)
+    try {
+      const lines = candidatesText
+        .split('\n')
+        .map((s) => s.trim())
+        .filter(Boolean)
+      await go2rtcApi.updateSettings({
+        webrtc_candidates: lines.length ? lines : ['stun:8555'],
+        allow_arbitrary_exec: allowArbitrary,
+        allow_exec_module: allowExecMod,
+      })
+      onSuccess('Streaming settings saved. Restart the go2rtc container to apply changes to go2rtc.yaml.')
+    } catch (ex) {
+      onError(ex.message || 'Save failed')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (!isOriginalAdmin) {
+    return (
+      <p className="text-sm text-gray-500">
+        Only the original system administrator can configure go2rtc streaming and security options.
+      </p>
+    )
+  }
+
+  if (loading) {
+    return (
+      <div className="flex justify-center py-16">
+        <Spinner className="w-6 h-6" />
+      </div>
+    )
+  }
+
+  const inputCls =
+    'w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono text-xs'
+
+  return (
+    <form onSubmit={handleSave} className="space-y-6">
+      <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+        <h3 className="text-sm font-semibold text-white mb-2">WebRTC ICE candidates</h3>
+        <p className="text-sm text-gray-400 mb-3">
+          One candidate per line (e.g. <code className="text-gray-300">stun:8555</code>). Written to{' '}
+          <code className="text-gray-400 break-all">{configPath || 'go2rtc.yaml'}</code> when you save.
+        </p>
+        <textarea
+          className={`${inputCls} min-h-[120px]`}
+          value={candidatesText}
+          onChange={(e) => setCandidatesText(e.target.value)}
+          placeholder="stun:8555"
+        />
+      </div>
+
+      <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
+        <h3 className="text-sm font-semibold text-white">Security</h3>
+        <label className="flex items-start gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            className="mt-1 rounded border-gray-600"
+            checked={allowArbitrary}
+            disabled={envLocked}
+            onChange={(e) => setAllowArbitrary(e.target.checked)}
+          />
+          <span>
+            <span className="text-sm text-gray-200">Allow arbitrary stream sources (echo:, expr:, exec:)</span>
+            <span className="block text-xs text-gray-500 mt-1">
+              Off by default — matches go2rtc security guidance. Enable only if you trust every RTSP URL entered in Opus.
+            </span>
+            {envLocked && (
+              <span className="block text-xs text-amber-400 mt-2">
+                Overridden by <code className="text-gray-400">GO2RTC_ALLOW_ARBITRARY_EXEC</code> in the environment; remove it to control this from the UI.
+              </span>
+            )}
+          </span>
+        </label>
+        <label className="flex items-start gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            className="mt-1 rounded border-gray-600"
+            checked={allowExecMod}
+            onChange={(e) => setAllowExecMod(e.target.checked)}
+          />
+          <span>
+            <span className="text-sm text-gray-200">Enable go2rtc &quot;exec&quot; module</span>
+            <span className="block text-xs text-gray-500 mt-1">
+              Required only for advanced <code className="text-gray-400">exec:</code> pipelines. When off, the generated config omits the exec module and restricts exec paths when enabled.
+            </span>
+          </span>
+        </label>
+      </div>
+
+      {restartHint && <p className="text-xs text-gray-500">{restartHint}</p>}
+
+      <button
+        type="submit"
+        disabled={saving}
+        className="px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white"
+      >
+        {saving ? 'Saving…' : 'Save streaming settings'}
+      </button>
+    </form>
   )
 }
 
@@ -449,6 +594,15 @@ export default function Configuration() {
   const [editRow, setEditRow] = useState(null)
   const [editSource, setEditSource] = useState(null)
 
+  const [setupStatus, setSetupStatus] = useState(null)
+  useEffect(() => {
+    api('/api/recordings/settings/setup-status')
+      .then(setSetupStatus)
+      .catch(() => {})
+  }, [])
+
+  const isOriginalAdmin = setupStatus?.is_original_admin ?? false
+
   useEffect(() => {
     let alive = true
     setAboutLoading(true)
@@ -547,6 +701,9 @@ export default function Configuration() {
           <TabButton active={tab === 'system'} onClick={() => setTab('system')}>
             System
           </TabButton>
+          <TabButton active={tab === 'streaming'} onClick={() => setTab('streaming')}>
+            Streaming
+          </TabButton>
           <TabButton active={tab === 'maintenance'} onClick={() => setTab('maintenance')}>
             Maintenance
           </TabButton>
@@ -561,6 +718,10 @@ export default function Configuration() {
           <SystemPanel about={about} loading={aboutLoading} error={aboutErr} />
           <ApiTokenSettings onSuccess={success} onError={toastError} />
         </>
+      )}
+
+      {tab === 'streaming' && (
+        <StreamingPanel isOriginalAdmin={isOriginalAdmin} onSuccess={success} onError={toastError} />
       )}
 
       {tab === 'maintenance' && (

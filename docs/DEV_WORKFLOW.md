@@ -130,6 +130,8 @@ python -m venv .venv
 pip install -r requirements.txt
 $env:SECRET_KEY = "dev"
 $env:GO2RTC_URL = "http://127.0.0.1:1984"
+# Optional: write generated go2rtc.yaml under ./go2rtc (matches Docker mount)
+$env:GO2RTC_CONFIG_PATH = Join-Path (Get-Location) "go2rtc\go2rtc.yaml"
 python run.py
 ```
 
@@ -141,6 +143,8 @@ source .venv/bin/activate
 pip install -r requirements.txt
 export SECRET_KEY=dev
 export GO2RTC_URL=http://127.0.0.1:1984
+# Optional: same path Docker uses for generated go2rtc.yaml
+export GO2RTC_CONFIG_PATH="$(pwd)/go2rtc/go2rtc.yaml"
 python run.py
 ```
 

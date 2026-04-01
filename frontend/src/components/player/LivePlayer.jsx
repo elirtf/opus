@@ -7,9 +7,13 @@ import {
 } from "react";
 import Hls from "hls.js";
 import { withOrigin } from "../../api/client";
-import { PLAYBACK_FAIL_HEVC_HINT, shouldPreferHlsForDevice } from "../../utils/streamPlayback";
+import {
+  isFirefox,
+  PLAYBACK_FAIL_HEVC_HINT,
+  shouldPreferHlsForDevice,
+} from "../../utils/streamPlayback";
 
-export { shouldPreferHlsForDevice } from "../../utils/streamPlayback";
+export { isFirefox, shouldPreferHlsForDevice } from "../../utils/streamPlayback";
 
 /**
  * Live playback strategy: keep go2rtc’s `stream.html` inside an iframe (MSE/WebRTC handled
@@ -17,12 +21,11 @@ export { shouldPreferHlsForDevice } from "../../utils/streamPlayback";
  * faster iteration. We add load-timeout + retry UX around the iframe; a future native
  * player could swap in here without changing dashboard/camera call sites.
  *
- * Prefer HLS only on touch / narrow-viewport devices.
- * Safari desktop stays on MSE iframe — Safari's MSE works fine for H.264
- * and avoids the go2rtc HLS endpoint which creates one server-side FFmpeg
- * process per consumer. Forcing all Safari to HLS caused runaway process
- * creation (thousands of ffmpeg processes) when segments failed and the
- * native HLS player retried aggressively.
+ * Prefer HLS on touch / narrow viewports and on Firefox (go2rtc MSE iframe is unreliable
+ * there for many streams). Safari desktop stays on MSE iframe — Safari's MSE works fine
+ * for H.264 and avoids the go2rtc HLS endpoint which creates one server-side FFmpeg
+ * process per consumer. Forcing all Safari to HLS caused runaway process creation when
+ * segments failed and the native HLS player retried aggressively.
  */
 function resolveMode(playbackMode) {
   if (playbackMode === "auto") {
@@ -223,7 +226,8 @@ function HlsVideo({ src, cameraName, nativeControls = true }) {
       if (cancelled) return;
 
       const hls = new Hls({
-        enableWorker: true,
+        // Firefox: MSE + worker has caused hard-to-reproduce stalls; main thread demux is safer.
+        enableWorker: !isFirefox(),
         lowLatencyMode: true,
         liveSyncDurationCount: 1,
         liveMaxLatencyDurationCount: 3,

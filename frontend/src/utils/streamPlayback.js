@@ -1,6 +1,21 @@
-/** Match LivePlayer “auto” device heuristic (touch / narrow → HLS). */
+/**
+ * True when the browser is Mozilla Firefox (desktop or mobile).
+ * Used to pick playback paths that work reliably with go2rtc + Opus.
+ */
+export function isFirefox() {
+  if (typeof navigator === "undefined") return false;
+  return /Firefox\//.test(navigator.userAgent || "");
+}
+
+/**
+ * Prefer HLS over go2rtc’s MSE iframe when:
+ * - touch or narrow viewport, or
+ * - Firefox: go2rtc `stream.html` + MSE is often flaky (codec/MSE); HLS via hls.js matches
+ *   fMP4 segments more predictably (same trade-off as Safari vs HLS server load).
+ */
 export function shouldPreferHlsForDevice() {
   if (typeof window === "undefined") return false;
+  if (isFirefox()) return true;
   if (window.matchMedia("(pointer: coarse)").matches) return true;
   if (window.matchMedia("(max-width: 1024px)").matches) return true;
   return false;
@@ -10,7 +25,8 @@ export function shouldPreferHlsForDevice() {
 export const HEVC_WEBRTC_WARNING_CODE = "HEVC_WEBRTC";
 
 /**
- * Single-camera page: prefer WebRTC on desktop unless stats say HEVC (then MSE may work in some browsers).
+ * Single-camera page: prefer WebRTC on Chromium/Safari desktop unless stats say HEVC (then MSE).
+ * Firefox always uses `auto` → HLS for compatibility (see shouldPreferHlsForDevice).
  */
 export function cameraPagePlaybackMode(streamStats) {
   if (shouldPreferHlsForDevice()) return "auto";

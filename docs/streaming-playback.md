@@ -18,8 +18,8 @@ The sections below are the technical detail for installers and developers.
 | Path           | Mechanism                                                                                       |
 | -------------- | ----------------------------------------------------------------------------------------------- |
 | **Live**       | Browser → **nginx** `/go2rtc/` → **go2rtc** (MSE, WebRTC-related paths, etc. per go2rtc config) |
-| **Live (HLS)** | Same proxy — **go2rtc** playlist at `/go2rtc/api/stream.m3u8?src=<stream>` (native Safari; **hls.js** elsewhere). The React UI uses this on coarse-pointer / narrow viewports by default. |
-| **Live (camera page)** | On **desktop / fine pointer**, the single-camera view often uses **WebRTC** (`stream.html?mode=webrtc`) for lower latency; **touch / narrow** uses the same **auto** rules as elsewhere (**HLS** or **MSE**). Configure **ICE** under **Configuration → Streaming**; see [remote-viewing.md](remote-viewing.md). |
+| **Live (HLS)** | Same proxy — **go2rtc** playlist at `/go2rtc/api/stream.m3u8?src=<stream>` (native Safari; **hls.js** elsewhere). The React UI uses this on coarse-pointer / narrow viewports, and on **Firefox** (any viewport), for reliable playback. |
+| **Live (camera page)** | On **Chromium / Safari desktop / fine pointer**, the single-camera view often uses **WebRTC** (`stream.html?mode=webrtc`) for lower latency; **Firefox** uses the same **auto** path as the dashboard (**HLS**). **Touch / narrow** uses **HLS** or **MSE** per device rules. Configure **ICE** under **Configuration → Streaming**; see [remote-viewing.md](remote-viewing.md). |
 | **Recordings** | **FFmpeg** segment writer → **MP4** on disk; UI/API serves files (Flask) for playback           |
 
 
@@ -45,10 +45,16 @@ nginx proxies go2rtc under `[/go2rtc/](../nginx/nginx.conf)`. Hardware decode/en
 | Environment                  | Typical live                                   | Typical file (MP4)                                |
 | ---------------------------- | ---------------------------------------------- | ------------------------------------------------- |
 | **Chrome / Edge (Chromium)** | MSE paths where go2rtc exposes them            | `<video src=...>` or blob/range                   |
-| **Firefox**                  | MSE where supported                            | Similar to Chromium                               |
+| **Firefox**                  | Opus prefers **HLS** (hls.js) for **live** over go2rtc’s MSE iframe; recordings same as Chromium | Similar to Chromium                               |
 | **Desktop Safari**           | May use native or MSE depending on go2rtc mode | MP4/H.264 widely supported                        |
 | **iOS Safari**               | Autoplay/user-gesture policies stricter        | HLS is first-class **natively**; other paths vary |
 
+
+### Firefox (live view)
+
+- For **live** streams, Opus selects **HLS** on Firefox so playback goes through **hls.js** instead of go2rtc’s **MSE** `stream.html` iframe, which is often unreliable for the same RTSP/H.264 feeds that work in Chrome.
+- **hls.js** runs the demuxer on the main thread in Firefox (`enableWorker: false`) to avoid intermittent MSE stalls with the worker path.
+- **H.264** on the sub stream is still recommended; **HEVC** may fail in any browser path until transcoded.
 
 ### Safari gotchas (operational)
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
@@ -19,6 +20,7 @@ from app.config import get_recordings_dir
 logger = logging.getLogger("opus.processing")
 
 GO2RTC_RTSP_URL = os.environ.get("GO2RTC_RTSP_URL", "")
+# Defaults only for startup log; runtime uses recording_settings + env via read_motion_clip_settings().
 POLL_SECONDS = int(os.environ.get("PROCESSING_POLL_SECONDS", "6"))
 CLIP_SECONDS = int(os.environ.get("CLIP_SECONDS", "45"))
 MOTION_COOLDOWN_SECONDS = int(os.environ.get("MOTION_COOLDOWN_SECONDS", "75"))
@@ -87,10 +89,14 @@ class ProcessingEngine:
         while self._running:
             try:
                 with self.app.app_context():
+                    from app.processing.motion_settings import read_motion_clip_settings
+
+                    poll = read_motion_clip_settings().poll_seconds
                     self._tick()
             except Exception:
                 logger.exception("processing tick failed")
-            time.sleep(POLL_SECONDS)
+                poll = POLL_SECONDS
+            time.sleep(poll)
 
     def _main_rtsp(self, cam) -> str:
         """Record / clip source (always main)."""
@@ -180,6 +186,10 @@ class ProcessingEngine:
         if get_setting("setup_complete", "false") != "true":
             return
 
+        from app.processing.motion_settings import read_motion_clip_settings
+
+        cooldown_s = read_motion_clip_settings().cooldown_seconds
+
         qs = list(
             Camera.select().where(
                 (Camera.active == True)
@@ -192,7 +202,7 @@ class ProcessingEngine:
         eligible = [
             c
             for c in cams
-            if now - self._last_clip_at.get(c.name, 0) >= MOTION_COOLDOWN_SECONDS
+            if now - self._last_clip_at.get(c.name, 0) >= cooldown_s
         ]
         if not eligible:
             return
@@ -220,18 +230,93 @@ class ProcessingEngine:
             if ev:
                 self._last_clip_at[cam.name] = now
 
-    def _write_clip(self, cam):
-        from app.ffmpeg_config import hwaccel_input_args, rtsp_input_queue_args
-        from app.models import RecordingEvent
+    def _latest_stable_segment(self, cam_name: str) -> str | None:
+        """Most recent completed MP4 segment under recordings_dir/cam_name (for pre-roll tail)."""
+        cam_dir = os.path.join(self.recordings_dir, cam_name)
+        if not os.path.isdir(cam_dir):
+            return None
+        try:
+            names = [f for f in os.listdir(cam_dir) if f.endswith(".mp4")]
+        except OSError:
+            return None
+        if not names:
+            return None
+        paths = [os.path.join(cam_dir, n) for n in names]
+        paths.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+        now = time.time()
+        for p in paths:
+            try:
+                if now - os.path.getmtime(p) < 3.0:
+                    continue
+                if os.path.getsize(p) > 10240:
+                    return p
+            except OSError:
+                continue
+        return None
 
-        clips_dir = os.path.join(self.recordings_dir, "clips", cam.name)
-        os.makedirs(clips_dir, exist_ok=True)
-        fn = "%s_%s.mp4" % (
-            datetime.now().strftime("%Y-%m-%d_%H-%M-%S"),
-            uuid.uuid4().hex[:8],
-        )
-        fp = os.path.join(clips_dir, fn)
-        src = self._clip_rtsp(cam)
+    @staticmethod
+    def _ffmpeg_extract_tail(segment_path: str, pre_seconds: int, out_path: str) -> bool:
+        """Last N seconds of a seekable MP4 (segment file from recorder)."""
+        cmd = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-sseof",
+            "-%d" % pre_seconds,
+            "-i",
+            segment_path,
+            "-c",
+            "copy",
+            "-movflags",
+            "+faststart",
+            out_path,
+        ]
+        try:
+            r = subprocess.run(cmd, capture_output=True, timeout=pre_seconds + 45)
+        except (subprocess.TimeoutExpired, OSError):
+            return False
+        return r.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 1024
+
+    @staticmethod
+    def _ffmpeg_concat_copy(paths: list[str], out_path: str) -> bool:
+        fd, list_path = tempfile.mkstemp(suffix=".txt", text=True)
+        try:
+            with os.fdopen(fd, "w") as f:
+                for p in paths:
+                    ap = os.path.abspath(p).replace("\\", "/")
+                    ap = ap.replace("'", "'\\''")
+                    f.write("file '%s'\n" % ap)
+            cmd = [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                list_path,
+                "-c",
+                "copy",
+                out_path,
+            ]
+            r = subprocess.run(cmd, capture_output=True, timeout=600)
+            return r.returncode == 0
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        finally:
+            try:
+                os.remove(list_path)
+            except OSError:
+                pass
+
+    def _capture_rtsp_clip(self, cam, src: str, out_path: str, duration_sec: int) -> bool:
+        from app.ffmpeg_config import hwaccel_input_args, rtsp_input_queue_args
+
         cmd = [
             "ffmpeg",
             "-hide_banner",
@@ -252,25 +337,90 @@ class ProcessingEngine:
             "-i",
             src,
             "-t",
-            str(CLIP_SECONDS),
+            str(duration_sec),
             "-c:v",
             "copy",
             "-an",
             "-y",
-            fp,
+            out_path,
         ]
         try:
-            r = subprocess.run(cmd, capture_output=True, timeout=CLIP_SECONDS + 60)
-        except subprocess.TimeoutExpired:
-            logger.warning("clip ffmpeg timeout: %s", cam.name)
-            return None
-        except Exception:
-            logger.exception("clip ffmpeg failed: %s", cam.name)
-            return None
+            r = subprocess.run(cmd, capture_output=True, timeout=duration_sec + 90)
+        except (subprocess.TimeoutExpired, OSError):
+            return False
         if r.returncode != 0:
             err = (r.stderr or b"").decode(errors="replace")[-200:]
-            logger.warning("clip ffmpeg rc=%s %s", r.returncode, err)
-            return None
+            logger.warning("clip capture rc=%s %s", r.returncode, err)
+            return False
+        try:
+            return os.path.getsize(out_path) > 10240
+        except OSError:
+            return False
+
+    def _write_clip(self, cam):
+        from app.models import RecordingEvent
+        from app.processing.motion_settings import read_motion_clip_settings
+
+        ms = read_motion_clip_settings()
+        core = ms.clip_seconds
+        pre = ms.pre_seconds
+        post = ms.post_seconds
+        capture_sec = core + post
+        approx_duration = pre + capture_sec
+
+        clips_dir = os.path.join(self.recordings_dir, "clips", cam.name)
+        os.makedirs(clips_dir, exist_ok=True)
+        fn = "%s_%s.mp4" % (
+            datetime.now().strftime("%Y-%m-%d_%H-%M-%S"),
+            uuid.uuid4().hex[:8],
+        )
+        fp = os.path.join(clips_dir, fn)
+        src = self._clip_rtsp(cam)
+
+        tmp_main = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False, dir=clips_dir)
+        tmp_main.close()
+        tmp_pre_path = None
+        try:
+            if not self._capture_rtsp_clip(cam, src, tmp_main.name, capture_sec):
+                return None
+
+            if pre > 0:
+                seg = self._latest_stable_segment(cam.name)
+                if seg:
+                    tmp_pre = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False, dir=clips_dir)
+                    tmp_pre.close()
+                    tmp_pre_path = tmp_pre.name
+                    if self._ffmpeg_extract_tail(seg, pre, tmp_pre_path):
+                        if self._ffmpeg_concat_copy([tmp_pre_path, tmp_main.name], fp):
+                            pass
+                        else:
+                            logger.warning(
+                                "concat pre+main failed for %s — saving core clip only",
+                                cam.name,
+                            )
+                            os.replace(tmp_main.name, fp)
+                    else:
+                        logger.info(
+                            "pre-roll extract skipped for %s (segment too short or unreadable)",
+                            cam.name,
+                        )
+                        os.replace(tmp_main.name, fp)
+                else:
+                    logger.debug(
+                        "no segment file for pre-roll on %s — enable rolling segments or continuous",
+                        cam.name,
+                    )
+                    os.replace(tmp_main.name, fp)
+            else:
+                os.replace(tmp_main.name, fp)
+        finally:
+            for p in (tmp_main.name, tmp_pre_path):
+                if p and os.path.exists(p):
+                    try:
+                        os.remove(p)
+                    except OSError:
+                        pass
+
         try:
             sz = os.path.getsize(fp)
         except OSError:
@@ -290,7 +440,7 @@ class ProcessingEngine:
             file_size=sz,
             started_at=started,
             ended_at=None,
-            duration_seconds=CLIP_SECONDS,
+            duration_seconds=approx_duration,
             reason="motion",
             recording_id=None,
             status="complete",
@@ -298,12 +448,17 @@ class ProcessingEngine:
         return True
 
     def get_status(self):
+        from app.processing.motion_settings import read_motion_clip_settings
+
+        ms = read_motion_clip_settings()
         return {
             "engine_running": self._running,
             "detector": DETECTOR,
-            "poll_seconds": POLL_SECONDS,
-            "clip_seconds": CLIP_SECONDS,
-            "cooldown_seconds": MOTION_COOLDOWN_SECONDS,
+            "poll_seconds": ms.poll_seconds,
+            "clip_seconds": ms.clip_seconds,
+            "clip_pre_seconds": ms.pre_seconds,
+            "clip_post_seconds": ms.post_seconds,
+            "cooldown_seconds": ms.cooldown_seconds,
             "motion_rtsp_mode": MOTION_RTSP_MODE,
             "motion_max_concurrent": MOTION_MAX_CONCURRENT,
             "last_tick_unix": self._last_tick_ts,

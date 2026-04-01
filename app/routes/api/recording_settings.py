@@ -25,6 +25,12 @@ DEFAULTS = {
     "recordings_dir":     "/recordings",
     "stagger_seconds":    "2",
     "setup_complete":     "false",
+    # Processor / motion clips (events_only) — also settable via .env on processor service
+    "motion_clip_seconds":       "45",   # core capture length after trigger
+    "motion_clip_pre_seconds":   "0",    # prepend from latest segment file (needs rolling segments)
+    "motion_clip_post_seconds":  "0",    # extra seconds after trigger (extends core capture)
+    "motion_poll_seconds":       "6",
+    "motion_cooldown_seconds":   "75",
 }
 
 
@@ -54,6 +60,11 @@ def get_setting(key, default=None):
         "max_storage_gb":  "RECORDING_MAX_STORAGE_GB",
         "recordings_dir":  "RECORDINGS_DIR",
         "stagger_seconds": "RECORDING_STAGGER_SECONDS",
+        "motion_clip_seconds": "CLIP_SECONDS",
+        "motion_clip_pre_seconds": "CLIP_PRE_SECONDS",
+        "motion_clip_post_seconds": "CLIP_POST_SECONDS",
+        "motion_poll_seconds": "PROCESSING_POLL_SECONDS",
+        "motion_cooldown_seconds": "MOTION_COOLDOWN_SECONDS",
     }
     env_key = env_map.get(key)
     if env_key and os.environ.get(env_key):
@@ -132,6 +143,18 @@ def get_settings():
     try:    settings["stagger_seconds"] = int(settings["stagger_seconds"])
     except: settings["stagger_seconds"] = 2
 
+    for mk, dv in (
+        ("motion_clip_seconds", 45),
+        ("motion_clip_pre_seconds", 0),
+        ("motion_clip_post_seconds", 0),
+        ("motion_poll_seconds", 6),
+        ("motion_cooldown_seconds", 75),
+    ):
+        try:
+            settings[mk] = int(settings.get(mk, str(dv)))
+        except (TypeError, ValueError):
+            settings[mk] = dv
+
     settings["setup_complete"]    = settings.get("setup_complete", "false") == "true"
     settings["is_original_admin"] = is_original_admin()
 
@@ -148,8 +171,18 @@ def update_settings():
         return api_error("Only the original administrator can change recording settings.", 403)
 
     data = request.get_json(silent=True) or {}
-    allowed_keys = {"segment_minutes", "retention_days", "max_storage_gb",
-                    "recordings_dir", "stagger_seconds"}
+    allowed_keys = {
+        "segment_minutes",
+        "retention_days",
+        "max_storage_gb",
+        "recordings_dir",
+        "stagger_seconds",
+        "motion_clip_seconds",
+        "motion_clip_pre_seconds",
+        "motion_clip_post_seconds",
+        "motion_poll_seconds",
+        "motion_cooldown_seconds",
+    }
     updated = []
 
     for key, value in data.items():
@@ -193,6 +226,46 @@ def update_settings():
             if not value.startswith("/"):
                 return api_error("recordings_dir must be an absolute path.", 400)
 
+        elif key == "motion_clip_seconds":
+            try:
+                v = int(value)
+                if v < 5 or v > 300:
+                    return api_error("motion_clip_seconds must be 5-300.", 400)
+            except (ValueError, TypeError):
+                return api_error("motion_clip_seconds must be an integer.", 400)
+
+        elif key == "motion_clip_pre_seconds":
+            try:
+                v = int(value)
+                if v < 0 or v > 15:
+                    return api_error("motion_clip_pre_seconds must be 0-15.", 400)
+            except (ValueError, TypeError):
+                return api_error("motion_clip_pre_seconds must be an integer.", 400)
+
+        elif key == "motion_clip_post_seconds":
+            try:
+                v = int(value)
+                if v < 0 or v > 120:
+                    return api_error("motion_clip_post_seconds must be 0-120.", 400)
+            except (ValueError, TypeError):
+                return api_error("motion_clip_post_seconds must be an integer.", 400)
+
+        elif key == "motion_poll_seconds":
+            try:
+                v = int(value)
+                if v < 3 or v > 60:
+                    return api_error("motion_poll_seconds must be 3-60.", 400)
+            except (ValueError, TypeError):
+                return api_error("motion_poll_seconds must be an integer.", 400)
+
+        elif key == "motion_cooldown_seconds":
+            try:
+                v = int(value)
+                if v < 10 or v > 600:
+                    return api_error("motion_cooldown_seconds must be 10-600.", 400)
+            except (ValueError, TypeError):
+                return api_error("motion_cooldown_seconds must be an integer.", 400)
+
         set_setting(key, value)
         updated.append(key)
 
@@ -203,6 +276,7 @@ def update_settings():
         message=(
             f"Updated {len(updated)} setting(s). "
             "Segment length is picked up by the recorder within a few seconds (FFmpeg restarts automatically). "
+            "Motion clip options apply on the next processor poll (no restart needed). "
             "Other options may require restarting the recorder container if they do not apply immediately."
         ),
     )

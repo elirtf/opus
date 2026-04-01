@@ -371,7 +371,7 @@ export default function RecordingsPage() {
         body: JSON.stringify(settings),
       });
       showToast(
-        "Settings saved. Segment length updates within ~10s (FFmpeg restarts automatically)."
+        "Settings saved. Segment length updates within ~10s. Motion clip options apply on the next processor poll."
       );
     } catch (e) {
       showToast(e.message, false);
@@ -927,6 +927,59 @@ export default function RecordingsPage() {
                       type="number" min="0" max="30"
                       value={settings.stagger_seconds || 2}
                       onChange={(e) => setSettings({ ...settings, stagger_seconds: parseInt(e.target.value) || 0 })}
+                      style={S.input}
+                      disabled={!isOriginalAdmin}
+                    />
+                  </label>
+                  <p style={{ ...S.hint, marginTop: 10, lineHeight: 1.45 }}>
+                    <strong style={{ color: "#94a3b8" }}>Motion / event clips</strong> (processor service). Core length is recorded after motion is detected; post-roll extends that capture. Pre-roll (seconds before the trigger) is taken from the latest completed segment file when continuous or rolling-segment recording exists — not from live RTSP alone.
+                  </p>
+                  <label style={S.label}>
+                    Motion clip — core (seconds)
+                    <input
+                      type="number" min="5" max="300"
+                      value={settings.motion_clip_seconds ?? 45}
+                      onChange={(e) => setSettings({ ...settings, motion_clip_seconds: parseInt(e.target.value, 10) || 45 })}
+                      style={S.input}
+                      disabled={!isOriginalAdmin}
+                    />
+                  </label>
+                  <label style={S.label}>
+                    Motion clip — pre-roll (seconds, 0–15)
+                    <input
+                      type="number" min="0" max="15"
+                      value={settings.motion_clip_pre_seconds ?? 0}
+                      onChange={(e) => setSettings({ ...settings, motion_clip_pre_seconds: parseInt(e.target.value, 10) || 0 })}
+                      style={S.input}
+                      disabled={!isOriginalAdmin}
+                    />
+                  </label>
+                  <label style={S.label}>
+                    Motion clip — post-roll (seconds)
+                    <input
+                      type="number" min="0" max="120"
+                      value={settings.motion_clip_post_seconds ?? 0}
+                      onChange={(e) => setSettings({ ...settings, motion_clip_post_seconds: parseInt(e.target.value, 10) || 0 })}
+                      style={S.input}
+                      disabled={!isOriginalAdmin}
+                    />
+                  </label>
+                  <label style={S.label}>
+                    Motion poll interval (seconds)
+                    <input
+                      type="number" min="3" max="60"
+                      value={settings.motion_poll_seconds ?? 6}
+                      onChange={(e) => setSettings({ ...settings, motion_poll_seconds: parseInt(e.target.value, 10) || 6 })}
+                      style={S.input}
+                      disabled={!isOriginalAdmin}
+                    />
+                  </label>
+                  <label style={S.label}>
+                    Motion cooldown (seconds between clips)
+                    <input
+                      type="number" min="10" max="600"
+                      value={settings.motion_cooldown_seconds ?? 75}
+                      onChange={(e) => setSettings({ ...settings, motion_cooldown_seconds: parseInt(e.target.value, 10) || 75 })}
                       style={S.input}
                       disabled={!isOriginalAdmin}
                     />

@@ -105,6 +105,8 @@ services:
       - CLIP_SECONDS=45
       # - CLIP_PRE_SECONDS=10
       # - CLIP_POST_SECONDS=15
+      # If event clips fail in Firefox (decode/metadata): try CLIP_CONCAT_PRE=0 to skip pre+main concat, or use H.264 on the camera.
+      # - CLIP_CONCAT_PRE=0
       - MOTION_COOLDOWN_SECONDS=60
       - MOTION_DETECTOR=opencv
       # opencv_mog2 = stronger outdoor motion; raise MOTION_MAX_CONCURRENT on big CPUs (default 4)

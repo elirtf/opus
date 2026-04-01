@@ -89,6 +89,7 @@ If you **split** the site and API across different host names, or use automation
 - [ ] **Live** video works on a **phone** (if it fails, see [streaming-playback.md](streaming-playback.md) — small screens often use HLS).
 - [ ] **Recorded** playback works (same login, same site).
 - [ ] Do not publish **go2rtc’s admin port** (1984) to the internet unless you deliberately want that; use nginx on **443** instead.
+- [ ] On the LAN, consider binding **1984** / **8554** to **127.0.0.1** only (see `compose.override.yml.example`) so users go through nginx; tune streaming in **Configuration → Streaming** and restart **go2rtc** after changes.
 
 ---
 

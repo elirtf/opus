@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { healthApi } from '../api/health'
 import { camerasApi } from '../api/cameras'
@@ -10,7 +10,7 @@ import Spinner from '../components/Spinner'
 import { useToast, ToastList } from '../components/Toast'
 import { compareByChannelThenName, naturalCompare } from '../utils/naturalCompare'
 
-const TAB_IDS = ['system', 'streaming', 'maintenance', 'cameras']
+const TAB_IDS = ['system', 'cameras', 'streaming', 'maintenance']
 
 function TabButton({ active, children, onClick }) {
   return (
@@ -26,7 +26,39 @@ function TabButton({ active, children, onClick }) {
   )
 }
 
-function SystemPanel({ about, loading, error }) {
+function SectionCard({ title, subtitle, children, actions = null }) {
+  return (
+    <section className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
+        <div>
+          <h3 className="text-sm font-semibold text-white">{title}</h3>
+          {subtitle && <p className="text-xs text-gray-500 mt-1">{subtitle}</p>}
+        </div>
+        {actions}
+      </div>
+      {children}
+    </section>
+  )
+}
+
+function StatPill({ label, value, tone = 'neutral' }) {
+  const toneClass =
+    tone === 'good'
+      ? 'text-green-300 border-green-900 bg-green-950/20'
+      : tone === 'warn'
+      ? 'text-amber-300 border-amber-900 bg-amber-950/20'
+      : tone === 'bad'
+      ? 'text-red-300 border-red-900 bg-red-950/20'
+      : 'text-gray-300 border-gray-700 bg-gray-800/50'
+  return (
+    <div className={`rounded-lg border px-3 py-2 ${toneClass}`}>
+      <p className="text-[11px] uppercase tracking-wide opacity-80">{label}</p>
+      <p className="text-sm font-medium mt-0.5">{value}</p>
+    </div>
+  )
+}
+
+function SystemPanel({ about, loading, error, setupStatus, isOriginalAdmin }) {
   if (loading) {
     return (
       <div className="flex justify-center py-16">
@@ -38,27 +70,34 @@ function SystemPanel({ about, loading, error }) {
     return <p className="text-red-400 text-sm">{error}</p>
   }
   const disk = about?.host?.recordings_disk
+  const setupComplete = setupStatus?.setup_complete === true
   return (
     <div className="space-y-6">
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-        <h3 className="text-sm font-semibold text-white mb-3">Opus</h3>
-        <dl className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-          <div>
-            <dt className="text-gray-500">Version</dt>
-            <dd className="text-gray-200 font-mono">{about?.opus_version ?? '—'}</dd>
-          </div>
-          <div>
-            <dt className="text-gray-500">Timezone (TZ)</dt>
-            <dd className="text-gray-200 font-mono">{about?.timezone || '—'}</dd>
-          </div>
-        </dl>
-        <p className="text-xs text-gray-500 mt-4">
-          Set <code className="text-gray-400">TZ</code> in Docker Compose or <code className="text-gray-400">.env</code> so segment filenames and logs match your region.
-          Optional: set <code className="text-gray-400">OPUS_VERSION</code> on the opus service to show a release tag in this panel.
-        </p>
-      </div>
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-        <h3 className="text-sm font-semibold text-white mb-3">Host</h3>
+      <SectionCard title="System at a glance" subtitle="Quick health and setup clarity for day-to-day use.">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <StatPill label="Version" value={about?.opus_version ?? 'unknown'} />
+          <StatPill label="Timezone" value={about?.timezone || 'not set'} tone={about?.timezone ? 'good' : 'warn'} />
+          <StatPill label="Initial setup" value={setupComplete ? 'Complete' : 'Needs attention'} tone={setupComplete ? 'good' : 'warn'} />
+          <StatPill
+            label="Settings access"
+            value={isOriginalAdmin ? 'Full admin access' : 'Limited admin access'}
+            tone={isOriginalAdmin ? 'good' : 'warn'}
+          />
+        </div>
+      </SectionCard>
+
+      <SectionCard title="What to do next" subtitle="Use this as your simple operational checklist.">
+        <ul className="space-y-2 text-sm text-gray-300">
+          <li>
+            {setupComplete ? 'OK' : 'Todo'} - Confirm recording storage setup in Recordings.
+          </li>
+          <li>Todo - Validate camera stream URLs after install or IP changes.</li>
+          <li>Todo - Review retention and storage policy before go-live.</li>
+          <li>Todo - Run one live-view and playback smoke test after updates.</li>
+        </ul>
+      </SectionCard>
+
+      <SectionCard title="Host details" subtitle="Helpful for support and capacity checks.">
         <dl className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
           <div>
             <dt className="text-gray-500">OS</dt>
@@ -79,12 +118,15 @@ function SystemPanel({ about, loading, error }) {
             <dd className="text-gray-200 font-mono text-xs break-all">{about?.host?.recordings_dir ?? '—'}</dd>
           </div>
         </dl>
+        <p className="text-xs text-gray-500 mt-4">
+          Set <code className="text-gray-400">TZ</code> and optionally <code className="text-gray-400">OPUS_VERSION</code> in Compose/.env.
+        </p>
         {disk && (
           <p className="text-xs text-gray-400 mt-3">
             Volume: {disk.used_gb} / {disk.total_gb} GiB used ({disk.free_gb} GiB free)
           </p>
         )}
-      </div>
+      </SectionCard>
     </div>
   )
 }
@@ -98,6 +140,7 @@ function StreamingPanel({ isOriginalAdmin, onSuccess, onError }) {
   const [envLocked, setEnvLocked] = useState(false)
   const [configPath, setConfigPath] = useState('')
   const [restartHint, setRestartHint] = useState('')
+  const [showAdvanced, setShowAdvanced] = useState(false)
 
   useEffect(() => {
     if (!isOriginalAdmin) {
@@ -168,11 +211,10 @@ function StreamingPanel({ isOriginalAdmin, onSuccess, onError }) {
 
   return (
     <form onSubmit={handleSave} className="space-y-6">
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-        <h3 className="text-sm font-semibold text-white mb-2">WebRTC ICE candidates</h3>
+      <SectionCard title="Streaming basics" subtitle="Most installs only need ICE candidates and a save/restart.">
         <p className="text-sm text-gray-400 mb-3">
-          One candidate per line (e.g. <code className="text-gray-300">stun:8555</code>). Written to{' '}
-          <code className="text-gray-400 break-all">{configPath || 'go2rtc.yaml'}</code> when you save.
+          One candidate per line (example: <code className="text-gray-300">stun:8555</code>). Saved into{' '}
+          <code className="text-gray-400 break-all">{configPath || 'go2rtc.yaml'}</code>.
         </p>
         <textarea
           className={`${inputCls} min-h-[120px]`}
@@ -180,45 +222,62 @@ function StreamingPanel({ isOriginalAdmin, onSuccess, onError }) {
           onChange={(e) => setCandidatesText(e.target.value)}
           placeholder="stun:8555"
         />
-      </div>
+      </SectionCard>
 
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
-        <h3 className="text-sm font-semibold text-white">Security</h3>
-        <label className="flex items-start gap-3 cursor-pointer">
-          <input
-            type="checkbox"
-            className="mt-1 rounded border-gray-600"
-            checked={allowArbitrary}
-            disabled={envLocked}
-            onChange={(e) => setAllowArbitrary(e.target.checked)}
-          />
-          <span>
-            <span className="text-sm text-gray-200">Allow arbitrary stream sources (echo:, expr:, exec:)</span>
-            <span className="block text-xs text-gray-500 mt-1">
-              Off by default — matches go2rtc security guidance. Enable only if you trust every RTSP URL entered in Opus.
-            </span>
-            {envLocked && (
-              <span className="block text-xs text-amber-400 mt-2">
-                Overridden by <code className="text-gray-400">GO2RTC_ALLOW_ARBITRARY_EXEC</code> in the environment; remove it to control this from the UI.
+      <SectionCard
+        title="Advanced streaming controls"
+        subtitle="Only needed for custom exec-based stream pipelines."
+        actions={
+          <button
+            type="button"
+            onClick={() => setShowAdvanced((v) => !v)}
+            className="text-xs text-indigo-400 hover:text-indigo-300 border border-indigo-900 hover:border-indigo-700 px-3 py-1 rounded-lg"
+          >
+            {showAdvanced ? 'Hide advanced' : 'Show advanced'}
+          </button>
+        }
+      >
+        {showAdvanced ? (
+          <div className="space-y-4">
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                className="mt-1 rounded border-gray-600"
+                checked={allowArbitrary}
+                disabled={envLocked}
+                onChange={(e) => setAllowArbitrary(e.target.checked)}
+              />
+              <span>
+                <span className="text-sm text-gray-200">Allow arbitrary stream sources (echo:, expr:, exec:)</span>
+                <span className="block text-xs text-gray-500 mt-1">
+                  Enable only if you trust every source URL managed in Opus.
+                </span>
+                {envLocked && (
+                  <span className="block text-xs text-amber-400 mt-2">
+                    Locked by <code className="text-gray-400">GO2RTC_ALLOW_ARBITRARY_EXEC</code> environment variable.
+                  </span>
+                )}
               </span>
-            )}
-          </span>
-        </label>
-        <label className="flex items-start gap-3 cursor-pointer">
-          <input
-            type="checkbox"
-            className="mt-1 rounded border-gray-600"
-            checked={allowExecMod}
-            onChange={(e) => setAllowExecMod(e.target.checked)}
-          />
-          <span>
-            <span className="text-sm text-gray-200">Enable go2rtc &quot;exec&quot; module</span>
-            <span className="block text-xs text-gray-500 mt-1">
-              Required only for advanced <code className="text-gray-400">exec:</code> pipelines. When off, the generated config omits the exec module and restricts exec paths when enabled.
-            </span>
-          </span>
-        </label>
-      </div>
+            </label>
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                className="mt-1 rounded border-gray-600"
+                checked={allowExecMod}
+                onChange={(e) => setAllowExecMod(e.target.checked)}
+              />
+              <span>
+                <span className="text-sm text-gray-200">Enable go2rtc &quot;exec&quot; module</span>
+                <span className="block text-xs text-gray-500 mt-1">
+                  Keep off unless you run advanced <code className="text-gray-400">exec:</code> pipelines.
+                </span>
+              </span>
+            </label>
+          </div>
+        ) : (
+          <p className="text-sm text-gray-500">Advanced options are hidden by default to keep setup simple.</p>
+        )}
+      </SectionCard>
 
       {restartHint && <p className="text-xs text-gray-500">{restartHint}</p>}
 
@@ -235,6 +294,7 @@ function StreamingPanel({ isOriginalAdmin, onSuccess, onError }) {
 
 function ApiTokenSettings({ onSuccess, onError }) {
   const [busy, setBusy] = useState(false)
+  const [open, setOpen] = useState(false)
 
   async function generate() {
     setBusy(true)
@@ -274,39 +334,55 @@ function ApiTokenSettings({ onSuccess, onError }) {
   }
 
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 mt-6">
-      <h3 className="text-sm font-semibold text-white mb-2">API access (Bearer token)</h3>
-      <p className="text-sm text-gray-400 mb-4">
-        For scripts or extra websites that can’t use normal login cookies, send{' '}
-        <code className="text-gray-300">Authorization: Bearer &lt;token&gt;</code>. If that tool runs on a{' '}
-        <strong className="text-gray-300">different web address</strong> than Opus, an admin must set{' '}
-        <code className="text-gray-300">CORS_ORIGINS</code> on the server — see the <em>Advanced</em> section in{' '}
-        <code className="text-gray-400">docs/remote-viewing.md</code>.
-      </p>
-      <div className="flex flex-wrap gap-2">
+    <SectionCard
+      title="API access (advanced)"
+      subtitle="Use this only for scripts or external apps that cannot use normal login sessions."
+      actions={
         <button
           type="button"
-          disabled={busy}
-          onClick={generate}
-          className="px-3 py-1.5 rounded-lg text-sm bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white"
+          onClick={() => setOpen((v) => !v)}
+          className="text-xs text-indigo-400 hover:text-indigo-300 border border-indigo-900 hover:border-indigo-700 px-3 py-1 rounded-lg"
         >
-          Generate new token
+          {open ? 'Hide' : 'Show'}
         </button>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={revoke}
-          className="px-3 py-1.5 rounded-lg text-sm border border-gray-600 hover:bg-gray-800 disabled:opacity-50 text-gray-300"
-        >
-          Revoke token
-        </button>
-      </div>
-    </div>
+      }
+    >
+      {open ? (
+        <>
+          <p className="text-sm text-gray-400 mb-4">
+            Send <code className="text-gray-300">Authorization: Bearer &lt;token&gt;</code>. For different origins, set{' '}
+            <code className="text-gray-300">CORS_ORIGINS</code> on the server (see <code className="text-gray-400">docs/remote-viewing.md</code>).
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={generate}
+              className="px-3 py-1.5 rounded-lg text-sm bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white"
+            >
+              Generate new token
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={revoke}
+              className="px-3 py-1.5 rounded-lg text-sm border border-gray-600 hover:bg-gray-800 disabled:opacity-50 text-gray-300"
+            >
+              Revoke token
+            </button>
+          </div>
+        </>
+      ) : (
+        <p className="text-sm text-gray-500">Hidden to reduce noise during normal configuration.</p>
+      )}
+    </SectionCard>
   )
 }
 
 function MaintenancePanel({ diagnostics, engine, loadingDiag, loadingEng, errorDiag, onRefresh }) {
   const [copied, setCopied] = useState(false)
+  const [showRawEngine, setShowRawEngine] = useState(false)
+  const [showRawDiag, setShowRawDiag] = useState(false)
 
   async function copyDiag() {
     try {
@@ -318,26 +394,16 @@ function MaintenancePanel({ diagnostics, engine, loadingDiag, loadingEng, errorD
     }
   }
 
+  const engineTone = engine?.engine_running ? 'good' : 'warn'
+  const freeGb = engine?.storage?.disk?.free_gb
+  const freeTone = freeGb == null ? 'neutral' : freeGb < 5 ? 'warn' : 'good'
+
   return (
     <div className="space-y-6">
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-        <h3 className="text-sm font-semibold text-white mb-2">Upgrades</h3>
-        <ul className="text-sm text-gray-400 list-disc list-inside space-y-1">
-          <li>Pull new images and recreate containers: <code className="text-gray-300">docker compose pull &amp;&amp; docker compose up -d</code></li>
-          <li>Review release notes before upgrading production systems.</li>
-        </ul>
-      </div>
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-        <h3 className="text-sm font-semibold text-white mb-2">Logs</h3>
-        <p className="text-sm text-gray-400">
-          Application logs go to the container stdout. Use{' '}
-          <code className="text-gray-300">docker logs opus</code> (and{' '}
-          <code className="text-gray-300">opus-recorder</code>, <code className="text-gray-300">go2rtc</code>) for troubleshooting.
-        </p>
-      </div>
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-          <h3 className="text-sm font-semibold text-white">Recorder engine</h3>
+      <SectionCard
+        title="Maintenance summary"
+        subtitle="Fast readout before diving into diagnostics."
+        actions={
           <button
             type="button"
             onClick={onRefresh}
@@ -345,24 +411,43 @@ function MaintenancePanel({ diagnostics, engine, loadingDiag, loadingEng, errorD
           >
             Refresh
           </button>
-        </div>
+        }
+      >
         {loadingEng ? (
           <Spinner className="w-5 h-5" />
         ) : (
-          <pre className="text-xs text-gray-400 overflow-x-auto max-h-48 bg-black/40 rounded-lg p-3 border border-gray-800">
-            {JSON.stringify(engine, null, 2)}
-          </pre>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <StatPill label="Recorder engine" value={engine?.engine_running ? 'Running' : 'Not running'} tone={engineTone} />
+            <StatPill label="Active recordings" value={String(engine?.active_recordings ?? 0)} />
+            <StatPill label="Shelved processes" value={String(engine?.shelved_count ?? 0)} tone={(engine?.shelved_count || 0) > 0 ? 'warn' : 'good'} />
+            <StatPill label="Free disk (GiB)" value={freeGb == null ? 'unknown' : String(freeGb)} tone={freeTone} />
+          </div>
         )}
         {engine?.disk_pressure && (
-          <p className="text-amber-400 text-xs mt-2">
-            Disk pressure: free space is below <code className="text-amber-200">RECORDING_MIN_FREE_GB</code>. New
-            recorders will not start until space is freed.
+          <p className="text-amber-400 text-xs mt-3">
+            Disk pressure detected. New recorder processes will wait until free space improves.
           </p>
         )}
-      </div>
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-          <h3 className="text-sm font-semibold text-white">Host diagnostics</h3>
+      </SectionCard>
+
+      <SectionCard title="Upgrade checklist" subtitle="Use this process for predictable updates.">
+        <ul className="text-sm text-gray-400 list-disc list-inside space-y-1">
+          <li>Update and recreate services: <code className="text-gray-300">docker compose pull &amp;&amp; docker compose up -d</code></li>
+          <li>After updates, test one camera in live view and one playback timeline query.</li>
+          <li>Review release notes before production rollouts.</li>
+        </ul>
+      </SectionCard>
+
+      <SectionCard title="Container logs" subtitle="Primary troubleshooting source.">
+        <p className="text-sm text-gray-400">
+          Use <code className="text-gray-300">docker logs opus</code>, <code className="text-gray-300">opus-recorder</code>, and <code className="text-gray-300">go2rtc</code>.
+        </p>
+      </SectionCard>
+
+      <SectionCard
+        title="Host diagnostics"
+        subtitle="Detailed system JSON for support and deeper troubleshooting."
+        actions={
           <div className="flex gap-2">
             <button
               type="button"
@@ -379,18 +464,51 @@ function MaintenancePanel({ diagnostics, engine, loadingDiag, loadingEng, errorD
             >
               {copied ? 'Copied' : 'Copy JSON'}
             </button>
+            <button
+              type="button"
+              onClick={() => setShowRawDiag((v) => !v)}
+              className="text-xs text-gray-300 hover:text-white border border-gray-600 px-3 py-1 rounded-lg"
+            >
+              {showRawDiag ? 'Hide raw' : 'Show raw'}
+            </button>
           </div>
-        </div>
+        }
+      >
         {errorDiag && <p className="text-red-400 text-sm mb-2">{errorDiag}</p>}
         {loadingDiag ? (
           <Spinner className="w-5 h-5" />
-        ) : (
+        ) : showRawDiag ? (
           <pre className="text-xs text-gray-400 overflow-x-auto max-h-96 bg-black/40 rounded-lg p-3 border border-gray-800">
             {diagnostics != null ? JSON.stringify(diagnostics, null, 2) : '{}'}
           </pre>
+        ) : (
+          <p className="text-sm text-gray-500">Raw diagnostics are hidden by default for readability.</p>
         )}
-        <p className="text-xs text-gray-500 mt-2">JSON schema is described in the repo file docs/hw-diagnostics-spec.md.</p>
-      </div>
+      </SectionCard>
+
+      <SectionCard
+        title="Recorder raw status"
+        subtitle="Developer-focused details from the recorder process."
+        actions={
+          <button
+            type="button"
+            onClick={() => setShowRawEngine((v) => !v)}
+            className="text-xs text-gray-300 hover:text-white border border-gray-600 px-3 py-1 rounded-lg"
+          >
+            {showRawEngine ? 'Hide raw' : 'Show raw'}
+          </button>
+        }
+      >
+        {loadingEng ? (
+          <Spinner className="w-5 h-5" />
+        ) : showRawEngine ? (
+          <pre className="text-xs text-gray-400 overflow-x-auto max-h-48 bg-black/40 rounded-lg p-3 border border-gray-800">
+            {JSON.stringify(engine, null, 2)}
+          </pre>
+        ) : (
+          <p className="text-sm text-gray-500">Raw status is hidden by default for day-to-day operations.</p>
+        )}
+      </SectionCard>
     </div>
   )
 }
@@ -446,8 +564,7 @@ function StreamEditForm({ cameraRow, source, onSubmit, onClose }) {
         />
         <p className="text-xs text-gray-500 mt-1">
           For <span className="font-mono text-gray-400">…-main</span> cameras without a separate{' '}
-          <span className="font-mono text-gray-400">…-sub</span> row (e.g. NVR import has two rows), this URL is
-          registered in go2rtc as the paired sub stream so the dashboard and full-screen view use it automatically.
+          <span className="font-mono text-gray-400">…-sub</span> row, this URL is paired automatically for live view.
         </p>
       </div>
       <p className="text-xs text-gray-500">Credentials stay on the server; list views show masked URLs.</p>
@@ -468,6 +585,21 @@ function StreamEditForm({ cameraRow, source, onSubmit, onClose }) {
 }
 
 function CamerasPanel({ inventory, loading, onEditStreams }) {
+  const [query, setQuery] = useState('')
+
+  const normalized = query.trim().toLowerCase()
+  const filtered = useMemo(() => {
+    if (!normalized) return inventory
+    return inventory.filter((row) => {
+      const hay = [row.display_name, row.name, row.nvr_name, row.source_host, String(row.channel ?? '')]
+        .join(' ')
+        .toLowerCase()
+      return hay.includes(normalized)
+    })
+  }, [inventory, normalized])
+
+  const onlineCount = filtered.filter((row) => row.online === true).length
+
   if (loading) {
     return (
       <div className="flex justify-center py-16">
@@ -480,7 +612,7 @@ function CamerasPanel({ inventory, loading, onEditStreams }) {
   }
 
   const groups = {}
-  for (const row of inventory) {
+  for (const row of filtered) {
     const key = row.nvr_id ?? 'standalone'
     const label = row.nvr_name || 'Standalone (direct camera / no site group)'
     if (!groups[key]) groups[key] = { label, rows: [] }
@@ -491,10 +623,26 @@ function CamerasPanel({ inventory, loading, onEditStreams }) {
   }
 
   return (
-    <div className="space-y-8">
-      <p className="text-sm text-gray-400">
-        Per-site stream registry. <strong className="text-gray-300">Online</strong> uses go2rtc producers. Edit RTSP URLs when a camera IP changes; go2rtc is updated automatically.
-      </p>
+    <div className="space-y-6">
+      <SectionCard title="Camera management" subtitle="Update stream URLs and verify camera connectivity quickly.">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            className="w-full sm:max-w-md bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            placeholder="Filter by camera name, channel, site, or host"
+          />
+          <p className="text-xs text-gray-400">
+            Showing {filtered.length} / {inventory.length} cameras, {onlineCount} online
+          </p>
+        </div>
+      </SectionCard>
+
+      {!filtered.length && (
+        <p className="text-sm text-gray-500">No cameras match your filter.</p>
+      )}
+
       {Object.entries(groups).sort(([, a], [, b]) => naturalCompare(a.label, b.label)).map(([key, g]) => (
         <div key={key}>
           <h3 className="text-sm font-semibold text-indigo-300 mb-2">{g.label}</h3>
@@ -696,11 +844,14 @@ export default function Configuration() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
         <div>
           <h2 className="text-xl font-bold text-white">Configuration</h2>
-          <p className="text-sm text-gray-500 mt-1">Opus system settings — not your old NVR firmware.</p>
+          <p className="text-sm text-gray-500 mt-1">Simple controls first, advanced controls when you need them.</p>
         </div>
         <div className="flex rounded-lg bg-gray-800 p-0.5 self-start flex-wrap">
           <TabButton active={tab === 'system'} onClick={() => setTab('system')}>
-            System
+            Overview
+          </TabButton>
+          <TabButton active={tab === 'cameras'} onClick={() => setTab('cameras')}>
+            Cameras
           </TabButton>
           <TabButton active={tab === 'streaming'} onClick={() => setTab('streaming')}>
             Streaming
@@ -708,15 +859,18 @@ export default function Configuration() {
           <TabButton active={tab === 'maintenance'} onClick={() => setTab('maintenance')}>
             Maintenance
           </TabButton>
-          <TabButton active={tab === 'cameras'} onClick={() => setTab('cameras')}>
-            Camera management
-          </TabButton>
         </div>
       </div>
 
       {tab === 'system' && (
         <>
-          <SystemPanel about={about} loading={aboutLoading} error={aboutErr} />
+          <SystemPanel
+            about={about}
+            loading={aboutLoading}
+            error={aboutErr}
+            setupStatus={setupStatus}
+            isOriginalAdmin={isOriginalAdmin}
+          />
           <ApiTokenSettings onSuccess={success} onError={toastError} />
         </>
       )}

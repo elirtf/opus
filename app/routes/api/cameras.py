@@ -22,7 +22,7 @@ from app.routes.api.utils import (
 )
 
 RECORDING_POLICIES = frozenset({"off", "continuous", "events_only"})
-from app.go2rtc import stream_sync, stream_delete
+from app.go2rtc import stream_sync, stream_delete, validate_stream_url_for_go2rtc
 
 bp = Blueprint("api_cameras", __name__, url_prefix="/api/cameras")
 
@@ -206,6 +206,14 @@ def create_camera():
         return api_error("Recording policies other than off require a main stream (-main).", 400)
     sub = (data.get("rtsp_substream_url") or "").strip() or None
 
+    v_err = validate_stream_url_for_go2rtc(rtsp_url)
+    if v_err:
+        return api_error(v_err, 400)
+    if sub:
+        s_err = validate_stream_url_for_go2rtc(sub)
+        if s_err:
+            return api_error(f"Substream: {s_err}", 400)
+
     cam = Camera.create(
         name=name,
         display_name=display_name,
@@ -273,6 +281,14 @@ def update_camera(cam_id):
                 cam.recording_policy = "continuous"
         else:
             cam.recording_policy = "off"
+
+    v_err = validate_stream_url_for_go2rtc(cam.rtsp_url)
+    if v_err:
+        return api_error(v_err, 400)
+    if cam.rtsp_substream_url:
+        s_err = validate_stream_url_for_go2rtc(cam.rtsp_substream_url)
+        if s_err:
+            return api_error(f"Substream: {s_err}", 400)
 
     cam.save()
 

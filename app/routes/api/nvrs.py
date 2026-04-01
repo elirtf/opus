@@ -39,6 +39,12 @@ def nvr_to_dict(nvr, cam_count=None, admin=False):
 # ── go2rtc + import helpers ───────────────────────────────────────────────────
 
 def stream_add(name, rtsp_url):
+    from app.go2rtc import validate_stream_url_for_go2rtc
+
+    err = validate_stream_url_for_go2rtc(rtsp_url)
+    if err:
+        current_app.logger.warning("go2rtc stream_add rejected %s: %s", name, err)
+        return
     try:
         http.put(
             f"{current_app.config['GO2RTC_URL']}/api/streams",

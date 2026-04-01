@@ -596,7 +596,8 @@ export default function Configuration() {
 
   const [setupStatus, setSetupStatus] = useState(null)
   useEffect(() => {
-    api('/api/recordings/settings/setup-status')
+    api
+      .get('/api/recordings/settings/setup-status')
       .then(setSetupStatus)
       .catch(() => {})
   }, [])

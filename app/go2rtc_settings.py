@@ -6,8 +6,12 @@ from __future__ import annotations
 
 import json
 import os
+import re
 
 from app.routes.api.recording_settings import get_setting, set_setting
+
+# go2rtc webrtc.candidates — STUN/TURN style URIs (see project docs / go2rtc README).
+_WEBRTC_CANDIDATE_PREFIX = re.compile(r"^(stun|turn):", re.I)
 
 # ── Keys & defaults ───────────────────────────────────────────────────────────
 
@@ -29,10 +33,30 @@ def get_webrtc_candidates() -> list[str]:
     return ["stun:8555"]
 
 
+def validate_webrtc_candidates(candidates: list[str]) -> tuple[bool, str]:
+    """Each line must look like stun:… or turn:… (go2rtc / ICE URI form)."""
+    for raw in candidates:
+        s = str(raw).strip()
+        if not s:
+            continue
+        if len(s) > 512:
+            return False, "Each candidate must be at most 512 characters."
+        if not _WEBRTC_CANDIDATE_PREFIX.match(s):
+            return (
+                False,
+                "Each WebRTC candidate must start with stun: or turn: "
+                f"(e.g. stun:stun.l.google.com:19302). Invalid: {s[:120]!r}",
+            )
+    return True, ""
+
+
 def set_webrtc_candidates(candidates: list[str]) -> None:
     clean = [str(x).strip() for x in candidates if str(x).strip()]
     if not clean:
         clean = ["stun:8555"]
+    ok, err = validate_webrtc_candidates(clean)
+    if not ok:
+        raise ValueError(err)
     set_setting(GO2RTC_WEBRTC_CANDIDATES, json.dumps(clean))
 
 

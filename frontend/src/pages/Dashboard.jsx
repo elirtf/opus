@@ -4,6 +4,7 @@ import { camerasApi } from '../api/cameras'
 import { healthApi } from '../api/health'
 import Spinner from '../components/Spinner'
 import LivePlayer from '../components/player/LivePlayer'
+import { useLiveStreamGate } from '../hooks/useLiveStreamGate'
 import { useAuth } from '../context/AuthContext'
 import { compareCamerasByDisplayName } from '../utils/naturalCompare'
 
@@ -44,6 +45,10 @@ function StatusDot({ online }) {
 }
 
 function CameraTile({ cam, streamName, online, onClick }) {
+  const { containerRef, enabled: streamEnabled } = useLiveStreamGate({
+    rootMargin: '100px',
+  })
+
   const label = cam.display_name
     .replace(' — ', ' ')
     .replace(' Main', '')
@@ -51,6 +56,7 @@ function CameraTile({ cam, streamName, online, onClick }) {
 
   return (
     <div
+      ref={containerRef}
       className="bg-black overflow-hidden relative flex flex-col cursor-pointer group"
       onClick={onClick}
     >
@@ -77,7 +83,7 @@ function CameraTile({ cam, streamName, online, onClick }) {
           <LivePlayer
             cameraName={cam.name}
             streamName={streamName}
-            enabled={true}
+            enabled={streamEnabled}
             playbackMode="auto"
             nativeVideoControls={false}
             className="h-full"

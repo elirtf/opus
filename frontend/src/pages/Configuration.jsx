@@ -169,8 +169,23 @@ function StreamingPanel({ isOriginalAdmin, onSuccess, onError }) {
     }
   }, [isOriginalAdmin])
 
+  function validateIceCandidates(text) {
+    const lines = text.split('\n').map((s) => s.trim()).filter(Boolean)
+    for (const ln of lines) {
+      if (!/^(stun|turn):/i.test(ln)) {
+        return `Each ICE line must start with stun: or turn:. Invalid: ${ln.slice(0, 96)}`
+      }
+    }
+    return null
+  }
+
   async function handleSave(e) {
     e.preventDefault()
+    const iceErr = validateIceCandidates(candidatesText)
+    if (iceErr) {
+      onError(iceErr)
+      return
+    }
     setSaving(true)
     try {
       const lines = candidatesText
@@ -213,14 +228,22 @@ function StreamingPanel({ isOriginalAdmin, onSuccess, onError }) {
     <form onSubmit={handleSave} className="space-y-6">
       <SectionCard title="Streaming basics" subtitle="Most installs only need ICE candidates and a save/restart.">
         <p className="text-sm text-gray-400 mb-3">
-          One candidate per line (example: <code className="text-gray-300">stun:8555</code>). Saved into{' '}
-          <code className="text-gray-400 break-all">{configPath || 'go2rtc.yaml'}</code>.
+          One <strong className="text-gray-300">WebRTC ICE</strong> candidate per line. Each line must start with{' '}
+          <code className="text-gray-300">stun:</code> or <code className="text-gray-300">turn:</code> (go2rtc
+          format). Saved into <code className="text-gray-400 break-all">{configPath || 'go2rtc.yaml'}</code>.
+          For remote access, HTTPS, and when to use TURN, see the project doc{' '}
+          <code className="text-gray-500">docs/remote-viewing.md</code> (section &quot;WebRTC ICE&quot;).
+        </p>
+        <p className="text-xs text-gray-500 mb-2 font-mono leading-relaxed">
+          Examples: <span className="text-gray-400">stun:8555</span> ·{' '}
+          <span className="text-gray-400">stun:stun.l.google.com:19302</span> ·{' '}
+          <span className="text-gray-400">turn:user:pass@relay.example.com:3478?transport=udp</span>
         </p>
         <textarea
           className={`${inputCls} min-h-[120px]`}
           value={candidatesText}
           onChange={(e) => setCandidatesText(e.target.value)}
-          placeholder="stun:8555"
+          placeholder={'stun:8555\nstun:stun.l.google.com:19302'}
         />
       </SectionCard>
 

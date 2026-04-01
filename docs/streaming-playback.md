@@ -19,6 +19,7 @@ The sections below are the technical detail for installers and developers.
 | -------------- | ----------------------------------------------------------------------------------------------- |
 | **Live**       | Browser → **nginx** `/go2rtc/` → **go2rtc** (MSE, WebRTC-related paths, etc. per go2rtc config) |
 | **Live (HLS)** | Same proxy — **go2rtc** playlist at `/go2rtc/api/stream.m3u8?src=<stream>` (native Safari; **hls.js** elsewhere). The React UI uses this on coarse-pointer / narrow viewports by default. |
+| **Live (camera page)** | On **desktop / fine pointer**, the single-camera view often uses **WebRTC** (`stream.html?mode=webrtc`) for lower latency; **touch / narrow** uses the same **auto** rules as elsewhere (**HLS** or **MSE**). Configure **ICE** under **Configuration → Streaming**; see [remote-viewing.md](remote-viewing.md). |
 | **Recordings** | **FFmpeg** segment writer → **MP4** on disk; UI/API serves files (Flask) for playback           |
 
 

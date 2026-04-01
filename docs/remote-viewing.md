@@ -74,6 +74,23 @@ The project’s `nginx/nginx.conf` shows how the bundled nginx does this; copy t
 
 ---
 
+## WebRTC ICE (STUN / TURN)
+
+On the **single-camera** live page, Opus often uses **WebRTC** (`mode=webrtc` in go2rtc) on desktop for lower latency. **Dashboard** tiles usually use **MSE** or **HLS** instead, so they are less sensitive to NAT traversal.
+
+If live view shows **ICE failed** or endless loading:
+
+1. Open **Configuration → Streaming** (original admin only). Enter **ICE candidates** — one per line — each must start with **`stun:`** or **`turn:`** (go2rtc’s format). Examples:
+   - `stun:stun.l.google.com:19302` — public STUN (fine for many LAN installs).
+   - `stun:8555` — go2rtc’s default **local** UDP port when the browser can reach the host directly (typical on the same LAN as the server).
+   - `turn:user:pass@relay.example.com:3478?transport=udp` — TURN when clients cannot reach go2rtc’s UDP ports (common for strict mobile networks or double NAT). Run a TURN server you control; do not paste secrets into screenshots or tickets.
+2. **Restart the go2rtc container** after saving so `go2rtc.yaml` reloads.
+3. Prefer **HTTPS** on a single hostname for the UI and `/go2rtc/` (see above). Split origins complicate cookies and sometimes WebRTC permissions.
+
+For codec and browser limitations (e.g. HEVC in MSE), see [streaming-playback.md](streaming-playback.md) and `go2rtc/README-HEVC.md` in the repo.
+
+---
+
 ## Advanced: different domains for UI vs API
 
 The normal install keeps everything on **one address**, so you usually **do not** need this.

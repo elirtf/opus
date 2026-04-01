@@ -46,7 +46,10 @@ def update_go2rtc_settings():
         for c in candidates:
             if len(c) > 512:
                 return api_error("Each candidate must be at most 512 characters.", 400)
-        gset.set_webrtc_candidates(candidates)
+        try:
+            gset.set_webrtc_candidates(candidates)
+        except ValueError as e:
+            return api_error(str(e), 400)
 
     if "allow_arbitrary_exec" in data:
         if gset.env_arbitrary_exec_is_set():

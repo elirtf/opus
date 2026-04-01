@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import LivePlayer from "../components/player/LivePlayer";
+import LivePlayer, {
+  shouldPreferHlsForDevice,
+} from "../components/player/LivePlayer";
 import Spinner from "../components/Spinner";
 import { camerasApi } from "../api/cameras";
 
@@ -132,14 +134,17 @@ export default function CameraView() {
 
       <div className="flex-1 bg-black min-h-0">
         {/*
-          MSE over HTTP works through nginx; WebRTC often hits ICE failures behind Docker/NAT
-          unless go2rtc advertises reachable candidates or TURN is configured.
-          Substream live preview matches the dashboard (lower bitrate).
+          Desktop: WebRTC for lower latency on the single-camera page (configure ICE in
+          Configuration → Streaming). Touch / narrow viewports use the same "auto" path as
+          the dashboard (HLS) for reliability. Substream preview matches the dashboard.
         */}
         <LivePlayer
           cameraName={cam.name}
           streamName={cam.live_view_stream_name}
           enabled={true}
+          playbackMode={
+            shouldPreferHlsForDevice() ? "auto" : "webrtc"
+          }
         />
       </div>
     </div>

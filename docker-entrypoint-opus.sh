@@ -5,7 +5,11 @@ set -e
 # would still show the old UI until the volume was removed (ex. via prune).
 if [ -d /opt/opus-ui ] && [ -n "$(ls -A /opt/opus-ui 2>/dev/null)" ]; then
   mkdir -p /app/app/static
-  find /app/app/static -mindepth 1 -delete 2>/dev/null || true
-  cp -rf /opt/opus-ui/. /app/app/static/
+  if [ -w /app/app/static ]; then
+    find /app/app/static -mindepth 1 -delete 2>/dev/null || true
+    cp -rf /opt/opus-ui/. /app/app/static/ || true
+  else
+    echo "WARN: /app/app/static is not writable; skipping UI sync."
+  fi
 fi
 exec "$@"

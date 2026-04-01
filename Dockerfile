@@ -27,11 +27,7 @@ COPY . .
 COPY --from=frontend /frontend/dist /opt/opus-ui
 
 COPY docker-entrypoint-opus.sh /docker-entrypoint-opus.sh
-RUN chmod +x /docker-entrypoint-opus.sh && \
-    groupadd --system opus && \
-    useradd --system --gid opus --home-dir /app --shell /usr/sbin/nologin opus && \
-    mkdir -p /app/instance /recordings /config && \
-    chown -R opus:opus /app /opt/opus-ui /recordings /config
+RUN chmod +x /docker-entrypoint-opus.sh
 
 ENV FLASK_APP=run.py
 ENV FLASK_ENV=production
@@ -40,8 +36,6 @@ EXPOSE 5000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
     CMD curl -fsS http://127.0.0.1:5000/healthz || exit 1
-
-USER opus
 
 ENTRYPOINT ["/docker-entrypoint-opus.sh"]
 CMD ["python", "run.py"]

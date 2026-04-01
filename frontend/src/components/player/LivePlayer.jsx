@@ -7,6 +7,9 @@ import {
 } from "react";
 import Hls from "hls.js";
 import { withOrigin } from "../../api/client";
+import { PLAYBACK_FAIL_HEVC_HINT, shouldPreferHlsForDevice } from "../../utils/streamPlayback";
+
+export { shouldPreferHlsForDevice } from "../../utils/streamPlayback";
 
 /**
  * Live playback strategy: keep go2rtc’s `stream.html` inside an iframe (MSE/WebRTC handled
@@ -21,13 +24,6 @@ import { withOrigin } from "../../api/client";
  * creation (thousands of ffmpeg processes) when segments failed and the
  * native HLS player retried aggressively.
  */
-export function shouldPreferHlsForDevice() {
-  if (typeof window === "undefined") return false;
-  if (window.matchMedia("(pointer: coarse)").matches) return true;
-  if (window.matchMedia("(max-width: 1024px)").matches) return true;
-  return false;
-}
-
 function resolveMode(playbackMode) {
   if (playbackMode === "auto") {
     return shouldPreferHlsForDevice() ? "hls" : "mse";
@@ -169,8 +165,10 @@ function Go2rtcIframe({ src, title }) {
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/85 text-amber-100 text-xs px-4 text-center z-10">
           <p>Stream not responding (embedded player timed out).</p>
           <p className="text-gray-400 max-w-sm">
-            Check the camera stream, WebRTC ICE settings (Configuration → Streaming), and
-            codec compatibility (H.264 substream recommended for browsers).
+            If you saw a go2rtc error like &quot;codecs not matched: video:H265&quot;, the
+            camera is sending H.265 but the browser cannot negotiate that codec over WebRTC.
+            Use an H.264 stream, or FFmpeg transcoding in go2rtc. Also check ICE (Configuration
+            → Streaming). {PLAYBACK_FAIL_HEVC_HINT}
           </p>
           <button
             type="button"
@@ -250,7 +248,7 @@ function HlsVideo({ src, cameraName, nativeControls = true }) {
             if (!cancelled) startHlsJs();
           }, RETRY_DELAY_MS);
         } else {
-          setErr("Stream unavailable");
+          setErr(`Stream unavailable. ${PLAYBACK_FAIL_HEVC_HINT}`);
         }
       });
 
@@ -276,7 +274,7 @@ function HlsVideo({ src, cameraName, nativeControls = true }) {
             if (!cancelled) startNativeHls();
           }, RETRY_DELAY_MS);
         } else {
-          setErr("Stream unavailable");
+          setErr(`Stream unavailable. ${PLAYBACK_FAIL_HEVC_HINT}`);
         }
       };
 
@@ -293,9 +291,11 @@ function HlsVideo({ src, cameraName, nativeControls = true }) {
       );
     }
 
-    if (Hls.isSupported()) {
+    const hlsSupported = Hls.isSupported();
+    const nativeM3u8 = !!video.canPlayType("application/vnd.apple.mpegurl");
+    if (hlsSupported) {
       startHlsJs();
-    } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+    } else if (nativeM3u8) {
       startNativeHls();
     } else {
       setErr("HLS not supported in this browser");

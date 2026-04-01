@@ -1,16 +1,16 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import LivePlayer, {
-  shouldPreferHlsForDevice,
-} from "../components/player/LivePlayer";
+import LivePlayer from "../components/player/LivePlayer";
 import Spinner from "../components/Spinner";
 import { camerasApi } from "../api/cameras";
+import { cameraPagePlaybackMode } from "../utils/streamPlayback";
 
 export default function CameraView() {
   const { name } = useParams();
   const navigate = useNavigate();
 
   const [cam, setCam] = useState(null);
+  const [streamStats, setStreamStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
 
@@ -21,9 +21,13 @@ export default function CameraView() {
       try {
         setLoading(true);
 
-        // Prefer summary because it includes nvr_name, recording_enabled, online, etc.
-        const all = await camerasApi.summary();
+        const [all, st] = await Promise.all([
+          camerasApi.summary(),
+          camerasApi.stats(name).catch(() => null),
+        ]);
         if (!alive) return;
+
+        setStreamStats(st);
 
         const found = all.find((c) => c.name === name);
         if (found) {
@@ -32,17 +36,16 @@ export default function CameraView() {
           return;
         }
 
-        // Fallback: status endpoint if not in summary for any reason
-        const st = await camerasApi.status(name);
+        const status = await camerasApi.status(name);
         if (!alive) return;
 
         setCam({
           id: null,
-          name: st.name,
-          display_name: st.display_name,
+          name: status.name,
+          display_name: status.display_name,
           nvr_name: null,
-          recording_enabled: st.recording_enabled,
-          online: st.online,
+          recording_enabled: status.recording_enabled,
+          online: status.online,
         });
 
         setErr(null);
@@ -87,6 +90,9 @@ export default function CameraView() {
     .replace(" — ", " ")
     .replace(" Main", "");
 
+  const liveWarnings = streamStats?.live_view_warnings;
+  const playbackMode = cameraPagePlaybackMode(streamStats);
+
   return (
     <div className="flex flex-col h-full">
       <div className="px-4 py-2.5 bg-gray-900 border-b border-gray-800 flex items-center justify-between shrink-0">
@@ -118,7 +124,6 @@ export default function CameraView() {
               const dd = String(today.getDate()).padStart(2, "0");
               const dateStr = `${yyyy}-${mm}-${dd}`;
 
-              // Navigate to recordings page with this camera and date pre-selected
               navigate(
                 `/recordings?camera=${encodeURIComponent(
                   cam.name
@@ -132,19 +137,24 @@ export default function CameraView() {
         )}
       </div>
 
+      {Array.isArray(liveWarnings) && liveWarnings.length > 0 && (
+        <div className="shrink-0 px-4 py-2.5 bg-amber-950/50 border-b border-amber-900/80 text-amber-100 text-xs leading-relaxed space-y-1">
+          {liveWarnings.map((w) => (
+            <p key={w.code}>{w.message}</p>
+          ))}
+        </div>
+      )}
+
       <div className="flex-1 bg-black min-h-0">
         {/*
-          Desktop: WebRTC for lower latency on the single-camera page (configure ICE in
-          Configuration → Streaming). Touch / narrow viewports use the same "auto" path as
-          the dashboard (HLS) for reliability. Substream preview matches the dashboard.
+          Desktop: WebRTC for lower latency unless go2rtc stats report HEVC (then MSE).
+          Touch / narrow: same auto path as dashboard (HLS). Substream matches dashboard.
         */}
         <LivePlayer
           cameraName={cam.name}
           streamName={cam.live_view_stream_name}
           enabled={true}
-          playbackMode={
-            shouldPreferHlsForDevice() ? "auto" : "webrtc"
-          }
+          playbackMode={playbackMode}
         />
       </div>
     </div>

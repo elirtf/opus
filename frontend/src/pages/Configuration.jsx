@@ -327,8 +327,13 @@ function ApiTokenSettings({ onSuccess, onError }) {
       if (token) {
         try {
           await navigator.clipboard.writeText(token)
-        } catch {
-          /* ignore */
+          // #region agent log
+          fetch('http://127.0.0.1:7548/ingest/08386897-29be-4b7e-bdb0-4c0c1d047610',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'db7884'},body:JSON.stringify({sessionId:'db7884',hypothesisId:'H3',location:'Configuration.jsx:ApiTokenSettings',message:'clipboard token',data:{ok:true},timestamp:Date.now()})}).catch(()=>{});
+          // #endregion
+        } catch (e) {
+          // #region agent log
+          fetch('http://127.0.0.1:7548/ingest/08386897-29be-4b7e-bdb0-4c0c1d047610',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'db7884'},body:JSON.stringify({sessionId:'db7884',hypothesisId:'H3',location:'Configuration.jsx:ApiTokenSettings',message:'clipboard token',data:{ok:false,errName:e?.name||'unknown'},timestamp:Date.now()})}).catch(()=>{});
+          // #endregion
         }
         onSuccess(
           'New API token created (copied to clipboard if permitted). Store it securely; you will not see it again. For browser clients on a different origin than Opus, paste it into localStorage key opus_bearer_token or your client config.'
@@ -410,10 +415,15 @@ function MaintenancePanel({ diagnostics, engine, loadingDiag, loadingEng, errorD
   async function copyDiag() {
     try {
       await navigator.clipboard.writeText(JSON.stringify(diagnostics, null, 2))
+      // #region agent log
+      fetch('http://127.0.0.1:7548/ingest/08386897-29be-4b7e-bdb0-4c0c1d047610',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'db7884'},body:JSON.stringify({sessionId:'db7884',hypothesisId:'H3',location:'Configuration.jsx:copyDiag',message:'clipboard diagnostics',data:{ok:true},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
-    } catch {
-      /* ignore */
+    } catch (e) {
+      // #region agent log
+      fetch('http://127.0.0.1:7548/ingest/08386897-29be-4b7e-bdb0-4c0c1d047610',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'db7884'},body:JSON.stringify({sessionId:'db7884',hypothesisId:'H3',location:'Configuration.jsx:copyDiag',message:'clipboard diagnostics',data:{ok:false,errName:e?.name||'unknown'},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
     }
   }
 

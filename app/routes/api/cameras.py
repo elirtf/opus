@@ -116,6 +116,28 @@ def _get_stream_health_cached():
         return _state_cache.get("health", {}) or {}
 
 
+def _live_view_playback_warnings(video_codec: str | None) -> list[dict[str, str]]:
+    """
+    go2rtc WebRTC requires codecs the browser can negotiate (typically H.264, VP8, VP9, AV1).
+    H.265/HEVC from the camera often yields: codecs not matched: video:H265 => ...
+    """
+    if not video_codec:
+        return []
+    u = (video_codec or "").upper().replace(" ", "")
+    if "265" in u or "HEVC" in u:
+        return [
+            {
+                "code": "HEVC_WEBRTC",
+                "message": (
+                    "This stream is H.265 (HEVC). Web browsers cannot negotiate H.265 over WebRTC, "
+                    "so go2rtc reports a codec mismatch (for example: video:H265 vs H.264/VP8/VP9/AV1). "
+                    "Configure an H.264 sub stream, or add FFmpeg transcoding in go2rtc — see go2rtc/README-HEVC.md."
+                ),
+            }
+        ]
+    return []
+
+
 def _live_view_stream_name(cam, all_camera_names=None):
     """
     go2rtc stream key for live preview: use sub when configured (rtsp_substream_url or paired *-sub row).
@@ -513,19 +535,26 @@ def camera_stats(name: str):
         return api_error("Forbidden.", 403)
 
     try:
+        all_names = {c.name for c in Camera.select(Camera.name)}
+        live_key = _live_view_stream_name(cam, all_names)
+
         streams = _fetch_go2rtc_streams()
-        info = streams.get(name)
+        info = streams.get(live_key) or streams.get(cam.name) or streams.get(name)
 
         if not info:
-            return api_response({
-                "online": False,
-                "producers": 0,
-                "consumers": 0,
-                "codec": None,
-                "resolution": None,
-                "bitrate_kbps": None,
-                "fps": None,
-            })
+            return api_response(
+                {
+                    "online": False,
+                    "producers": 0,
+                    "consumers": 0,
+                    "codec": None,
+                    "resolution": None,
+                    "bitrate_kbps": None,
+                    "fps": None,
+                    "live_view_stream_name": live_key,
+                    "live_view_warnings": [],
+                }
+            )
 
         producers = info.get("producers") or []
         consumers = info.get("consumers") or []
@@ -547,15 +576,21 @@ def camera_stats(name: str):
             if width and height:
                 resolution = f"{width}x{height}"
 
-        return api_response({
-            "online": len(producers) > 0,
-            "producers": len(producers),
-            "consumers": len(consumers),
-            "codec": codec,
-            "resolution": resolution,
-            "fps": fps,
-            "bitrate_kbps": bitrate,
-        })
+        warnings = _live_view_playback_warnings(codec)
+
+        return api_response(
+            {
+                "online": len(producers) > 0,
+                "producers": len(producers),
+                "consumers": len(consumers),
+                "codec": codec,
+                "resolution": resolution,
+                "fps": fps,
+                "bitrate_kbps": bitrate,
+                "live_view_stream_name": live_key,
+                "live_view_warnings": warnings,
+            }
+        )
 
     except Exception as e:
         current_app.logger.warning(f"camera stats fetch failed for {name}: {e}")

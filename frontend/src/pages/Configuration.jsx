@@ -104,17 +104,6 @@ function SystemPanel({ about, loading, error, setupStatus, isOriginalAdmin }) {
         </div>
       </SectionCard>
 
-      <SectionCard title="What to do next" subtitle="Use this as your simple operational checklist.">
-        <ul className="space-y-2 text-sm text-gray-300">
-          <li>
-            {setupComplete ? 'OK' : 'Todo'} - Confirm recording storage setup in Recordings.
-          </li>
-          <li>Todo - Validate camera stream URLs after install or IP changes.</li>
-          <li>Todo - Review retention and storage policy before go-live.</li>
-          <li>Todo - Run one live-view and playback smoke test after updates.</li>
-        </ul>
-      </SectionCard>
-
       <SectionCard title="Host details" subtitle="Helpful for support and capacity checks.">
         <dl className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
           <div>

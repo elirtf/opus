@@ -244,7 +244,9 @@ def list_cameras():
     nvr_map = {nvr.id: nvr for nvr in NVR.select()}
     rows = list(query)
     name_set = {c.name for c in rows}
-    return api_response([camera_to_dict(c, nvr_map, None, name_set) for c in rows])
+    # Same health-aware live key as /summary so tiles fall back to main when sub is absent/offline.
+    health = _get_stream_health_cached()
+    return api_response([camera_to_dict(c, nvr_map, health, name_set) for c in rows])
 
 
 @bp.route("/", methods=["POST"])

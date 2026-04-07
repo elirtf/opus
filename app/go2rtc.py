@@ -20,6 +20,21 @@ from app.config import get_recordings_dir
 logger = logging.getLogger(__name__)
 
 
+def _put_stream_ok(base_url: str, name: str, src: str, what: str) -> bool:
+    """PUT one source onto a go2rtc stream; log and return False on HTTP errors."""
+    try:
+        r = http.put(
+            f"{base_url}/api/streams",
+            params={"name": name, "src": src},
+            timeout=3,
+        )
+        r.raise_for_status()
+        return True
+    except Exception as e:
+        logger.warning("go2rtc PUT %s failed for stream %s: %s", what, name, e)
+        return False
+
+
 def is_restricted_source(url: str) -> bool:
     """echo:, expr:, and exec: sources can execute arbitrary commands if the API is abused."""
     s = (url or "").strip()
@@ -77,23 +92,14 @@ def stream_sync(camera) -> bool:
             logger.warning("go2rtc stream_sync skipped for %s: %s", name, err)
             return False
 
-        # Always register the RTSP source
-        r = http.put(
-            f"{base_url}/api/streams",
-            params={"name": name, "src": camera.rtsp_url},
-            timeout=3,
-        )
-        r.raise_for_status()
+        # Always register the RTSP source (required for live/record)
+        if not _put_stream_ok(base_url, name, camera.rtsp_url, "rtsp"):
+            return False
 
-        # Add or remove record: output based on flag
+        # Add record: output when enabled — failure still leaves RTSP live in go2rtc
         if camera.recording_enabled:
             os.makedirs(os.path.join(get_recordings_dir(), name), exist_ok=True)
-            r = http.put(
-                f"{base_url}/api/streams",
-                params={"name": name, "src": record_path(name)},
-                timeout=3,
-            )
-            r.raise_for_status()
+            _put_stream_ok(base_url, name, record_path(name), "record")
 
         # Live UI plays "{name-main}-sub" in go2rtc for dashboard / camera page (see LivePlayer).
         # NVR import creates a real Camera row per sub stream; standalone cameras use
@@ -108,13 +114,8 @@ def stream_sync(camera) -> bool:
                 sub_err = validate_stream_url_for_go2rtc(sub_url)
                 if sub_err:
                     logger.warning("go2rtc stream_sync skipped sub %s: %s", sub_name, sub_err)
-                    return False
-                r = http.put(
-                    f"{base_url}/api/streams",
-                    params={"name": sub_name, "src": sub_url},
-                    timeout=3,
-                )
-                r.raise_for_status()
+                else:
+                    _put_stream_ok(base_url, sub_name, sub_url, "substream")
             else:
                 if not stream_delete(sub_name):
                     logger.warning("go2rtc stream_sync could not delete stale sub stream %s", sub_name)
@@ -133,6 +134,8 @@ def stream_delete(name: str) -> bool:
             params={"name": name},
             timeout=3,
         )
+        if r.status_code == 404:
+            return True
         r.raise_for_status()
         return True
     except Exception as e:

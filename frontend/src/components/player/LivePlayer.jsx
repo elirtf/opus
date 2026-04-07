@@ -34,10 +34,10 @@ function resolveMode(playbackMode) {
   return playbackMode;
 }
 
-const MAX_HLS_RETRIES = 2;
+const MAX_HLS_RETRIES = 1;
 const RETRY_DELAY_MS = 3000;
 /** go2rtc stream.html can hang on ICE/MSE errors without surfacing to the parent; treat long non-load as failure. */
-const IFRAME_LOAD_TIMEOUT_MS = 30000;
+const IFRAME_LOAD_TIMEOUT_MS = 20000;
 
 /**
  * LivePlayer

@@ -15,9 +15,11 @@ export function isFirefox() {
  */
 export function shouldPreferHlsForDevice() {
   if (typeof window === "undefined") return false;
+  const override = getPlaybackModeOverride();
+  if (override === "hls") return true;
+  if (override === "mse" || override === "webrtc") return false;
   if (isFirefox()) return true;
   if (window.matchMedia("(pointer: coarse)").matches) return true;
-  if (window.matchMedia("(max-width: 1024px)").matches) return true;
   return false;
 }
 
@@ -29,6 +31,8 @@ export const HEVC_WEBRTC_WARNING_CODE = "HEVC_WEBRTC";
  * Firefox always uses `auto` → HLS for compatibility (see shouldPreferHlsForDevice).
  */
 export function cameraPagePlaybackMode(streamStats) {
+  const override = getPlaybackModeOverride();
+  if (override && override !== "auto") return override;
   if (shouldPreferHlsForDevice()) return "auto";
   const warns = streamStats?.live_view_warnings;
   if (
@@ -38,6 +42,23 @@ export function cameraPagePlaybackMode(streamStats) {
     return "mse";
   }
   return "webrtc";
+}
+
+const PLAYBACK_MODE_KEY = "opus_live_playback_mode";
+const PLAYBACK_MODES = new Set(["auto", "hls", "mse", "webrtc"]);
+
+export function getPlaybackModeOverride() {
+  if (typeof localStorage === "undefined") return "auto";
+  const raw = (localStorage.getItem(PLAYBACK_MODE_KEY) || "auto").trim().toLowerCase();
+  return PLAYBACK_MODES.has(raw) ? raw : "auto";
+}
+
+export function setPlaybackModeOverride(mode) {
+  const v = PLAYBACK_MODES.has(mode) ? mode : "auto";
+  if (typeof localStorage !== "undefined") {
+    localStorage.setItem(PLAYBACK_MODE_KEY, v);
+  }
+  return v;
 }
 
 /** User-facing copy when HLS/MSE fails and HEVC is a likely cause (short for overlays). */

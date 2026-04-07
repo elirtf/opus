@@ -3,7 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import LivePlayer from "../components/player/LivePlayer";
 import Spinner from "../components/Spinner";
 import { camerasApi } from "../api/cameras";
-import { cameraPagePlaybackMode } from "../utils/streamPlayback";
+import { cameraPagePlaybackMode, getPlaybackModeOverride, setPlaybackModeOverride } from "../utils/streamPlayback";
 
 export default function CameraView() {
   const { name } = useParams();
@@ -13,6 +13,7 @@ export default function CameraView() {
   const [streamStats, setStreamStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
+  const [modeOverride, setModeOverride] = useState(getPlaybackModeOverride());
 
   useEffect(() => {
     let alive = true;
@@ -91,7 +92,7 @@ export default function CameraView() {
     .replace(" Main", "");
 
   const liveWarnings = streamStats?.live_view_warnings;
-  const playbackMode = cameraPagePlaybackMode(streamStats);
+  const playbackMode = modeOverride === "auto" ? cameraPagePlaybackMode(streamStats) : modeOverride;
 
   return (
     <div className="flex flex-col h-full">
@@ -115,26 +116,43 @@ export default function CameraView() {
           )}
         </div>
 
-        {cam && (
-          <button
-            onClick={() => {
-              const today = new Date();
-              const yyyy = today.getFullYear();
-              const mm = String(today.getMonth() + 1).padStart(2, "0");
-              const dd = String(today.getDate()).padStart(2, "0");
-              const dateStr = `${yyyy}-${mm}-${dd}`;
-
-              navigate(
-                `/recordings?camera=${encodeURIComponent(
-                  cam.name
-                )}&date=${dateStr}`
-              );
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-gray-400">Mode</label>
+          <select
+            value={modeOverride}
+            onChange={(e) => {
+              const v = setPlaybackModeOverride(e.target.value);
+              setModeOverride(v);
             }}
-            className="text-xs px-3 py-1.5 rounded border border-indigo-500 text-indigo-200 hover:bg-indigo-500/10 transition-colors"
+            className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200"
+            title="Use this to benchmark and lock the smoothest live mode on this browser."
           >
-            View recordings
-          </button>
-        )}
+            <option value="auto">Auto</option>
+            <option value="webrtc">WebRTC</option>
+            <option value="mse">MSE</option>
+            <option value="hls">HLS</option>
+          </select>
+          {cam && (
+            <button
+              onClick={() => {
+                const today = new Date();
+                const yyyy = today.getFullYear();
+                const mm = String(today.getMonth() + 1).padStart(2, "0");
+                const dd = String(today.getDate()).padStart(2, "0");
+                const dateStr = `${yyyy}-${mm}-${dd}`;
+
+                navigate(
+                  `/recordings?camera=${encodeURIComponent(
+                    cam.name
+                  )}&date=${dateStr}`
+                );
+              }}
+              className="text-xs px-3 py-1.5 rounded border border-indigo-500 text-indigo-200 hover:bg-indigo-500/10 transition-colors"
+            >
+              View recordings
+            </button>
+          )}
+        </div>
       </div>
 
       {Array.isArray(liveWarnings) && liveWarnings.length > 0 && (
@@ -142,6 +160,15 @@ export default function CameraView() {
           {liveWarnings.map((w) => (
             <p key={w.code}>{w.message}</p>
           ))}
+        </div>
+      )}
+      {streamStats && (
+        <div className="shrink-0 px-4 py-2 bg-gray-900/70 border-b border-gray-800 text-[11px] text-gray-400 flex flex-wrap gap-x-4 gap-y-1">
+          <span>mode: {playbackMode}</span>
+          <span>codec: {streamStats.codec || "unknown"}</span>
+          <span>fps: {streamStats.fps ?? "—"}</span>
+          <span>source: {streamStats.producer_type || "unknown"}</span>
+          {streamStats.is_transcoded_live && <span className="text-amber-300">transcoding detected</span>}
         </div>
       )}
 

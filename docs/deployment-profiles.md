@@ -91,6 +91,44 @@ Uncomment in `docker-compose.yml` for **opus**, **recorder**, and **processor**:
 
 **Internal recorder status** (dashboard): `RECORDER_INTERNAL_STATUS_URL` on the **opus** service points at the recorder sidecar (already set in default compose).
 
+---
+
+## Capacity presets (publishable defaults)
+
+Use these as product-facing presets after validation in your environment.
+
+### Performance preset (larger host)
+
+| Item | Default |
+| ---- | ------- |
+| Live substream profile | H.264, 10-15 FPS, 640x360-704x480, keyframe 1s |
+| Main recording profile | Keep camera main quality (recording path) |
+| Playback mode policy | Auto, with per-browser override from camera page benchmark |
+| `FFMPEG_HWACCEL` | Host-validated mode (`cuda`/`qsv`/`vaapi`), else `none` |
+| `MOTION_MAX_CONCURRENT` | 8-16 (start 8, raise with CPU headroom) |
+| `MOTION_ANALYSIS_MAX_WIDTH` | 320-480 |
+| Success gate | 10+ min single-camera fullscreen without buffering and stable browser CPU |
+
+### Cost-efficient preset (smaller host)
+
+| Item | Default |
+| ---- | ------- |
+| Live substream profile | H.264, 8-12 FPS, 640x360, keyframe 1s |
+| Main recording profile | Keep recording on main; reduce main bitrate if retention pressure |
+| Playback mode policy | Prefer least-CPU mode from benchmark; avoid unnecessary retries |
+| `FFMPEG_HWACCEL` | `none` unless validated and stable on target SKU |
+| `MOTION_MAX_CONCURRENT` | 2-4 |
+| `MOTION_ANALYSIS_MAX_WIDTH` | 320 |
+| Success gate | Stable multi-tile live with defined camera cap and no sustained CPU runaway |
+
+### Benchmark checklist (per preset)
+
+1. Pick one representative camera.
+2. Test fullscreen live for 3-5 minutes each in `webrtc`, `mse`, and `hls`.
+3. Record browser CPU, dropped frames, and buffering events.
+4. Select the smoothest mode as the browser default policy.
+5. Validate dashboard tile count limits and publish max stable count.
+
 ## Related
 
 - [hw-diagnostics-spec.md](hw-diagnostics-spec.md) — host capability JSON (admin API).

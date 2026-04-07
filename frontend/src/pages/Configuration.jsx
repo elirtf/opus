@@ -141,6 +141,13 @@ function StreamingPanel({ isOriginalAdmin, onSuccess, onError }) {
   const [configPath, setConfigPath] = useState('')
   const [restartHint, setRestartHint] = useState('')
   const [showAdvanced, setShowAdvanced] = useState(false)
+  const [perf, setPerf] = useState({
+    ffmpeg_hwaccel: 'none',
+    ffmpeg_hwaccel_device: '',
+    motion_max_concurrent: 4,
+    motion_analysis_max_width: 320,
+    motion_rtsp_mode: 'auto',
+  })
 
   useEffect(() => {
     if (!isOriginalAdmin) {
@@ -149,9 +156,8 @@ function StreamingPanel({ isOriginalAdmin, onSuccess, onError }) {
     }
     let alive = true
     setLoading(true)
-    go2rtcApi
-      .getSettings()
-      .then((d) => {
+    Promise.all([go2rtcApi.getSettings(), api.get('/api/recordings/settings/')])
+      .then(([d, rs]) => {
         if (!alive) return
         setCandidatesText((d.webrtc_candidates || []).join('\n'))
         setAllowArbitrary(!!d.allow_arbitrary_exec)
@@ -159,6 +165,13 @@ function StreamingPanel({ isOriginalAdmin, onSuccess, onError }) {
         setEnvLocked(!!d.arbitrary_exec_env_locked)
         setConfigPath(d.config_path || '')
         setRestartHint(d.restart_hint || '')
+        setPerf({
+          ffmpeg_hwaccel: rs.ffmpeg_hwaccel || 'none',
+          ffmpeg_hwaccel_device: rs.ffmpeg_hwaccel_device || '',
+          motion_max_concurrent: Number(rs.motion_max_concurrent ?? 4),
+          motion_analysis_max_width: Number(rs.motion_analysis_max_width ?? 320),
+          motion_rtsp_mode: rs.motion_rtsp_mode || 'auto',
+        })
       })
       .catch((e) => onError(e.message || 'Failed to load streaming settings'))
       .finally(() => {
@@ -197,7 +210,14 @@ function StreamingPanel({ isOriginalAdmin, onSuccess, onError }) {
         allow_arbitrary_exec: allowArbitrary,
         allow_exec_module: allowExecMod,
       })
-      onSuccess('Streaming settings saved. Restart the go2rtc container to apply changes to go2rtc.yaml.')
+      await api.put('/api/recordings/settings/', {
+        ffmpeg_hwaccel: perf.ffmpeg_hwaccel,
+        ffmpeg_hwaccel_device: perf.ffmpeg_hwaccel_device || '',
+        motion_max_concurrent: Number(perf.motion_max_concurrent || 4),
+        motion_analysis_max_width: Number(perf.motion_analysis_max_width || 320),
+        motion_rtsp_mode: perf.motion_rtsp_mode,
+      })
+      onSuccess('Streaming/performance settings saved. Restart go2rtc and recorder/processor containers to fully apply hardware/performance changes.')
     } catch (ex) {
       onError(ex.message || 'Save failed')
     } finally {
@@ -302,6 +322,69 @@ function StreamingPanel({ isOriginalAdmin, onSuccess, onError }) {
         )}
       </SectionCard>
 
+      <SectionCard
+        title="Performance and decode"
+        subtitle="Tune hardware acceleration and motion decode pressure from the UI."
+      >
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <label className="text-xs text-gray-400">
+            FFmpeg hardware acceleration
+            <select
+              className="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white"
+              value={perf.ffmpeg_hwaccel}
+              onChange={(e) => setPerf((p) => ({ ...p, ffmpeg_hwaccel: e.target.value }))}
+            >
+              {['none', 'cuda', 'qsv', 'vaapi', 'videotoolbox', 'dxva2', 'd3d11va'].map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          </label>
+          <label className="text-xs text-gray-400">
+            HW accel device (optional)
+            <input
+              className="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white"
+              value={perf.ffmpeg_hwaccel_device}
+              onChange={(e) => setPerf((p) => ({ ...p, ffmpeg_hwaccel_device: e.target.value }))}
+              placeholder="e.g. 0"
+            />
+          </label>
+          <label className="text-xs text-gray-400">
+            Motion max concurrent
+            <input
+              type="number"
+              min={1}
+              max={64}
+              className="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white"
+              value={perf.motion_max_concurrent}
+              onChange={(e) => setPerf((p) => ({ ...p, motion_max_concurrent: Number(e.target.value || 4) }))}
+            />
+          </label>
+          <label className="text-xs text-gray-400">
+            Motion analysis width (0 = full)
+            <input
+              type="number"
+              min={0}
+              max={1920}
+              className="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white"
+              value={perf.motion_analysis_max_width}
+              onChange={(e) => setPerf((p) => ({ ...p, motion_analysis_max_width: Number(e.target.value || 320) }))}
+            />
+          </label>
+          <label className="text-xs text-gray-400 md:col-span-2">
+            Motion RTSP mode
+            <select
+              className="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white"
+              value={perf.motion_rtsp_mode}
+              onChange={(e) => setPerf((p) => ({ ...p, motion_rtsp_mode: e.target.value }))}
+            >
+              <option value="auto">auto (prefer sub)</option>
+              <option value="sub">sub only (fallback main)</option>
+              <option value="main">main only</option>
+            </select>
+          </label>
+        </div>
+      </SectionCard>
+
       {restartHint && <p className="text-xs text-gray-500">{restartHint}</p>}
 
       <button
@@ -327,14 +410,7 @@ function ApiTokenSettings({ onSuccess, onError }) {
       if (token) {
         try {
           await navigator.clipboard.writeText(token)
-          // #region agent log
-          fetch('http://127.0.0.1:7548/ingest/08386897-29be-4b7e-bdb0-4c0c1d047610',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'db7884'},body:JSON.stringify({sessionId:'db7884',hypothesisId:'H3',location:'Configuration.jsx:ApiTokenSettings',message:'clipboard token',data:{ok:true},timestamp:Date.now()})}).catch(()=>{});
-          // #endregion
-        } catch (e) {
-          // #region agent log
-          fetch('http://127.0.0.1:7548/ingest/08386897-29be-4b7e-bdb0-4c0c1d047610',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'db7884'},body:JSON.stringify({sessionId:'db7884',hypothesisId:'H3',location:'Configuration.jsx:ApiTokenSettings',message:'clipboard token',data:{ok:false,errName:e?.name||'unknown'},timestamp:Date.now()})}).catch(()=>{});
-          // #endregion
-        }
+        } catch (_e) {}
         onSuccess(
           'New API token created (copied to clipboard if permitted). Store it securely; you will not see it again. For browser clients on a different origin than Opus, paste it into localStorage key opus_bearer_token or your client config.'
         )
@@ -415,16 +491,9 @@ function MaintenancePanel({ diagnostics, engine, loadingDiag, loadingEng, errorD
   async function copyDiag() {
     try {
       await navigator.clipboard.writeText(JSON.stringify(diagnostics, null, 2))
-      // #region agent log
-      fetch('http://127.0.0.1:7548/ingest/08386897-29be-4b7e-bdb0-4c0c1d047610',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'db7884'},body:JSON.stringify({sessionId:'db7884',hypothesisId:'H3',location:'Configuration.jsx:copyDiag',message:'clipboard diagnostics',data:{ok:true},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
-    } catch (e) {
-      // #region agent log
-      fetch('http://127.0.0.1:7548/ingest/08386897-29be-4b7e-bdb0-4c0c1d047610',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'db7884'},body:JSON.stringify({sessionId:'db7884',hypothesisId:'H3',location:'Configuration.jsx:copyDiag',message:'clipboard diagnostics',data:{ok:false,errName:e?.name||'unknown'},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
-    }
+    } catch (_e) {}
   }
 
   const engineTone = engine?.engine_running ? 'good' : 'warn'

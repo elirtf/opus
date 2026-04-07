@@ -31,6 +31,12 @@ DEFAULTS = {
     "motion_clip_post_seconds":  "0",    # extra seconds after trigger (extends core capture)
     "motion_poll_seconds":       "6",
     "motion_cooldown_seconds":   "75",
+    # Decode/performance tuning
+    "ffmpeg_hwaccel":            "none",
+    "ffmpeg_hwaccel_device":     "",
+    "motion_max_concurrent":     "4",
+    "motion_analysis_max_width": "320",
+    "motion_rtsp_mode":          "auto",
 }
 
 
@@ -65,6 +71,11 @@ def get_setting(key, default=None):
         "motion_clip_post_seconds": "CLIP_POST_SECONDS",
         "motion_poll_seconds": "PROCESSING_POLL_SECONDS",
         "motion_cooldown_seconds": "MOTION_COOLDOWN_SECONDS",
+        "ffmpeg_hwaccel": "FFMPEG_HWACCEL",
+        "ffmpeg_hwaccel_device": "FFMPEG_HWACCEL_DEVICE",
+        "motion_max_concurrent": "MOTION_MAX_CONCURRENT",
+        "motion_analysis_max_width": "MOTION_ANALYSIS_MAX_WIDTH",
+        "motion_rtsp_mode": "MOTION_RTSP_MODE",
     }
     env_key = env_map.get(key)
     if env_key and os.environ.get(env_key):
@@ -149,6 +160,8 @@ def get_settings():
         ("motion_clip_post_seconds", 0),
         ("motion_poll_seconds", 6),
         ("motion_cooldown_seconds", 75),
+        ("motion_max_concurrent", 4),
+        ("motion_analysis_max_width", 320),
     ):
         try:
             settings[mk] = int(settings.get(mk, str(dv)))
@@ -157,6 +170,9 @@ def get_settings():
 
     settings["setup_complete"]    = settings.get("setup_complete", "false") == "true"
     settings["is_original_admin"] = is_original_admin()
+    settings["ffmpeg_hwaccel"] = str(settings.get("ffmpeg_hwaccel", "none") or "none").strip().lower()
+    settings["ffmpeg_hwaccel_device"] = str(settings.get("ffmpeg_hwaccel_device", "") or "").strip()
+    settings["motion_rtsp_mode"] = str(settings.get("motion_rtsp_mode", "auto") or "auto").strip().lower()
 
     return api_response(settings)
 
@@ -182,6 +198,11 @@ def update_settings():
         "motion_clip_post_seconds",
         "motion_poll_seconds",
         "motion_cooldown_seconds",
+        "ffmpeg_hwaccel",
+        "ffmpeg_hwaccel_device",
+        "motion_max_concurrent",
+        "motion_analysis_max_width",
+        "motion_rtsp_mode",
     }
     updated = []
 
@@ -266,6 +287,43 @@ def update_settings():
             except (ValueError, TypeError):
                 return api_error("motion_cooldown_seconds must be an integer.", 400)
 
+        elif key == "ffmpeg_hwaccel":
+            mode = str(value).strip().lower()
+            allowed = {"none", "cuda", "qsv", "vaapi", "videotoolbox", "dxva2", "d3d11va"}
+            if mode not in allowed:
+                return api_error(
+                    "ffmpeg_hwaccel must be one of: none, cuda, qsv, vaapi, videotoolbox, dxva2, d3d11va.",
+                    400,
+                )
+            value = mode
+
+        elif key == "ffmpeg_hwaccel_device":
+            value = str(value or "").strip()
+            if len(value) > 64:
+                return api_error("ffmpeg_hwaccel_device is too long.", 400)
+
+        elif key == "motion_max_concurrent":
+            try:
+                v = int(value)
+                if v < 1 or v > 64:
+                    return api_error("motion_max_concurrent must be 1-64.", 400)
+            except (ValueError, TypeError):
+                return api_error("motion_max_concurrent must be an integer.", 400)
+
+        elif key == "motion_analysis_max_width":
+            try:
+                v = int(value)
+                if v != 0 and (v < 160 or v > 1920):
+                    return api_error("motion_analysis_max_width must be 0 or 160-1920.", 400)
+            except (ValueError, TypeError):
+                return api_error("motion_analysis_max_width must be an integer.", 400)
+
+        elif key == "motion_rtsp_mode":
+            mode = str(value).strip().lower()
+            if mode not in {"auto", "main", "sub"}:
+                return api_error("motion_rtsp_mode must be auto, main, or sub.", 400)
+            value = mode
+
         set_setting(key, value)
         updated.append(key)
 
@@ -289,6 +347,11 @@ def _sync_env_vars():
         "max_storage_gb":  "RECORDING_MAX_STORAGE_GB",
         "recordings_dir":  "RECORDINGS_DIR",
         "stagger_seconds": "RECORDING_STAGGER_SECONDS",
+        "ffmpeg_hwaccel": "FFMPEG_HWACCEL",
+        "ffmpeg_hwaccel_device": "FFMPEG_HWACCEL_DEVICE",
+        "motion_max_concurrent": "MOTION_MAX_CONCURRENT",
+        "motion_analysis_max_width": "MOTION_ANALYSIS_MAX_WIDTH",
+        "motion_rtsp_mode": "MOTION_RTSP_MODE",
     }
     for setting_key, env_key in env_map.items():
         val = get_setting(setting_key)

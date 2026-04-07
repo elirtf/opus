@@ -646,6 +646,10 @@ def camera_stats(name: str):
                 resolution = f"{width}x{height}"
 
         warnings = _live_view_playback_warnings(codec)
+        producer_url = source if producers else None
+        producer_type = source_type if producers else None
+        source_text = f"{producer_type or ''} {producer_url or ''}".lower()
+        is_transcoded_live = any(x in source_text for x in ("ffmpeg", "exec:", "expr:", "echo:"))
 
         return api_response(
             {
@@ -659,8 +663,13 @@ def camera_stats(name: str):
                 "live_view_stream_name": live_key,
                 "live_view_warnings": warnings,
                 "live_view_selection_reason": live_reason,
-                "producer_type": source_type if producers else None,
-                "producer_url": source if producers else None,
+                "producer_type": producer_type,
+                "producer_url": producer_url,
+                "is_transcoded_live": is_transcoded_live,
+                "benchmark_hint": {
+                    "target_test_minutes_per_mode": 3,
+                    "modes": ["webrtc", "mse", "hls"],
+                },
             }
         )
 

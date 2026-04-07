@@ -8,17 +8,16 @@ export function isFirefox() {
 }
 
 /**
- * Prefer HLS over go2rtc’s MSE iframe when:
- * - touch or narrow viewport, or
- * - Firefox: go2rtc `stream.html` + MSE is often flaky (codec/MSE); HLS via hls.js matches
- *   fMP4 segments more predictably (same trade-off as Safari vs HLS server load).
+ * Prefer HLS on touch / narrow viewports where decode pressure is higher
+ * and adaptive bitrate helps.  Desktop browsers (including Firefox) now
+ * default to MSE which is more reliable than WebRTC (no ICE required) and
+ * avoids the server-side FFmpeg that go2rtc HLS spins up per consumer.
  */
 export function shouldPreferHlsForDevice() {
   if (typeof window === "undefined") return false;
   const override = getPlaybackModeOverride();
   if (override === "hls") return true;
   if (override === "mse" || override === "webrtc") return false;
-  if (isFirefox()) return true;
   if (window.matchMedia("(pointer: coarse)").matches) return true;
   return false;
 }
@@ -27,21 +26,15 @@ export function shouldPreferHlsForDevice() {
 export const HEVC_WEBRTC_WARNING_CODE = "HEVC_WEBRTC";
 
 /**
- * Single-camera page: prefer WebRTC on Chromium/Safari desktop unless stats say HEVC (then MSE).
- * Firefox always uses `auto` → HLS for compatibility (see shouldPreferHlsForDevice).
+ * Single-camera page playback mode.  Defaults to MSE on desktop (most
+ * reliable -- no ICE setup, no server-side FFmpeg).  Falls back to "auto"
+ * on touch devices (-> HLS).  Users can override via localStorage.
  */
 export function cameraPagePlaybackMode(streamStats) {
   const override = getPlaybackModeOverride();
   if (override && override !== "auto") return override;
   if (shouldPreferHlsForDevice()) return "auto";
-  const warns = streamStats?.live_view_warnings;
-  if (
-    Array.isArray(warns) &&
-    warns.some((w) => w && w.code === HEVC_WEBRTC_WARNING_CODE)
-  ) {
-    return "mse";
-  }
-  return "webrtc";
+  return "mse";
 }
 
 const PLAYBACK_MODE_KEY = "opus_live_playback_mode";
@@ -84,7 +77,7 @@ export function recordPlaybackMetric(entry) {
   }
   const tag = record.success ? "ok" : "fail";
   console.debug(
-    `[playback:${tag}] ${record.camera} mode=${record.mode} ttff=${record.ttffMs ?? "—"}ms` +
+    `[playback:${tag}] ${record.camera} mode=${record.mode} ttff=${record.ttffMs ?? "\u2014"}ms` +
       (record.fallbackReason ? ` reason=${record.fallbackReason}` : "")
   );
 }

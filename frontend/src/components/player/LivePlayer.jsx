@@ -17,37 +17,36 @@ import {
 export { isFirefox, shouldPreferHlsForDevice } from "../../utils/streamPlayback";
 
 /**
- * Live playback strategy: keep go2rtc’s `stream.html` inside an iframe (MSE/WebRTC handled
- * by go2rtc) instead of embedding RTCPeerConnection/MediaSource in React — fewer deps and
- * faster iteration. We add load-timeout + retry UX around the iframe; a future native
- * player could swap in here without changing dashboard/camera call sites.
- *
- * Prefer HLS on touch / narrow viewports and on Firefox (go2rtc MSE iframe is unreliable
- * there for many streams). Safari desktop stays on MSE iframe — Safari's MSE works fine
- * for H.264 and avoids the go2rtc HLS endpoint which creates one server-side FFmpeg
- * process per consumer. Forcing all Safari to HLS caused runaway process creation when
- * segments failed and the native HLS player retried aggressively.
+ * Live playback strategy: go2rtc `stream.html` iframe for MSE/WebRTC,
+ * with hls.js fallback.  Auto mode now defaults to MSE on desktop
+ * (no ICE setup needed, reliable across browsers) and HLS on
+ * touch/narrow viewports.  A full fallback chain (e.g. mse -> hls,
+ * or webrtc -> mse -> hls) ensures the user sees video even when
+ * the first mode fails.
  */
 function resolveMode(playbackMode) {
   if (playbackMode === "auto") {
     if (shouldPreferHlsForDevice()) return "hls";
-    // Desktop: WebRTC matches CameraView "auto" (lower latency than MSE iframe).
-    // If live sub is H.265 and the tile fails, set Mode to MSE or HLS on the camera page.
-    return "webrtc";
+    return "mse";
   }
   return playbackMode;
 }
 
+const FALLBACK_CHAINS = {
+  webrtc: ["webrtc", "mse", "hls"],
+  mse: ["mse", "hls"],
+  hls: ["hls", "mse"],
+};
+
 const MAX_HLS_RETRIES = 1;
 const RETRY_DELAY_MS = 3000;
-/** go2rtc stream.html can hang on ICE/MSE errors without surfacing to the parent; treat long non-load as failure. */
 const IFRAME_LOAD_TIMEOUT_MS = 20000;
 
 /**
  * LivePlayer
  * - Uses go2rtc `stream.html` iframe for MSE/WebRTC (desktop).
  * - Falls back to HLS (<video> + hls.js / native) on touch/narrow devices.
- * - `nativeVideoControls` (HLS path only): false hides browser play/timeline chrome.
+ * - Automatic fallback chain when a mode fails (e.g. mse -> hls).
  */
 export default function LivePlayer({
   cameraName,
@@ -58,14 +57,26 @@ export default function LivePlayer({
   playbackMode = "auto",
   nativeVideoControls = true,
 }) {
-  const [iframeFailed, setIframeFailed] = useState(false);
   const resolvedMode = resolveMode(playbackMode);
-  // Auto-fallback: when iframe (WebRTC/MSE) times out, try HLS before showing error
-  const mode = iframeFailed && resolvedMode !== "hls" ? "hls" : resolvedMode;
+  const [failedModes, setFailedModes] = useState(new Set());
 
   useEffect(() => {
-    setIframeFailed(false);
+    setFailedModes(new Set());
   }, [cameraName, streamNameProp, playbackMode]);
+
+  const mode = useMemo(() => {
+    const chain = FALLBACK_CHAINS[resolvedMode] || [resolvedMode];
+    return chain.find((m) => !failedModes.has(m)) || chain[chain.length - 1];
+  }, [resolvedMode, failedModes]);
+
+  const handleModeFailed = useCallback((failedMode) => {
+    setFailedModes((prev) => {
+      if (prev.has(failedMode)) return prev;
+      const next = new Set(prev);
+      next.add(failedMode);
+      return next;
+    });
+  }, []);
 
   const streamKey = useMemo(() => {
     if (!cameraName || !enabled) return null;
@@ -90,8 +101,7 @@ export default function LivePlayer({
     return withOrigin(path);
   }, [streamKey, mode]);
 
-  const gatedOff =
-    Boolean(cameraName) && !enabled;
+  const gatedOff = Boolean(cameraName) && !enabled;
 
   if (!streamKey) {
     if (gatedOff) {
@@ -118,15 +128,16 @@ export default function LivePlayer({
           src={hlsUrl}
           cameraName={cameraName}
           nativeControls={nativeVideoControls}
-          isFallback={iframeFailed}
+          isFallback={mode !== resolvedMode}
+          onFailed={() => handleModeFailed("hls")}
         />
       ) : iframeSrc ? (
         <Go2rtcIframe
           src={iframeSrc}
           title={cameraName || "Live"}
           cameraName={cameraName}
-          resolvedMode={resolvedMode}
-          onTimeout={() => setIframeFailed(true)}
+          currentMode={mode}
+          onTimeout={() => handleModeFailed(mode)}
         />
       ) : (
         <div className="absolute inset-0 flex items-center justify-center text-gray-500 text-sm">
@@ -137,7 +148,7 @@ export default function LivePlayer({
   );
 }
 
-function Go2rtcIframe({ src, title, cameraName, resolvedMode, onTimeout }) {
+function Go2rtcIframe({ src, title, cameraName, currentMode, onTimeout }) {
   const [loadTimedOut, setLoadTimedOut] = useState(false);
   const [nonce, setNonce] = useState(0);
   const timerRef = useRef(null);
@@ -159,7 +170,7 @@ function Go2rtcIframe({ src, title, cameraName, resolvedMode, onTimeout }) {
       timerRef.current = null;
       recordPlaybackMetric({
         camera: cameraName || title,
-        mode: resolvedMode || "iframe",
+        mode: currentMode || "iframe",
         success: false,
         ttffMs: Date.now() - mountedAt.current,
         fallbackReason: "iframe_timeout",
@@ -167,18 +178,18 @@ function Go2rtcIframe({ src, title, cameraName, resolvedMode, onTimeout }) {
       if (onTimeout) onTimeout();
     }, IFRAME_LOAD_TIMEOUT_MS);
     return () => clearTimer();
-  }, [src, nonce, clearTimer, cameraName, title, resolvedMode, onTimeout]);
+  }, [src, nonce, clearTimer, cameraName, title, currentMode, onTimeout]);
 
   const handleLoad = useCallback(() => {
     setLoadTimedOut(false);
     clearTimer();
     recordPlaybackMetric({
       camera: cameraName || title,
-      mode: resolvedMode || "iframe",
+      mode: currentMode || "iframe",
       success: true,
       ttffMs: Date.now() - mountedAt.current,
     });
-  }, [clearTimer, cameraName, title, resolvedMode]);
+  }, [clearTimer, cameraName, title, currentMode]);
 
   const handleRetry = useCallback(() => {
     setLoadTimedOut(false);
@@ -203,7 +214,7 @@ function Go2rtcIframe({ src, title, cameraName, resolvedMode, onTimeout }) {
             If you saw a go2rtc error like &quot;codecs not matched: video:H265&quot;, the
             camera is sending H.265 but the browser cannot negotiate that codec over WebRTC.
             Use an H.264 stream, or FFmpeg transcoding in go2rtc. Also check ICE (Configuration
-            → Streaming). {PLAYBACK_FAIL_HEVC_HINT}
+            &rarr; Streaming). {PLAYBACK_FAIL_HEVC_HINT}
           </p>
           <button
             type="button"
@@ -218,7 +229,7 @@ function Go2rtcIframe({ src, title, cameraName, resolvedMode, onTimeout }) {
   );
 }
 
-function HlsVideo({ src, cameraName, nativeControls = true, isFallback = false }) {
+function HlsVideo({ src, cameraName, nativeControls = true, isFallback = false, onFailed }) {
   const videoRef = useRef(null);
   const hlsRef = useRef(null);
   const retryCount = useRef(0);
@@ -269,12 +280,23 @@ function HlsVideo({ src, cameraName, nativeControls = true, isFallback = false }
     }
     video.addEventListener("playing", onFirstPlay);
 
+    function hlsFailed(reason) {
+      setErr(`Stream unavailable. ${PLAYBACK_FAIL_HEVC_HINT}`);
+      recordPlaybackMetric({
+        camera: cameraName,
+        mode: isFallback ? "hls(fallback)" : "hls",
+        success: false,
+        ttffMs: Date.now() - mountedAt.current,
+        fallbackReason: reason,
+      });
+      if (onFailed) onFailed();
+    }
+
     function startHlsJs() {
       cleanup();
       if (cancelled) return;
 
       const hls = new Hls({
-        // Firefox: MSE + worker has caused hard-to-reproduce stalls; main thread demux is safer.
         enableWorker: !isFirefox(),
         lowLatencyMode: true,
         liveSyncDurationCount: 1,
@@ -300,14 +322,7 @@ function HlsVideo({ src, cameraName, nativeControls = true, isFallback = false }
             if (!cancelled) startHlsJs();
           }, RETRY_DELAY_MS);
         } else {
-          setErr(`Stream unavailable. ${PLAYBACK_FAIL_HEVC_HINT}`);
-          recordPlaybackMetric({
-            camera: cameraName,
-            mode: isFallback ? "hls(fallback)" : "hls",
-            success: false,
-            ttffMs: Date.now() - mountedAt.current,
-            fallbackReason: "hls_fatal_error",
-          });
+          hlsFailed("hls_fatal_error");
         }
       });
 
@@ -333,14 +348,7 @@ function HlsVideo({ src, cameraName, nativeControls = true, isFallback = false }
             if (!cancelled) startNativeHls();
           }, RETRY_DELAY_MS);
         } else {
-          setErr(`Stream unavailable. ${PLAYBACK_FAIL_HEVC_HINT}`);
-          recordPlaybackMetric({
-            camera: cameraName,
-            mode: isFallback ? "hls(fallback)" : "hls",
-            success: false,
-            ttffMs: Date.now() - mountedAt.current,
-            fallbackReason: "native_hls_error",
-          });
+          hlsFailed("native_hls_error");
         }
       };
 
@@ -365,6 +373,7 @@ function HlsVideo({ src, cameraName, nativeControls = true, isFallback = false }
       startNativeHls();
     } else {
       setErr("HLS not supported in this browser");
+      if (onFailed) onFailed();
     }
 
     return () => {
@@ -374,7 +383,7 @@ function HlsVideo({ src, cameraName, nativeControls = true, isFallback = false }
       video.removeAttribute("src");
       video.load();
     };
-  }, [src, nativeControls, cleanup, cameraName, isFallback]);
+  }, [src, nativeControls, cleanup, cameraName, isFallback, onFailed]);
 
   return (
     <>

@@ -10,7 +10,7 @@ import Spinner from '../components/Spinner'
 import { useToast, ToastList } from '../components/Toast'
 import { compareByChannelThenName, naturalCompare } from '../utils/naturalCompare'
 
-const TAB_IDS = ['system', 'cameras', 'streaming', 'maintenance']
+const TAB_IDS = ['system', 'cameras', 'settings', 'maintenance']
 
 function TabButton({ active, children, onClick }) {
   return (
@@ -70,11 +70,380 @@ function ApplyBadge({ policy }) {
   const info = APPLY_POLICIES[policy]
   if (!info) return null
   return (
-    <span className={`inline-flex items-center text-[10px] font-medium border rounded-full px-2 py-0.5 ${info.cls}`}>
+    <span className={`inline-flex items-center text-[10px] font-medium border rounded-full px-2 py-0.5 whitespace-nowrap ${info.cls}`}>
       {info.label}
     </span>
   )
 }
+
+// ── Schema-driven settings ───────────────────────────────────────────────────
+
+const SETTINGS_GROUP_LABELS = {
+  recording: 'Recording',
+  motion: 'Motion / Events',
+  performance: 'Performance',
+  streaming: 'Streaming',
+}
+
+const SETTINGS_GROUP_SUBTITLES = {
+  recording: 'How long to keep recordings, segment size, and disk thresholds.',
+  motion: 'Timing for motion-triggered clip capture.',
+  streaming: 'WebRTC ICE candidates and go2rtc security options.',
+  performance: 'Hardware acceleration and motion analysis tuning.',
+}
+
+const GROUP_ORDER = ['recording', 'motion', 'streaming', 'performance']
+
+const INPUT_CLS =
+  'w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500'
+
+function SettingControl({ entry, value, onChange }) {
+  switch (entry.type) {
+    case 'int':
+      return (
+        <div>
+          <input
+            type="number"
+            className={INPUT_CLS}
+            value={value ?? ''}
+            min={entry.min}
+            max={entry.max}
+            step={1}
+            onChange={(e) => onChange(e.target.value === '' ? '' : Number(e.target.value))}
+          />
+          {(entry.min != null || entry.max != null) && (
+            <p className="text-[10px] text-gray-600 mt-1">
+              {entry.min != null && entry.max != null
+                ? `Range: ${entry.min} – ${entry.max}`
+                : entry.min != null
+                ? `Min: ${entry.min}`
+                : `Max: ${entry.max}`}
+            </p>
+          )}
+        </div>
+      )
+
+    case 'float':
+      return (
+        <div>
+          <input
+            type="number"
+            step="0.1"
+            className={INPUT_CLS}
+            value={value ?? ''}
+            min={entry.min}
+            max={entry.max}
+            onChange={(e) => onChange(e.target.value === '' ? '' : Number(e.target.value))}
+          />
+          {(entry.min != null || entry.max != null) && (
+            <p className="text-[10px] text-gray-600 mt-1">
+              {entry.min != null && entry.max != null
+                ? `Range: ${entry.min} – ${entry.max}`
+                : entry.min != null
+                ? `Min: ${entry.min}`
+                : `Max: ${entry.max}`}
+            </p>
+          )}
+        </div>
+      )
+
+    case 'bool':
+      return (
+        <button
+          type="button"
+          role="switch"
+          aria-checked={!!value}
+          onClick={() => onChange(!value)}
+          className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${
+            value ? 'bg-indigo-600' : 'bg-gray-700'
+          }`}
+        >
+          <span
+            className={`pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${
+              value ? 'translate-x-5' : 'translate-x-0'
+            }`}
+          />
+        </button>
+      )
+
+    case 'enum':
+      return (
+        <select
+          className={INPUT_CLS}
+          value={value ?? entry.default ?? ''}
+          onChange={(e) => onChange(e.target.value)}
+        >
+          {(entry.options || []).map((opt) => (
+            <option key={opt} value={opt}>
+              {opt}
+            </option>
+          ))}
+        </select>
+      )
+
+    case 'string_list':
+      return (
+        <textarea
+          className={`${INPUT_CLS} font-mono text-xs min-h-[100px]`}
+          value={Array.isArray(value) ? value.join('\n') : value ?? ''}
+          onChange={(e) => {
+            const lines = e.target.value
+              .split('\n')
+              .map((s) => s.trim())
+              .filter(Boolean)
+            onChange(lines)
+          }}
+          placeholder="One entry per line"
+        />
+      )
+
+    default:
+      return (
+        <input
+          type="text"
+          className={INPUT_CLS}
+          value={value ?? ''}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      )
+  }
+}
+
+function SettingRow({ entry, value, loaded, onChange }) {
+  const dirty = JSON.stringify(value) !== JSON.stringify(loaded)
+  return (
+    <div
+      className={`flex flex-col md:flex-row md:items-start gap-2 md:gap-6 py-4 border-b border-gray-800/60 last:border-b-0 ${
+        dirty ? 'bg-indigo-950/10 -mx-3 px-3 rounded-lg' : ''
+      }`}
+    >
+      <div className="md:w-1/2 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-sm text-gray-200 font-medium">{entry.label}</span>
+          <ApplyBadge policy={entry.apply} />
+          {dirty && (
+            <span className="inline-block w-1.5 h-1.5 rounded-full bg-indigo-400" title="Unsaved change" />
+          )}
+        </div>
+        {entry.description && (
+          <p className="text-xs text-gray-500 mt-1 leading-relaxed">{entry.description}</p>
+        )}
+      </div>
+      <div className="md:w-1/2 md:max-w-xs">
+        <SettingControl entry={entry} value={value} onChange={onChange} />
+      </div>
+    </div>
+  )
+}
+
+function SettingsGroupCard({ groupKey, entries, values, loadedValues, onChange, onSave, saving }) {
+  const dirty = entries.some(
+    (e) => JSON.stringify(values[e.key]) !== JSON.stringify(loadedValues[e.key])
+  )
+
+  return (
+    <SectionCard
+      title={SETTINGS_GROUP_LABELS[groupKey] || groupKey}
+      subtitle={SETTINGS_GROUP_SUBTITLES[groupKey]}
+      actions={
+        <button
+          type="button"
+          disabled={saving || !dirty}
+          onClick={() => onSave(groupKey)}
+          className={`text-xs font-medium px-3 py-1.5 rounded-lg transition-colors ${
+            dirty
+              ? 'bg-indigo-600 hover:bg-indigo-500 text-white'
+              : 'bg-gray-800 text-gray-500 cursor-default'
+          } disabled:opacity-50`}
+        >
+          {saving ? 'Saving\u2026' : dirty ? 'Save changes' : 'No changes'}
+        </button>
+      }
+    >
+      <div>
+        {entries.map((entry) => (
+          <SettingRow
+            key={entry.key}
+            entry={entry}
+            value={values[entry.key]}
+            loaded={loadedValues[entry.key]}
+            onChange={(v) => onChange(entry.key, v)}
+          />
+        ))}
+      </div>
+    </SectionCard>
+  )
+}
+
+function SettingsPanel({ isOriginalAdmin, onSuccess, onError }) {
+  const [schema, setSchema] = useState(null)
+  const [values, setValues] = useState({})
+  const [loadedValues, setLoadedValues] = useState({})
+  const [loading, setLoading] = useState(true)
+  const [savingGroup, setSavingGroup] = useState(null)
+
+  useEffect(() => {
+    if (!isOriginalAdmin) {
+      setLoading(false)
+      return
+    }
+    let alive = true
+    setLoading(true)
+    api
+      .get('/api/config/current')
+      .then((data) => {
+        if (!alive) return
+        setSchema(data)
+        const vals = {}
+        for (const entry of data) {
+          vals[entry.key] = entry.value
+        }
+        setValues(vals)
+        setLoadedValues(vals)
+      })
+      .catch((e) => onError(e.message || 'Failed to load settings'))
+      .finally(() => {
+        if (alive) setLoading(false)
+      })
+    return () => {
+      alive = false
+    }
+  }, [isOriginalAdmin, onError])
+
+  const groups = useMemo(() => {
+    if (!schema) return []
+    const map = {}
+    for (const entry of schema) {
+      const g = entry.group || 'other'
+      if (!map[g]) map[g] = []
+      map[g].push(entry)
+    }
+    return GROUP_ORDER.filter((k) => map[k]).map((k) => ({ key: k, entries: map[k] }))
+  }, [schema])
+
+  const handleChange = useCallback((key, value) => {
+    setValues((prev) => ({ ...prev, [key]: value }))
+  }, [])
+
+  const handleSave = useCallback(
+    async (groupKey) => {
+      setSavingGroup(groupKey)
+      try {
+        const group = groups.find((g) => g.key === groupKey)
+        if (!group) return
+
+        const changed = {}
+        for (const entry of group.entries) {
+          if (JSON.stringify(values[entry.key]) !== JSON.stringify(loadedValues[entry.key])) {
+            changed[entry.key] = values[entry.key]
+          }
+        }
+        if (!Object.keys(changed).length) return
+
+        // Validate ICE candidates before sending
+        if (changed.go2rtc_webrtc_candidates) {
+          const lines = changed.go2rtc_webrtc_candidates
+          for (const ln of lines) {
+            if (!/^(stun|turn):/i.test(ln)) {
+              onError(`Each ICE line must start with stun: or turn:. Invalid: ${ln.slice(0, 96)}`)
+              return
+            }
+          }
+        }
+
+        // Split into go2rtc and recording settings payloads
+        const go2rtcPayload = {}
+        const recordingPayload = {}
+
+        for (const [key, val] of Object.entries(changed)) {
+          if (key === 'go2rtc_webrtc_candidates') {
+            go2rtcPayload.webrtc_candidates = val.length ? val : ['stun:8555']
+          } else if (key === 'go2rtc_allow_arbitrary_exec') {
+            go2rtcPayload.allow_arbitrary_exec = val
+          } else if (key === 'go2rtc_allow_exec_module') {
+            go2rtcPayload.allow_exec_module = val
+          } else {
+            recordingPayload[key] = val
+          }
+        }
+
+        if (Object.keys(go2rtcPayload).length) {
+          await go2rtcApi.updateSettings(go2rtcPayload)
+        }
+        if (Object.keys(recordingPayload).length) {
+          await api.put('/api/recordings/settings/', recordingPayload)
+        }
+
+        // Update loadedValues to reflect saved state
+        setLoadedValues((prev) => {
+          const next = { ...prev }
+          for (const key of Object.keys(changed)) {
+            next[key] = values[key]
+          }
+          return next
+        })
+
+        onSuccess(`${SETTINGS_GROUP_LABELS[groupKey] || groupKey} settings saved.`)
+      } catch (ex) {
+        onError(ex.message || 'Save failed')
+      } finally {
+        setSavingGroup(null)
+      }
+    },
+    [groups, values, loadedValues, onSuccess, onError]
+  )
+
+  if (!isOriginalAdmin) {
+    return (
+      <p className="text-sm text-gray-500">
+        Only the original system administrator can view and edit settings.
+      </p>
+    )
+  }
+
+  if (loading) {
+    return (
+      <div className="flex justify-center py-16">
+        <Spinner className="w-6 h-6" />
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-6">
+      {groups.map((g) => (
+        <SettingsGroupCard
+          key={g.key}
+          groupKey={g.key}
+          entries={g.entries}
+          values={values}
+          loadedValues={loadedValues}
+          onChange={handleChange}
+          onSave={handleSave}
+          saving={savingGroup === g.key}
+        />
+      ))}
+
+      <div className="rounded-xl border border-gray-800 bg-gray-900/60 p-4 text-xs text-gray-500 space-y-1.5">
+        <p className="font-medium text-gray-400">When do changes take effect?</p>
+        <ul className="list-disc list-inside space-y-0.5">
+          <li>
+            <span className="text-green-400">Green</span> badges apply immediately after saving.
+          </li>
+          <li>
+            <span className="text-amber-300">Amber</span> badges need a container restart (recorder,
+            processor, or go2rtc).
+          </li>
+          <li>
+            <span className="text-red-400">Red</span> badges require a full app restart.
+          </li>
+        </ul>
+      </div>
+    </div>
+  )
+}
+
+// ── Panels (unchanged) ───────────────────────────────────────────────────────
 
 function SystemPanel({ about, loading, error, setupStatus, isOriginalAdmin }) {
   if (loading) {
@@ -114,15 +483,15 @@ function SystemPanel({ about, loading, error, setupStatus, isOriginalAdmin }) {
           </div>
           <div>
             <dt className="text-gray-500">Python</dt>
-            <dd className="text-gray-200 font-mono">{about?.host?.python_version ?? '—'}</dd>
+            <dd className="text-gray-200 font-mono">{about?.host?.python_version ?? '\u2014'}</dd>
           </div>
           <div>
             <dt className="text-gray-500">CPUs (logical)</dt>
-            <dd className="text-gray-200">{about?.host?.cpu_count_logical ?? '—'}</dd>
+            <dd className="text-gray-200">{about?.host?.cpu_count_logical ?? '\u2014'}</dd>
           </div>
           <div>
             <dt className="text-gray-500">Recordings dir</dt>
-            <dd className="text-gray-200 font-mono text-xs break-all">{about?.host?.recordings_dir ?? '—'}</dd>
+            <dd className="text-gray-200 font-mono text-xs break-all">{about?.host?.recordings_dir ?? '\u2014'}</dd>
           </div>
         </dl>
         <p className="text-xs text-gray-500 mt-4">
@@ -135,280 +504,6 @@ function SystemPanel({ about, loading, error, setupStatus, isOriginalAdmin }) {
         )}
       </SectionCard>
     </div>
-  )
-}
-
-function StreamingPanel({ isOriginalAdmin, onSuccess, onError }) {
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [candidatesText, setCandidatesText] = useState('')
-  const [allowArbitrary, setAllowArbitrary] = useState(false)
-  const [allowExecMod, setAllowExecMod] = useState(false)
-  const [envLocked, setEnvLocked] = useState(false)
-  const [configPath, setConfigPath] = useState('')
-  const [restartHint, setRestartHint] = useState('')
-  const [showAdvanced, setShowAdvanced] = useState(false)
-  const [perf, setPerf] = useState({
-    ffmpeg_hwaccel: 'none',
-    ffmpeg_hwaccel_device: '',
-    motion_max_concurrent: 4,
-    motion_analysis_max_width: 320,
-    motion_rtsp_mode: 'auto',
-  })
-
-  useEffect(() => {
-    if (!isOriginalAdmin) {
-      setLoading(false)
-      return
-    }
-    let alive = true
-    setLoading(true)
-    Promise.all([go2rtcApi.getSettings(), api.get('/api/recordings/settings/')])
-      .then(([d, rs]) => {
-        if (!alive) return
-        setCandidatesText((d.webrtc_candidates || []).join('\n'))
-        setAllowArbitrary(!!d.allow_arbitrary_exec)
-        setAllowExecMod(!!d.allow_exec_module)
-        setEnvLocked(!!d.arbitrary_exec_env_locked)
-        setConfigPath(d.config_path || '')
-        setRestartHint(d.restart_hint || '')
-        setPerf({
-          ffmpeg_hwaccel: rs.ffmpeg_hwaccel || 'none',
-          ffmpeg_hwaccel_device: rs.ffmpeg_hwaccel_device || '',
-          motion_max_concurrent: Number(rs.motion_max_concurrent ?? 4),
-          motion_analysis_max_width: Number(rs.motion_analysis_max_width ?? 320),
-          motion_rtsp_mode: rs.motion_rtsp_mode || 'auto',
-        })
-      })
-      .catch((e) => onError(e.message || 'Failed to load streaming settings'))
-      .finally(() => {
-        if (alive) setLoading(false)
-      })
-    return () => {
-      alive = false
-    }
-  }, [isOriginalAdmin])
-
-  function validateIceCandidates(text) {
-    const lines = text.split('\n').map((s) => s.trim()).filter(Boolean)
-    for (const ln of lines) {
-      if (!/^(stun|turn):/i.test(ln)) {
-        return `Each ICE line must start with stun: or turn:. Invalid: ${ln.slice(0, 96)}`
-      }
-    }
-    return null
-  }
-
-  async function handleSave(e) {
-    e.preventDefault()
-    const iceErr = validateIceCandidates(candidatesText)
-    if (iceErr) {
-      onError(iceErr)
-      return
-    }
-    setSaving(true)
-    try {
-      const lines = candidatesText
-        .split('\n')
-        .map((s) => s.trim())
-        .filter(Boolean)
-      await go2rtcApi.updateSettings({
-        webrtc_candidates: lines.length ? lines : ['stun:8555'],
-        allow_arbitrary_exec: allowArbitrary,
-        allow_exec_module: allowExecMod,
-      })
-      await api.put('/api/recordings/settings/', {
-        ffmpeg_hwaccel: perf.ffmpeg_hwaccel,
-        ffmpeg_hwaccel_device: perf.ffmpeg_hwaccel_device || '',
-        motion_max_concurrent: Number(perf.motion_max_concurrent || 4),
-        motion_analysis_max_width: Number(perf.motion_analysis_max_width || 320),
-        motion_rtsp_mode: perf.motion_rtsp_mode,
-      })
-      onSuccess('Streaming/performance settings saved. Restart go2rtc and recorder/processor containers to fully apply hardware/performance changes.')
-    } catch (ex) {
-      onError(ex.message || 'Save failed')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  if (!isOriginalAdmin) {
-    return (
-      <p className="text-sm text-gray-500">
-        Only the original system administrator can configure go2rtc streaming and security options.
-      </p>
-    )
-  }
-
-  if (loading) {
-    return (
-      <div className="flex justify-center py-16">
-        <Spinner className="w-6 h-6" />
-      </div>
-    )
-  }
-
-  const inputCls =
-    'w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono text-xs'
-
-  return (
-    <form onSubmit={handleSave} className="space-y-6">
-      <SectionCard title="Streaming basics" subtitle={<>Most installs only need ICE candidates and a save/restart. <ApplyBadge policy="go2rtc" /></>}>
-        <p className="text-sm text-gray-400 mb-3">
-          One <strong className="text-gray-300">WebRTC ICE</strong> candidate per line. Each line must start with{' '}
-          <code className="text-gray-300">stun:</code> or <code className="text-gray-300">turn:</code> (go2rtc
-          format). Saved into <code className="text-gray-400 break-all">{configPath || 'go2rtc.yaml'}</code>.
-          For remote access, HTTPS, and when to use TURN, see the project doc{' '}
-          <code className="text-gray-500">docs/remote-viewing.md</code> (section &quot;WebRTC ICE&quot;).
-        </p>
-        <p className="text-xs text-gray-500 mb-2 font-mono leading-relaxed">
-          Examples: <span className="text-gray-400">stun:8555</span> ·{' '}
-          <span className="text-gray-400">stun:stun.l.google.com:19302</span> ·{' '}
-          <span className="text-gray-400">turn:user:pass@relay.example.com:3478?transport=udp</span>
-        </p>
-        <textarea
-          className={`${inputCls} min-h-[120px]`}
-          value={candidatesText}
-          onChange={(e) => setCandidatesText(e.target.value)}
-          placeholder={'stun:8555\nstun:stun.l.google.com:19302'}
-        />
-      </SectionCard>
-
-      <SectionCard
-        title="Advanced streaming controls"
-        subtitle={<>Only needed for custom exec-based stream pipelines. <ApplyBadge policy="go2rtc" /></>}
-        actions={
-          <button
-            type="button"
-            onClick={() => setShowAdvanced((v) => !v)}
-            className="text-xs text-indigo-400 hover:text-indigo-300 border border-indigo-900 hover:border-indigo-700 px-3 py-1 rounded-lg"
-          >
-            {showAdvanced ? 'Hide advanced' : 'Show advanced'}
-          </button>
-        }
-      >
-        {showAdvanced ? (
-          <div className="space-y-4">
-            <label className="flex items-start gap-3 cursor-pointer">
-              <input
-                type="checkbox"
-                className="mt-1 rounded border-gray-600"
-                checked={allowArbitrary}
-                disabled={envLocked}
-                onChange={(e) => setAllowArbitrary(e.target.checked)}
-              />
-              <span>
-                <span className="text-sm text-gray-200">Allow arbitrary stream sources (echo:, expr:, exec:)</span>
-                <span className="block text-xs text-gray-500 mt-1">
-                  Enable only if you trust every source URL managed in Opus.
-                </span>
-                {envLocked && (
-                  <span className="block text-xs text-amber-400 mt-2">
-                    Locked by <code className="text-gray-400">GO2RTC_ALLOW_ARBITRARY_EXEC</code> environment variable.
-                  </span>
-                )}
-              </span>
-            </label>
-            <label className="flex items-start gap-3 cursor-pointer">
-              <input
-                type="checkbox"
-                className="mt-1 rounded border-gray-600"
-                checked={allowExecMod}
-                onChange={(e) => setAllowExecMod(e.target.checked)}
-              />
-              <span>
-                <span className="text-sm text-gray-200">Enable go2rtc &quot;exec&quot; module</span>
-                <span className="block text-xs text-gray-500 mt-1">
-                  Keep off unless you run advanced <code className="text-gray-400">exec:</code> pipelines.
-                </span>
-              </span>
-            </label>
-          </div>
-        ) : (
-          <p className="text-sm text-gray-500">Advanced options are hidden by default to keep setup simple.</p>
-        )}
-      </SectionCard>
-
-      <SectionCard
-        title="Performance and decode"
-        subtitle={<>Tune hardware acceleration and motion decode pressure from the UI. <ApplyBadge policy="recorder" /> <ApplyBadge policy="processor" /></>}
-      >
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <label className="text-xs text-gray-400">
-            FFmpeg hardware acceleration
-            <select
-              className="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white"
-              value={perf.ffmpeg_hwaccel}
-              onChange={(e) => setPerf((p) => ({ ...p, ffmpeg_hwaccel: e.target.value }))}
-            >
-              {['none', 'cuda', 'qsv', 'vaapi', 'videotoolbox', 'dxva2', 'd3d11va'].map((m) => (
-                <option key={m} value={m}>{m}</option>
-              ))}
-            </select>
-          </label>
-          <label className="text-xs text-gray-400">
-            HW accel device (optional)
-            <input
-              className="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white"
-              value={perf.ffmpeg_hwaccel_device}
-              onChange={(e) => setPerf((p) => ({ ...p, ffmpeg_hwaccel_device: e.target.value }))}
-              placeholder="e.g. 0"
-            />
-          </label>
-          <label className="text-xs text-gray-400">
-            Motion max concurrent
-            <input
-              type="number"
-              min={1}
-              max={64}
-              className="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white"
-              value={perf.motion_max_concurrent}
-              onChange={(e) => setPerf((p) => ({ ...p, motion_max_concurrent: Number(e.target.value || 4) }))}
-            />
-          </label>
-          <label className="text-xs text-gray-400">
-            Motion analysis width (0 = full)
-            <input
-              type="number"
-              min={0}
-              max={1920}
-              className="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white"
-              value={perf.motion_analysis_max_width}
-              onChange={(e) => setPerf((p) => ({ ...p, motion_analysis_max_width: Number(e.target.value || 320) }))}
-            />
-          </label>
-          <label className="text-xs text-gray-400 md:col-span-2">
-            Motion RTSP mode
-            <select
-              className="mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white"
-              value={perf.motion_rtsp_mode}
-              onChange={(e) => setPerf((p) => ({ ...p, motion_rtsp_mode: e.target.value }))}
-            >
-              <option value="auto">auto (prefer sub)</option>
-              <option value="sub">sub only (fallback main)</option>
-              <option value="main">main only</option>
-            </select>
-          </label>
-        </div>
-      </SectionCard>
-
-      <div className="rounded-xl border border-gray-800 bg-gray-900/60 p-4 text-xs text-gray-500 space-y-1.5">
-        <p className="font-medium text-gray-400">What happens after saving</p>
-        <ul className="list-disc list-inside space-y-0.5">
-          <li><span className="text-amber-300">ICE candidates and streaming security</span> are written to go2rtc.yaml — restart the go2rtc container to apply.</li>
-          <li><span className="text-amber-300">Hardware accel</span> takes effect on the next recorder container restart (or FFmpeg auto-restart).</li>
-          <li><span className="text-amber-300">Motion concurrency and analysis width</span> need a processor container restart.</li>
-        </ul>
-      </div>
-
-      <button
-        type="submit"
-        disabled={saving}
-        className="px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white"
-      >
-        {saving ? 'Saving…' : 'Save streaming settings'}
-      </button>
-    </form>
   )
 }
 
@@ -494,94 +589,6 @@ function ApiTokenSettings({ onSuccess, onError }) {
         <p className="text-sm text-gray-500">Hidden to reduce noise during normal configuration.</p>
       )}
     </SectionCard>
-  )
-}
-
-const SETTINGS_GROUP_LABELS = {
-  recording: 'Recording',
-  motion: 'Motion / Events',
-  performance: 'Performance',
-  streaming: 'Streaming',
-}
-
-function SettingsOverviewPanel() {
-  const [entries, setEntries] = useState(null)
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    let alive = true
-    api
-      .get('/api/config/current')
-      .then((data) => { if (alive) setEntries(data) })
-      .catch(() => {})
-      .finally(() => { if (alive) setLoading(false) })
-    return () => { alive = false }
-  }, [])
-
-  if (loading) {
-    return (
-      <div className="mt-6">
-        <SectionCard title="All settings">
-          <div className="flex justify-center py-8"><Spinner className="w-5 h-5" /></div>
-        </SectionCard>
-      </div>
-    )
-  }
-  if (!entries?.length) return null
-
-  const groups = {}
-  for (const entry of entries) {
-    const g = entry.group || 'other'
-    if (!groups[g]) groups[g] = []
-    groups[g].push(entry)
-  }
-
-  const fmtVal = (entry, v) => {
-    if (v === null || v === undefined) return '—'
-    if (entry.type === 'bool') return v ? 'Yes' : 'No'
-    if (Array.isArray(v)) return v.join(', ') || '—'
-    return String(v)
-  }
-
-  return (
-    <div className="mt-6">
-      <SectionCard title="All settings" subtitle="Read-only overview of every configurable setting and its current value.">
-        {Object.entries(groups).map(([key, items]) => (
-          <div key={key} className="mb-5 last:mb-0">
-            <h4 className="text-xs font-semibold text-indigo-300 uppercase tracking-wider mb-2">
-              {SETTINGS_GROUP_LABELS[key] || key}
-            </h4>
-            <div className="overflow-x-auto rounded-lg border border-gray-800">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-gray-800 text-left text-xs text-gray-500 uppercase tracking-wider bg-gray-900/80">
-                    <th className="px-3 py-2">Setting</th>
-                    <th className="px-3 py-2">Value</th>
-                    <th className="px-3 py-2">Default</th>
-                    <th className="px-3 py-2">Apply</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-800">
-                  {items.map((entry) => (
-                    <tr key={entry.key} className="bg-gray-900/40">
-                      <td className="px-3 py-2">
-                        <div className="text-gray-200 text-xs font-medium">{entry.label}</div>
-                        {entry.description && (
-                          <div className="text-gray-500 text-[10px] mt-0.5 max-w-xs">{entry.description}</div>
-                        )}
-                      </td>
-                      <td className="px-3 py-2 text-white font-mono text-xs">{fmtVal(entry, entry.value)}</td>
-                      <td className="px-3 py-2 text-gray-500 font-mono text-xs">{fmtVal(entry, entry.default)}</td>
-                      <td className="px-3 py-2"><ApplyBadge policy={entry.apply} /></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        ))}
-      </SectionCard>
-    </div>
   )
 }
 
@@ -767,8 +774,8 @@ function StreamEditForm({ cameraRow, source, onSubmit, onClose }) {
           placeholder="Lower-resolution URL for live tiles (recommended if main is 4K/HEVC)"
         />
         <p className="text-xs text-gray-500 mt-1">
-          For <span className="font-mono text-gray-400">…-main</span> cameras without a separate{' '}
-          <span className="font-mono text-gray-400">…-sub</span> row, this URL is paired automatically for live view.
+          For <span className="font-mono text-gray-400">&hellip;-main</span> cameras without a separate{' '}
+          <span className="font-mono text-gray-400">&hellip;-sub</span> row, this URL is paired automatically for live view.
         </p>
       </div>
       <p className="text-xs text-gray-500">Credentials stay on the server; list views show masked URLs.</p>
@@ -778,7 +785,7 @@ function StreamEditForm({ cameraRow, source, onSubmit, onClose }) {
           disabled={saving}
           className="flex-1 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white py-2 rounded-lg text-sm font-medium"
         >
-          {saving ? 'Saving…' : 'Save & sync stream'}
+          {saving ? 'Saving\u2026' : 'Save & sync stream'}
         </button>
         <button type="button" onClick={onClose} className="flex-1 bg-gray-800 hover:bg-gray-700 text-gray-300 py-2 rounded-lg text-sm">
           Cancel
@@ -869,12 +876,12 @@ function CamerasPanel({ inventory, loading, onEditStreams }) {
                   const online = row.online === true
                   return (
                     <tr key={row.id} className="bg-gray-900/40">
-                      <td className="px-3 py-2 text-gray-400 font-mono text-xs">{row.channel ?? '—'}</td>
+                      <td className="px-3 py-2 text-gray-400 font-mono text-xs">{row.channel ?? '\u2014'}</td>
                       <td className="px-3 py-2 text-white">{row.display_name}</td>
                       <td className="px-3 py-2 text-gray-500 font-mono text-xs max-w-[140px] truncate" title={row.name}>
                         {row.name}
                       </td>
-                      <td className="px-3 py-2 text-gray-400 font-mono text-xs">{row.source_host || '—'}</td>
+                      <td className="px-3 py-2 text-gray-400 font-mono text-xs">{row.source_host || '\u2014'}</td>
                       <td className="px-3 py-2">
                         {row.management_url ? (
                           <a
@@ -886,7 +893,7 @@ function CamerasPanel({ inventory, loading, onEditStreams }) {
                             :8000
                           </a>
                         ) : (
-                          '—'
+                          '\u2014'
                         )}
                       </td>
                       <td className="px-3 py-2 text-gray-500 text-xs">{row.protocol}</td>
@@ -919,7 +926,7 @@ function CamerasPanel({ inventory, loading, onEditStreams }) {
 export default function Configuration() {
   const [searchParams, setSearchParams] = useSearchParams()
   const raw = searchParams.get('tab')
-  const tab = TAB_IDS.includes(raw) ? raw : 'system'
+  const tab = TAB_IDS.includes(raw) ? raw : raw === 'streaming' ? 'settings' : 'system'
   const setTab = useCallback(
     (t) => {
       setSearchParams(t === 'system' ? {} : { tab: t })
@@ -1057,8 +1064,8 @@ export default function Configuration() {
           <TabButton active={tab === 'cameras'} onClick={() => setTab('cameras')}>
             Cameras
           </TabButton>
-          <TabButton active={tab === 'streaming'} onClick={() => setTab('streaming')}>
-            Streaming
+          <TabButton active={tab === 'settings'} onClick={() => setTab('settings')}>
+            Settings
           </TabButton>
           <TabButton active={tab === 'maintenance'} onClick={() => setTab('maintenance')}>
             Maintenance
@@ -1075,13 +1082,14 @@ export default function Configuration() {
             setupStatus={setupStatus}
             isOriginalAdmin={isOriginalAdmin}
           />
-          <SettingsOverviewPanel />
-          <ApiTokenSettings onSuccess={success} onError={toastError} />
+          <div className="mt-6">
+            <ApiTokenSettings onSuccess={success} onError={toastError} />
+          </div>
         </>
       )}
 
-      {tab === 'streaming' && (
-        <StreamingPanel isOriginalAdmin={isOriginalAdmin} onSuccess={success} onError={toastError} />
+      {tab === 'settings' && (
+        <SettingsPanel isOriginalAdmin={isOriginalAdmin} onSuccess={success} onError={toastError} />
       )}
 
       {tab === 'maintenance' && (
@@ -1100,7 +1108,7 @@ export default function Configuration() {
       )}
 
       {editRow && (
-        <Modal title={`Edit streams — ${editRow.display_name}`} onClose={() => setEditRow(null)}>
+        <Modal title={`Edit streams \u2014 ${editRow.display_name}`} onClose={() => setEditRow(null)}>
           {editSource ? (
             <StreamEditForm
               cameraRow={editRow}

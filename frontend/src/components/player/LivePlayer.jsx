@@ -78,6 +78,15 @@ export default function LivePlayer({
     });
   }, []);
 
+  // Stable callback refs — prevents child effects from restarting on every parent render
+  const onIframeTimeout = useCallback(() => {
+    handleModeFailed(mode);
+  }, [handleModeFailed, mode]);
+
+  const onHlsFailed = useCallback(() => {
+    handleModeFailed("hls");
+  }, [handleModeFailed]);
+
   const streamKey = useMemo(() => {
     if (!cameraName || !enabled) return null;
     return (
@@ -129,7 +138,7 @@ export default function LivePlayer({
           cameraName={cameraName}
           nativeControls={nativeVideoControls}
           isFallback={mode !== resolvedMode}
-          onFailed={() => handleModeFailed("hls")}
+          onFailed={onHlsFailed}
         />
       ) : iframeSrc ? (
         <Go2rtcIframe
@@ -137,7 +146,7 @@ export default function LivePlayer({
           title={cameraName || "Live"}
           cameraName={cameraName}
           currentMode={mode}
-          onTimeout={() => handleModeFailed(mode)}
+          onTimeout={onIframeTimeout}
         />
       ) : (
         <div className="absolute inset-0 flex items-center justify-center text-gray-500 text-sm">
@@ -153,6 +162,9 @@ function Go2rtcIframe({ src, title, cameraName, currentMode, onTimeout }) {
   const [nonce, setNonce] = useState(0);
   const timerRef = useRef(null);
   const mountedAt = useRef(Date.now());
+  // Ref keeps latest callback without restarting the timer effect
+  const onTimeoutRef = useRef(onTimeout);
+  onTimeoutRef.current = onTimeout;
 
   const clearTimer = useCallback(() => {
     if (timerRef.current) {
@@ -175,10 +187,10 @@ function Go2rtcIframe({ src, title, cameraName, currentMode, onTimeout }) {
         ttffMs: Date.now() - mountedAt.current,
         fallbackReason: "iframe_timeout",
       });
-      if (onTimeout) onTimeout();
+      onTimeoutRef.current?.();
     }, IFRAME_LOAD_TIMEOUT_MS);
     return () => clearTimer();
-  }, [src, nonce, clearTimer, cameraName, title, currentMode, onTimeout]);
+  }, [src, nonce, clearTimer, cameraName, title, currentMode]);
 
   const handleLoad = useCallback(() => {
     setLoadTimedOut(false);
@@ -237,6 +249,8 @@ function HlsVideo({ src, cameraName, nativeControls = true, isFallback = false, 
   const [err, setErr] = useState(null);
   const mountedAt = useRef(Date.now());
   const ttffRecorded = useRef(false);
+  const onFailedRef = useRef(onFailed);
+  onFailedRef.current = onFailed;
 
   const cleanup = useCallback(() => {
     clearTimeout(retryTimer.current);
@@ -289,7 +303,7 @@ function HlsVideo({ src, cameraName, nativeControls = true, isFallback = false, 
         ttffMs: Date.now() - mountedAt.current,
         fallbackReason: reason,
       });
-      if (onFailed) onFailed();
+      onFailedRef.current?.();
     }
 
     function startHlsJs() {
@@ -373,7 +387,7 @@ function HlsVideo({ src, cameraName, nativeControls = true, isFallback = false, 
       startNativeHls();
     } else {
       setErr("HLS not supported in this browser");
-      if (onFailed) onFailed();
+      onFailedRef.current?.();
     }
 
     return () => {
@@ -383,7 +397,7 @@ function HlsVideo({ src, cameraName, nativeControls = true, isFallback = false, 
       video.removeAttribute("src");
       video.load();
     };
-  }, [src, nativeControls, cleanup, cameraName, isFallback, onFailed]);
+  }, [src, nativeControls, cleanup, cameraName, isFallback]);
 
   return (
     <>

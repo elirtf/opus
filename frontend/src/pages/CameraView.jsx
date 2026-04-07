@@ -125,7 +125,7 @@ export default function CameraView() {
               setModeOverride(v);
             }}
             className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200"
-            title="Use this to benchmark and lock the smoothest live mode on this browser."
+            title="Saved in this browser (opus_live_playback_mode). Applies to dashboard tiles too. If live is choppy, try WebRTC; if the stream fails (e.g. H.265), try MSE or HLS."
           >
             <option value="auto">Auto</option>
             <option value="webrtc">WebRTC</option>

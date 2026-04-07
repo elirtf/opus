@@ -7,6 +7,7 @@ import LivePlayer from '../components/player/LivePlayer'
 import { useLiveStreamGate } from '../hooks/useLiveStreamGate'
 import { useAuth } from '../context/AuthContext'
 import { compareCamerasByDisplayName } from '../utils/naturalCompare'
+import { getPlaybackModeOverride } from '../utils/streamPlayback'
 
 const GRID_SIZES = [3, 4, 6]
 const HEALTH_POLL_MS = 30000
@@ -84,7 +85,7 @@ function CameraTile({ cam, streamName, online, onClick }) {
             cameraName={cam.name}
             streamName={streamName}
             enabled={streamEnabled}
-            playbackMode="auto"
+            playbackMode={getPlaybackModeOverride()}
             nativeVideoControls={false}
             className="h-full"
           />

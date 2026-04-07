@@ -29,7 +29,10 @@ export { isFirefox, shouldPreferHlsForDevice } from "../../utils/streamPlayback"
  */
 function resolveMode(playbackMode) {
   if (playbackMode === "auto") {
-    return shouldPreferHlsForDevice() ? "hls" : "mse";
+    if (shouldPreferHlsForDevice()) return "hls";
+    // Desktop: WebRTC matches CameraView "auto" (lower latency than MSE iframe).
+    // If live sub is H.265 and the tile fails, set Mode to MSE or HLS on the camera page.
+    return "webrtc";
   }
   return playbackMode;
 }

@@ -72,6 +72,13 @@ def _get_allowed_camera_names() -> set | None:
     return accessible_camera_names(current_user)
 
 
+def _main_stream_names() -> set[str]:
+    rows = Camera.select(Camera.name).where(
+        (Camera.name.endswith("-main")) | (Camera.stream_role == "main")
+    )
+    return {r.name for r in rows}
+
+
 # ── List recordings ──────────────────────────────────────────────────────────
 
 @bp.route("/", methods=["GET"])
@@ -96,6 +103,13 @@ def list_recordings():
     # Access control
     allowed_cameras = _get_allowed_camera_names()
     if allowed_cameras is not None and not allowed_cameras:
+        return api_response({"recordings": [], "total": 0})
+    main_names = _main_stream_names()
+    if allowed_cameras is None:
+        allowed_cameras = main_names
+    else:
+        allowed_cameras = set(allowed_cameras).intersection(main_names)
+    if not allowed_cameras:
         return api_response({"recordings": [], "total": 0})
 
     # Parse query params
@@ -167,6 +181,10 @@ def timeline():
     if not isinstance(result, tuple):
         return result
     camera_names, target_date, day_start, day_end = result
+    main_names = _main_stream_names()
+    camera_names = [n for n in camera_names if n in main_names]
+    if not camera_names:
+        return api_error("Playback timeline is available for main streams only.", 400)
 
     recs = (
         Recording.select()
@@ -214,6 +232,12 @@ def available_dates():
     allowed_cameras = _get_allowed_camera_names()
     if allowed_cameras is not None and camera_name not in allowed_cameras:
         return api_error("Access denied.", 403)
+    cam = Camera.get_or_none(Camera.name == camera_name)
+    if cam is None:
+        return api_error("Camera not found.", 404)
+    role = getattr(cam, "stream_role", None) or ("sub" if cam.name.endswith("-sub") else "main")
+    if role != "main":
+        return api_error("Playback dates are available for main streams only.", 400)
 
     month_str = request.args.get("month")
     if month_str:
@@ -259,6 +283,12 @@ def available_dates():
 @login_required_api
 def serve_recording(camera_name, filename):
     """Serve a recording file for download or in-browser playback."""
+    cam = Camera.get_or_none(Camera.name == camera_name)
+    if cam is None:
+        return api_error("Camera not found.", 404)
+    role = getattr(cam, "stream_role", None) or ("sub" if cam.name.endswith("-sub") else "main")
+    if role != "main":
+        return api_error("Playback files are available for main streams only.", 400)
     return serve_mp4_file(get_recordings_dir(), camera_name, filename)
 
 
@@ -305,6 +335,12 @@ def bulk_delete():
 
     if not camera_name:
         return api_error("camera_name is required.", 400)
+    cam = Camera.get_or_none(Camera.name == camera_name)
+    if cam is None:
+        return api_error("Camera not found.", 404)
+    role = getattr(cam, "stream_role", None) or ("sub" if cam.name.endswith("-sub") else "main")
+    if role != "main":
+        return api_error("Bulk delete is only supported for main stream recordings.", 400)
 
     query = Recording.select().where(Recording.camera_name == camera_name)
 

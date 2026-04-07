@@ -46,13 +46,14 @@ def stream_add(name, rtsp_url):
         current_app.logger.warning("go2rtc stream_add rejected %s: %s", name, err)
         return
     try:
-        http.put(
+        r = http.put(
             f"{current_app.config['GO2RTC_URL']}/api/streams",
             params={"name": name, "src": rtsp_url},
             timeout=3,
         )
+        r.raise_for_status()
     except Exception as e:
-        current_app.logger.warning(f"go2rtc stream_add failed: {e}")
+        current_app.logger.warning("go2rtc stream_add failed for %s: %s", name, e)
 
 
 def _probe_nvr_main_stream(base: str, channel_index: int, timeout: int) -> tuple[int, bool]:

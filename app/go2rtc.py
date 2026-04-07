@@ -78,20 +78,22 @@ def stream_sync(camera) -> bool:
             return False
 
         # Always register the RTSP source
-        http.put(
+        r = http.put(
             f"{base_url}/api/streams",
             params={"name": name, "src": camera.rtsp_url},
             timeout=3,
         )
+        r.raise_for_status()
 
         # Add or remove record: output based on flag
         if camera.recording_enabled:
             os.makedirs(os.path.join(get_recordings_dir(), name), exist_ok=True)
-            http.put(
+            r = http.put(
                 f"{base_url}/api/streams",
                 params={"name": name, "src": record_path(name)},
                 timeout=3,
             )
+            r.raise_for_status()
 
         # Live UI plays "{name-main}-sub" in go2rtc for dashboard / camera page (see LivePlayer).
         # NVR import creates a real Camera row per sub stream; standalone cameras use
@@ -107,31 +109,34 @@ def stream_sync(camera) -> bool:
                 if sub_err:
                     logger.warning("go2rtc stream_sync skipped sub %s: %s", sub_name, sub_err)
                     return False
-                http.put(
+                r = http.put(
                     f"{base_url}/api/streams",
                     params={"name": sub_name, "src": sub_url},
                     timeout=3,
                 )
+                r.raise_for_status()
             else:
-                stream_delete(sub_name)
+                if not stream_delete(sub_name):
+                    logger.warning("go2rtc stream_sync could not delete stale sub stream %s", sub_name)
 
         return True
     except Exception as e:
-        logger.warning(f"go2rtc stream_sync failed for {name}: {e}")
+        logger.warning("go2rtc stream_sync failed for %s: %s", name, e)
         return False
 
 
 def stream_delete(name: str) -> bool:
     """Remove a stream entirely from go2rtc."""
     try:
-        http.delete(
+        r = http.delete(
             f"{_go2rtc_url()}/api/streams",
             params={"name": name},
             timeout=3,
         )
+        r.raise_for_status()
         return True
     except Exception as e:
-        logger.warning(f"go2rtc stream_delete failed for {name}: {e}")
+        logger.warning("go2rtc stream_delete failed for %s: %s", name, e)
         return False
 
 

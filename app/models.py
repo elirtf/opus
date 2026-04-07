@@ -96,6 +96,9 @@ class Camera(BaseModel):
     # off | continuous | events_only — synced with recording_enabled (off = disabled)
     recording_policy = CharField(max_length=20, default="continuous")
     rtsp_substream_url = CharField(max_length=255, null=True)
+    # Stream role model inspired by Frigate-style semantics.
+    stream_role = CharField(max_length=10, default="main")  # main | sub
+    paired_stream_name = CharField(max_length=50, null=True)
 
     class Meta:
         table_name = "camera"

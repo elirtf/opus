@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { compareCamerasByDisplayName, naturalCompare } from "../utils/naturalCompare";
@@ -138,7 +138,13 @@ export default function RecordingsPage() {
   const [autoAdvance, setAutoAdvance] = useState(readPlaybackAutoAdvance);
   const [frameStepFps, setFrameStepFps] = useState(readFrameStepFps);
   const [preloadMode, setPreloadMode] = useState(readPreload);
-  const videoRef = useRef(null);
+  const videoARef = useRef(null);
+  const videoBRef = useRef(null);
+  const [activeSlot, setActiveSlot] = useState('a');
+  const activeSlotRef = useRef('a');
+  const prefetchedUrlRef = useRef(null);
+  const getActiveVideo = useCallback(() => activeSlotRef.current === 'a' ? videoARef.current : videoBRef.current, []);
+  const getStandbyVideo = useCallback(() => activeSlotRef.current === 'a' ? videoBRef.current : videoARef.current, []);
   const [pollError, setPollError] = useState(null);
   /** When set, bulk apply is running for this NVR group key (`standalone` or nvr id string). */
   const [bulkApplyingKey, setBulkApplyingKey] = useState(null);
@@ -240,6 +246,13 @@ export default function RecordingsPage() {
   }, [tab]);
 
   useEffect(() => {
+    setPlaying(null);
+    prefetchedUrlRef.current = null;
+    activeSlotRef.current = 'a';
+    setActiveSlot('a');
+  }, [selectedCam, date]);
+
+  useEffect(() => {
     try {
       localStorage.setItem(PB_LS.speed, String(speed));
     } catch {
@@ -272,10 +285,11 @@ export default function RecordingsPage() {
   }, [preloadMode]);
 
   useEffect(() => {
-    if (videoRef.current && playing?.url) {
-      videoRef.current.playbackRate = speed;
+    const v = getActiveVideo();
+    if (v && playing?.url) {
+      v.playbackRate = speed;
     }
-  }, [playing?.url, speed]);
+  }, [playing?.url, speed, getActiveVideo]);
 
   // ── Load settings ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -418,35 +432,82 @@ export default function RecordingsPage() {
     setSetupSaving(false);
   };
 
+  // ── Segment URL builder ─────────────────────────────────────────────────
+  const segUrl = useCallback((seg) => {
+    const base = tab === "events" ? "/api/events/" : "/api/recordings/";
+    return withOrigin(`${base}${encodeURIComponent(selectedCam)}/${seg.filename}`);
+  }, [tab, selectedCam]);
+
   // ── Play a segment or event clip ─────────────────────────────────────────
-  const playSeg = (seg) => {
-    const base =
-      tab === "events" ? "/api/events/" : "/api/recordings/";
-    const path = `${base}${encodeURIComponent(selectedCam)}/${seg.filename}`;
-    const url = withOrigin(path);
+  const playSeg = (seg, seekTo) => {
+    const url = segUrl(seg);
     setPlaying({ ...seg, url });
-    if (videoRef.current) {
-      videoRef.current.src = url;
-      videoRef.current.playbackRate = speed;
-      videoRef.current.play().catch(() => {});
+    activeSlotRef.current = 'a';
+    setActiveSlot('a');
+    prefetchedUrlRef.current = null;
+    if (videoARef.current) {
+      videoARef.current.src = url;
+      videoARef.current.playbackRate = speed;
+      if (seekTo != null) videoARef.current.currentTime = seekTo;
+      videoARef.current.play().catch(() => {});
+    }
+    if (videoBRef.current) {
+      videoBRef.current.removeAttribute('src');
+      videoBRef.current.load();
     }
   };
 
   const changeSpeed = (newSpeed) => {
     setSpeed(newSpeed);
-    if (videoRef.current) videoRef.current.playbackRate = newSpeed;
+    const v = getActiveVideo();
+    if (v) v.playbackRate = newSpeed;
   };
 
   const stepFrame = (direction) => {
-    if (!videoRef.current) return;
-    videoRef.current.pause();
-    videoRef.current.currentTime += direction * (1 / frameStepFps);
+    const v = getActiveVideo();
+    if (!v) return;
+    v.pause();
+    v.currentTime += direction * (1 / frameStepFps);
+  };
+
+  // Prefetch next segment when close to end of current
+  const handleTimeUpdate = () => {
+    const v = getActiveVideo();
+    if (!v || !autoAdvance || !playing || !segments.length) return;
+    const remaining = v.duration - v.currentTime;
+    if (!Number.isFinite(remaining) || remaining > 3 || remaining <= 0) return;
+    const idx = segments.findIndex((s) => s.filename === playing.filename);
+    if (idx < 0 || idx >= segments.length - 1) return;
+    const nextUrl = segUrl(segments[idx + 1]);
+    if (prefetchedUrlRef.current === nextUrl) return;
+    const standby = getStandbyVideo();
+    if (standby) {
+      standby.src = nextUrl;
+      standby.preload = "auto";
+      standby.load();
+      prefetchedUrlRef.current = nextUrl;
+    }
   };
 
   const onVideoEnded = () => {
     if (!autoAdvance || !playing || !segments.length) return;
     const idx = segments.findIndex((s) => s.filename === playing.filename);
-    if (idx >= 0 && idx < segments.length - 1) playSeg(segments[idx + 1]);
+    if (idx < 0 || idx >= segments.length - 1) return;
+    const nextSeg = segments[idx + 1];
+    const nextUrl = segUrl(nextSeg);
+    const standby = getStandbyVideo();
+    // Gapless swap if standby has enough data buffered
+    if (standby && prefetchedUrlRef.current === nextUrl && standby.readyState >= 2) {
+      const newSlot = activeSlotRef.current === 'a' ? 'b' : 'a';
+      activeSlotRef.current = newSlot;
+      setActiveSlot(newSlot);
+      standby.playbackRate = speed;
+      standby.play().catch(() => {});
+      setPlaying({ ...nextSeg, url: nextUrl });
+      prefetchedUrlRef.current = null;
+    } else {
+      playSeg(nextSeg);
+    }
   };
 
   // ── Filter cameras (main streams only) ─────────────────────────────────
@@ -722,17 +783,29 @@ export default function RecordingsPage() {
                 {/* Video player */}
                 <div style={S.playerWrap}>
                   {playing ? (
-                    <video
-                      ref={videoRef}
-                      controls
-                      autoPlay
-                      playsInline
-                      preload={preloadMode}
-                      onEnded={onVideoEnded}
-                      style={S.video}
-                    >
-                      <source src={playing.url} type="video/mp4" />
-                    </video>
+                    <>
+                      <video
+                        ref={videoARef}
+                        controls={activeSlot === 'a'}
+                        autoPlay
+                        playsInline
+                        preload={preloadMode}
+                        onEnded={() => { if (activeSlotRef.current === 'a') onVideoEnded(); }}
+                        onTimeUpdate={() => { if (activeSlotRef.current === 'a') handleTimeUpdate(); }}
+                        style={{ ...S.video, ...(activeSlot !== 'a' ? S.videoHidden : {}) }}
+                      >
+                        <source src={playing.url} type="video/mp4" />
+                      </video>
+                      <video
+                        ref={videoBRef}
+                        controls={activeSlot === 'b'}
+                        playsInline
+                        preload="auto"
+                        onEnded={() => { if (activeSlotRef.current === 'b') onVideoEnded(); }}
+                        onTimeUpdate={() => { if (activeSlotRef.current === 'b') handleTimeUpdate(); }}
+                        style={{ ...S.video, ...(activeSlot !== 'b' ? S.videoHidden : {}) }}
+                      />
+                    </>
                   ) : (
                     <div style={S.playerPlaceholder}>
                       <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="#475569" strokeWidth="1.5">
@@ -833,7 +906,7 @@ export default function RecordingsPage() {
                 </div>
 
                 {/* Timeline */}
-                <Timeline segments={timeline} playing={playing} onPlay={playSeg} date={date} />
+                <Timeline segments={timeline} playing={playing} onPlay={playSeg} date={date} getActiveVideo={getActiveVideo} />
 
                 {/* Segment list */}
                 <div style={S.segList}>
@@ -930,6 +1003,52 @@ export default function RecordingsPage() {
                       style={S.input}
                       disabled={!isOriginalAdmin}
                     />
+                  </label>
+                  <p style={{ ...S.hint, marginTop: 14, marginBottom: 2, lineHeight: 1.45 }}>
+                    <strong style={{ color: "#94a3b8" }}>Operational knobs</strong> — previously configurable only via environment variables.
+                  </p>
+                  <label style={S.label}>
+                    Clip Retention (days)
+                    <input
+                      type="number" min="1" max="3650"
+                      value={settings.clip_retention_days ?? 90}
+                      onChange={(e) => setSettings({ ...settings, clip_retention_days: parseInt(e.target.value, 10) || 90 })}
+                      style={S.input}
+                      disabled={!isOriginalAdmin}
+                    />
+                    <span style={S.hint}>How long to keep motion/event clips (independent of segment retention)</span>
+                  </label>
+                  <label style={S.label}>
+                    Events-Only Rolling Buffer (hours)
+                    <input
+                      type="number" min="1" max="720"
+                      value={settings.events_only_buffer_hours ?? 48}
+                      onChange={(e) => setSettings({ ...settings, events_only_buffer_hours: parseInt(e.target.value, 10) || 48 })}
+                      style={S.input}
+                      disabled={!isOriginalAdmin}
+                    />
+                    <span style={S.hint}>For events_only cameras with segment recording, keep a rolling buffer this long</span>
+                  </label>
+                  <label style={{ ...S.label, flexDirection: "row", alignItems: "center", gap: 8 }}>
+                    <input
+                      type="checkbox"
+                      checked={!!settings.events_only_record_segments}
+                      onChange={(e) => setSettings({ ...settings, events_only_record_segments: e.target.checked })}
+                      disabled={!isOriginalAdmin}
+                    />
+                    <span>Record segments for events-only cameras</span>
+                  </label>
+                  <span style={S.hint}>Enables 24/7 rolling segment recording for events_only cameras (enables pre-roll from segments)</span>
+                  <label style={S.label}>
+                    Minimum Free Disk (GB)
+                    <input
+                      type="number" min="0" max="1000" step="0.5"
+                      value={settings.min_free_gb ?? 1}
+                      onChange={(e) => setSettings({ ...settings, min_free_gb: parseFloat(e.target.value) || 0 })}
+                      style={S.input}
+                      disabled={!isOriginalAdmin}
+                    />
+                    <span style={S.hint}>Stop starting new FFmpeg writers below this free-disk threshold (0 = disabled)</span>
                   </label>
                   <p style={{ ...S.hint, marginTop: 10, lineHeight: 1.45 }}>
                     <strong style={{ color: "#94a3b8" }}>Motion / event clips</strong> (processor service). Core length is recorded after motion is detected; post-roll extends that capture. Pre-roll (seconds before the trigger) is taken from the latest completed segment file when continuous or rolling-segment recording exists — not from live RTSP alone.
@@ -1275,23 +1394,79 @@ export default function RecordingsPage() {
 // ═══════════════════════════════════════════════════════════════════════════════
 // TIMELINE
 // ═══════════════════════════════════════════════════════════════════════════════
-function Timeline({ segments, playing, onPlay, date }) {
-  const ref = useRef(null);
-  const segRects = segments.map((seg) => {
-    const [h, m] = (seg.start || "00:00:00").split(":").map(Number);
-    return { ...seg, startMin: h * 60 + m, dur: seg.duration || 60 };
-  });
+function Timeline({ segments, playing, onPlay, date, getActiveVideo }) {
+  const trackRef = useRef(null);
+  const playheadRef = useRef(null);
 
-  const handleClick = (e) => {
-    if (!ref.current || !segments.length) return;
-    const rect = ref.current.getBoundingClientRect();
-    const clickMin = ((e.clientX - rect.left) / rect.width) * 1440;
+  const segRects = useMemo(() => segments.map((seg) => {
+    const parts = (seg.start || "00:00:00").split(":").map(Number);
+    const startSec = (parts[0] || 0) * 3600 + (parts[1] || 0) * 60 + (parts[2] || 0);
+    return { ...seg, startSec, dur: seg.duration || 60 };
+  }), [segments]);
+
+  // Animate playhead via rAF — no state updates, no re-renders
+  useEffect(() => {
+    if (!playing) { if (playheadRef.current) playheadRef.current.style.display = "none"; return; }
+    let raf;
+    const tick = () => {
+      const v = getActiveVideo?.();
+      if (v && playheadRef.current) {
+        const seg = segRects.find((s) => s.filename === playing.filename);
+        if (seg) {
+          const wallSec = seg.startSec + (v.currentTime || 0);
+          playheadRef.current.style.left = `${(wallSec / 86400) * 100}%`;
+          playheadRef.current.style.display = "block";
+        }
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [playing, segRects, getActiveVideo]);
+
+  const resolveSeek = useCallback((clientX) => {
+    if (!trackRef.current || !segRects.length) return null;
+    const rect = trackRef.current.getBoundingClientRect();
+    const clickSec = ((clientX - rect.left) / rect.width) * 86400;
+    for (const seg of segRects) {
+      if (clickSec >= seg.startSec && clickSec < seg.startSec + seg.dur) {
+        return { seg, offset: clickSec - seg.startSec };
+      }
+    }
     let best = null, bestDist = Infinity;
     for (const seg of segRects) {
-      const dist = Math.abs(clickMin - (seg.startMin + seg.dur / 120));
+      const mid = seg.startSec + seg.dur / 2;
+      const dist = Math.abs(clickSec - mid);
       if (dist < bestDist) { bestDist = dist; best = seg; }
     }
-    if (best && bestDist < 30) onPlay(best);
+    if (best && bestDist < 1800) {
+      return { seg: best, offset: Math.max(0, Math.min(clickSec - best.startSec, best.dur - 0.1)) };
+    }
+    return null;
+  }, [segRects]);
+
+  const seekToPointer = useCallback((e) => {
+    const target = resolveSeek(e.clientX);
+    if (!target) return;
+    const v = getActiveVideo?.();
+    if (v && playing?.filename === target.seg.filename) {
+      v.currentTime = target.offset;
+    } else {
+      onPlay(target.seg, target.offset);
+    }
+  }, [resolveSeek, getActiveVideo, playing, onPlay]);
+
+  const handlePointerDown = (e) => {
+    e.preventDefault();
+    trackRef.current?.setPointerCapture(e.pointerId);
+    seekToPointer(e);
+  };
+  const handlePointerMove = (e) => {
+    if (!trackRef.current?.hasPointerCapture?.(e.pointerId)) return;
+    seekToPointer(e);
+  };
+  const handlePointerUp = (e) => {
+    trackRef.current?.releasePointerCapture(e.pointerId);
   };
 
   return (
@@ -1303,7 +1478,13 @@ function Timeline({ segments, playing, onPlay, date }) {
           </span>
         ))}
       </div>
-      <div ref={ref} style={S.timelineTrack} onClick={handleClick}>
+      <div
+        ref={trackRef}
+        style={S.timelineTrack}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+      >
         {HOURS.map((h) => (
           <div key={h} style={{
             position: "absolute", left: `${(h / 24) * 100}%`,
@@ -1311,7 +1492,7 @@ function Timeline({ segments, playing, onPlay, date }) {
           }} />
         ))}
         {segRects.map((seg) => {
-          const left = (seg.startMin / 1440) * 100;
+          const left = (seg.startSec / 86400) * 100;
           const width = Math.max((seg.dur / 86400) * 100, 0.15);
           const isActive = playing?.filename === seg.filename;
           return (
@@ -1329,6 +1510,7 @@ function Timeline({ segments, playing, onPlay, date }) {
             top: 0, bottom: 0, width: 2, background: "#f43f5e", zIndex: 2,
           }} />
         )}
+        <div ref={playheadRef} style={S.playhead} />
       </div>
     </div>
   );
@@ -1470,6 +1652,7 @@ const S = {
     position: "relative", flexShrink: 0,
   },
   video: { width: "100%", height: "100%", background: "#000" },
+  videoHidden: { position: "absolute", top: 0, left: 0, width: "100%", height: "100%", visibility: "hidden", pointerEvents: "none" },
   playerPlaceholder: { display: "flex", flexDirection: "column", alignItems: "center" },
 
   // Speed controls
@@ -1542,7 +1725,13 @@ const S = {
   hourLabel: { fontSize: 9, color: "#475569", width: `${100 / 24}%`, textAlign: "center" },
   timelineTrack: {
     position: "relative", height: 28, background: "#1e293b",
-    borderRadius: 4, overflow: "hidden", cursor: "pointer",
+    borderRadius: 4, overflow: "hidden", cursor: "pointer", touchAction: "none",
+  },
+  playhead: {
+    position: "absolute", top: -2, bottom: -2, width: 3,
+    background: "#fbbf24", borderRadius: 1, zIndex: 3,
+    display: "none", pointerEvents: "none",
+    boxShadow: "0 0 4px rgba(251,191,36,0.5)",
   },
 
   // Segment list

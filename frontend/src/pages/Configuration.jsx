@@ -497,6 +497,94 @@ function ApiTokenSettings({ onSuccess, onError }) {
   )
 }
 
+const SETTINGS_GROUP_LABELS = {
+  recording: 'Recording',
+  motion: 'Motion / Events',
+  performance: 'Performance',
+  streaming: 'Streaming',
+}
+
+function SettingsOverviewPanel() {
+  const [entries, setEntries] = useState(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let alive = true
+    api
+      .get('/api/config/current')
+      .then((data) => { if (alive) setEntries(data) })
+      .catch(() => {})
+      .finally(() => { if (alive) setLoading(false) })
+    return () => { alive = false }
+  }, [])
+
+  if (loading) {
+    return (
+      <div className="mt-6">
+        <SectionCard title="All settings">
+          <div className="flex justify-center py-8"><Spinner className="w-5 h-5" /></div>
+        </SectionCard>
+      </div>
+    )
+  }
+  if (!entries?.length) return null
+
+  const groups = {}
+  for (const entry of entries) {
+    const g = entry.group || 'other'
+    if (!groups[g]) groups[g] = []
+    groups[g].push(entry)
+  }
+
+  const fmtVal = (entry, v) => {
+    if (v === null || v === undefined) return '—'
+    if (entry.type === 'bool') return v ? 'Yes' : 'No'
+    if (Array.isArray(v)) return v.join(', ') || '—'
+    return String(v)
+  }
+
+  return (
+    <div className="mt-6">
+      <SectionCard title="All settings" subtitle="Read-only overview of every configurable setting and its current value.">
+        {Object.entries(groups).map(([key, items]) => (
+          <div key={key} className="mb-5 last:mb-0">
+            <h4 className="text-xs font-semibold text-indigo-300 uppercase tracking-wider mb-2">
+              {SETTINGS_GROUP_LABELS[key] || key}
+            </h4>
+            <div className="overflow-x-auto rounded-lg border border-gray-800">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-800 text-left text-xs text-gray-500 uppercase tracking-wider bg-gray-900/80">
+                    <th className="px-3 py-2">Setting</th>
+                    <th className="px-3 py-2">Value</th>
+                    <th className="px-3 py-2">Default</th>
+                    <th className="px-3 py-2">Apply</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-800">
+                  {items.map((entry) => (
+                    <tr key={entry.key} className="bg-gray-900/40">
+                      <td className="px-3 py-2">
+                        <div className="text-gray-200 text-xs font-medium">{entry.label}</div>
+                        {entry.description && (
+                          <div className="text-gray-500 text-[10px] mt-0.5 max-w-xs">{entry.description}</div>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-white font-mono text-xs">{fmtVal(entry, entry.value)}</td>
+                      <td className="px-3 py-2 text-gray-500 font-mono text-xs">{fmtVal(entry, entry.default)}</td>
+                      <td className="px-3 py-2"><ApplyBadge policy={entry.apply} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ))}
+      </SectionCard>
+    </div>
+  )
+}
+
 function MaintenancePanel({ diagnostics, engine, loadingDiag, loadingEng, errorDiag, onRefresh }) {
   const [copied, setCopied] = useState(false)
   const [showRawEngine, setShowRawEngine] = useState(false)
@@ -987,6 +1075,7 @@ export default function Configuration() {
             setupStatus={setupStatus}
             isOriginalAdmin={isOriginalAdmin}
           />
+          <SettingsOverviewPanel />
           <ApiTokenSettings onSuccess={success} onError={toastError} />
         </>
       )}

@@ -74,6 +74,48 @@ SCHEMA = [
         "description": "Delay between launching FFmpeg processes to avoid overloading go2rtc on startup.",
         "group": "recording",
     },
+    {
+        "key": "clip_retention_days",
+        "label": "Clip retention (days)",
+        "type": "int",
+        "default": 90,
+        "min": 1,
+        "max": 3650,
+        "apply": "hot",
+        "description": "Motion/event clips older than this are deleted. Independent of segment retention.",
+        "group": "recording",
+    },
+    {
+        "key": "events_only_buffer_hours",
+        "label": "Events-only rolling buffer (hours)",
+        "type": "int",
+        "default": 48,
+        "min": 1,
+        "max": 720,
+        "apply": "recorder",
+        "description": "For events_only cameras with segment recording enabled, keep a rolling buffer this long.",
+        "group": "recording",
+    },
+    {
+        "key": "events_only_record_segments",
+        "label": "Record segments for events-only cameras",
+        "type": "bool",
+        "default": False,
+        "apply": "recorder",
+        "description": "When true, events_only cameras also run 24/7 segment recording (rolling buffer). Enables pre-roll from segments.",
+        "group": "recording",
+    },
+    {
+        "key": "min_free_gb",
+        "label": "Minimum free disk (GB)",
+        "type": "float",
+        "default": 1,
+        "min": 0,
+        "max": 1000,
+        "apply": "hot",
+        "description": "Stop starting new FFmpeg writers when free disk space drops below this threshold. 0 disables the check.",
+        "group": "recording",
+    },
     # Motion / events
     {
         "key": "motion_clip_seconds",
@@ -266,3 +308,40 @@ def config_current():
     for entry in SCHEMA:
         merged.append({**entry, "value": values.get(entry["key"])})
     return api_response(merged)
+
+
+@bp.route("/audit", methods=["GET"])
+@login_required_api
+def config_audit():
+    """Return recent config change audit log."""
+    from flask import request as req
+    from app.database import db
+
+    limit = min(int(req.args.get("limit", 50)), 500)
+    try:
+        db.execute_sql("""
+            CREATE TABLE IF NOT EXISTS setting_audit (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id    INTEGER,
+                username   VARCHAR(120),
+                key        VARCHAR(100) NOT NULL,
+                old_value  TEXT,
+                new_value  TEXT,
+                changed_at TEXT NOT NULL
+            )
+        """)
+        rows = db.execute_sql(
+            "SELECT id, user_id, username, key, old_value, new_value, changed_at "
+            "FROM setting_audit ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    except Exception:
+        rows = []
+    entries = [
+        {
+            "id": r[0], "user_id": r[1], "username": r[2],
+            "key": r[3], "old_value": r[4], "new_value": r[5], "changed_at": r[6],
+        }
+        for r in rows
+    ]
+    return api_response(entries)

@@ -57,7 +57,7 @@ def _camera_should_record_segments(cam) -> bool:
     if pol == "off":
         return False
     if pol == "events_only":
-        return EVENTS_ONLY_RECORD_SEGMENTS
+        return _events_only_record_segments_from_db()
     return True
 
 
@@ -79,6 +79,42 @@ def _segment_minutes_from_db():
         return max(1, min(60, v))
     except Exception:
         return max(1, min(60, int(os.environ.get("RECORDING_SEGMENT_MINUTES", "5"))))
+
+
+def _clip_retention_days_from_db():
+    try:
+        from app.routes.api.recording_settings import get_setting
+        raw = get_setting("clip_retention_days", "90")
+        return max(1, int(raw or 90))
+    except Exception:
+        return max(1, int(os.environ.get("CLIP_RETENTION_DAYS", "90")))
+
+
+def _events_only_buffer_hours_from_db():
+    try:
+        from app.routes.api.recording_settings import get_setting
+        raw = get_setting("events_only_buffer_hours", "48")
+        return max(1, int(raw or 48))
+    except Exception:
+        return max(1, int(os.environ.get("EVENTS_ONLY_BUFFER_HOURS", "48")))
+
+
+def _events_only_record_segments_from_db():
+    try:
+        from app.routes.api.recording_settings import get_setting
+        raw = get_setting("events_only_record_segments", "false")
+        return str(raw).lower() in ("true", "1", "yes")
+    except Exception:
+        return env_bool("EVENTS_ONLY_RECORD_SEGMENTS", False)
+
+
+def _min_free_gb_from_db():
+    try:
+        from app.routes.api.recording_settings import get_setting
+        raw = get_setting("min_free_gb", "1")
+        return max(0.0, float(raw or "0"))
+    except Exception:
+        return float(os.environ.get("RECORDING_MIN_FREE_GB", "1") or "0")
 
 
 class RecordingEngine:
@@ -105,7 +141,7 @@ class RecordingEngine:
             _segment_minutes_from_db(),
             "yes" if GO2RTC_RTSP_URL else "no",
             STAGGER_DELAY,
-            "on" if EVENTS_ONLY_RECORD_SEGMENTS else "off",
+            "on" if _events_only_record_segments_from_db() else "off",
         )
         vp = get_video_pipeline_summary()
         logger.info(
@@ -175,15 +211,16 @@ class RecordingEngine:
 
     def _disk_pressure(self):
         """
-        True when free disk is below MIN_FREE_GB (new recordings should not start).
+        True when free disk is below min_free_gb (new recordings should not start).
         Existing FFmpeg processes are left running until they exit or desired set changes.
         """
-        if MIN_FREE_GB <= 0:
+        threshold = _min_free_gb_from_db()
+        if threshold <= 0:
             return False
         free = self._recordings_free_gb()
         if free is None:
             return False
-        return free < MIN_FREE_GB
+        return free < threshold
 
     def _sync(self):
         desired = self._desired()
@@ -202,7 +239,7 @@ class RecordingEngine:
                         logger.warning(
                             "Skipping record start for %s: disk pressure (free < %.2f GiB)",
                             name,
-                            MIN_FREE_GB,
+                            _min_free_gb_from_db(),
                         )
                         continue
                     if launches > 0:
@@ -296,7 +333,7 @@ class RecordingEngine:
                 "Skipping segment FFmpeg for %s (policy=%s, events_only_segment_buffer=%s)",
                 cam.name,
                 _norm_recording_policy(cam),
-                EVENTS_ONLY_RECORD_SEGMENTS,
+                _events_only_record_segments_from_db(),
             )
             return
 
@@ -569,18 +606,18 @@ class RecordingEngine:
         if deleted:
             logger.info("Retention: deleted %d segments", deleted)
 
-        if CLIP_RETENTION_DAYS > 0:
+        if _clip_retention_days_from_db() > 0:
             self._purge_old_clips()
 
         # Short buffer for events_only: keep recent segments for pre-roll context only.
-        if EVENTS_ONLY_BUFFER_HOURS > 0:
+        if _events_only_buffer_hours_from_db() > 0:
             self._purge_events_only_buffer()
 
     def _purge_old_clips(self):
-        """Delete motion/AI clip rows and files past CLIP_RETENTION_DAYS."""
+        """Delete motion/AI clip rows and files past clip_retention_days."""
         from app.database import db
 
-        cutoff = (datetime.now() - timedelta(days=CLIP_RETENTION_DAYS)).isoformat()
+        cutoff = (datetime.now() - timedelta(days=_clip_retention_days_from_db())).isoformat()
         removed = 0
         try:
             rows = db.execute_sql(
@@ -618,7 +655,7 @@ class RecordingEngine:
             return
         if not names:
             return
-        cutoff = (datetime.now() - timedelta(hours=EVENTS_ONLY_BUFFER_HOURS)).isoformat()
+        cutoff = (datetime.now() - timedelta(hours=_events_only_buffer_hours_from_db())).isoformat()
         deleted = 0
         try:
             for cam_name in names:
@@ -748,10 +785,10 @@ class RecordingEngine:
                         "max_storage_gb": MAX_STORAGE_GB or None, "disk": disk},
             "config": {"segment_minutes": _segment_minutes_from_db(),
                        "retention_days": RETENTION_DAYS,
-                       "clip_retention_days": CLIP_RETENTION_DAYS,
-                       "events_only_record_segments": EVENTS_ONLY_RECORD_SEGMENTS,
-                       "events_only_buffer_hours": EVENTS_ONLY_BUFFER_HOURS,
-                       "min_free_gb": MIN_FREE_GB if MIN_FREE_GB > 0 else None,
+                       "clip_retention_days": _clip_retention_days_from_db(),
+                       "events_only_record_segments": _events_only_record_segments_from_db(),
+                       "events_only_buffer_hours": _events_only_buffer_hours_from_db(),
+                       "min_free_gb": _min_free_gb_from_db() or None,
                        "recordings_free_gb": free_gb,
                        "source": "go2rtc_relay" if GO2RTC_RTSP_URL else "direct_rtsp",
                        "stagger_seconds": STAGGER_DELAY,

@@ -10,7 +10,9 @@ Settings hierarchy: DB settings > env vars > defaults
 """
 
 import os
+from datetime import datetime
 from flask import Blueprint, request
+from flask_login import current_user
 from app.routes.api.utils import api_response, api_error, login_required_api, admin_required, is_original_admin
 from app.database import db
 
@@ -31,6 +33,11 @@ DEFAULTS = {
     "motion_clip_post_seconds":  "0",    # extra seconds after trigger (extends core capture)
     "motion_poll_seconds":       "6",
     "motion_cooldown_seconds":   "75",
+    # Operational knobs (previously env-only)
+    "clip_retention_days":       "90",
+    "events_only_buffer_hours":  "48",
+    "events_only_record_segments": "false",
+    "min_free_gb":               "1",
     # Decode/performance tuning
     "ffmpeg_hwaccel":            "none",
     "ffmpeg_hwaccel_device":     "",
@@ -76,6 +83,10 @@ def get_setting(key, default=None):
         "motion_max_concurrent": "MOTION_MAX_CONCURRENT",
         "motion_analysis_max_width": "MOTION_ANALYSIS_MAX_WIDTH",
         "motion_rtsp_mode": "MOTION_RTSP_MODE",
+        "clip_retention_days": "CLIP_RETENTION_DAYS",
+        "events_only_buffer_hours": "EVENTS_ONLY_BUFFER_HOURS",
+        "events_only_record_segments": "EVENTS_ONLY_RECORD_SEGMENTS",
+        "min_free_gb": "RECORDING_MIN_FREE_GB",
     }
     env_key = env_map.get(key)
     if env_key and os.environ.get(env_key):
@@ -90,6 +101,32 @@ def set_setting(key, value):
         (key, str(value))
     )
 
+
+# ── Audit trail ───────────────────────────────────────────────────────────────
+
+def _ensure_audit_table():
+    db.execute_sql("""
+        CREATE TABLE IF NOT EXISTS setting_audit (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id    INTEGER,
+            username   VARCHAR(120),
+            key        VARCHAR(100) NOT NULL,
+            old_value  TEXT,
+            new_value  TEXT,
+            changed_at TEXT NOT NULL
+        )
+    """)
+
+
+def write_audit(key, old_value, new_value):
+    """Append an audit row for a setting change.  Safe to call outside a transaction."""
+    _ensure_audit_table()
+    uid = getattr(current_user, "id", None) if current_user and current_user.is_authenticated else None
+    uname = getattr(current_user, "username", None) if current_user and current_user.is_authenticated else None
+    db.execute_sql(
+        "INSERT INTO setting_audit (user_id, username, key, old_value, new_value, changed_at) VALUES (?,?,?,?,?,?)",
+        (uid, uname, key, str(old_value) if old_value is not None else None, str(new_value), datetime.utcnow().isoformat()),
+    )
 
 
 # ── Setup status ──────────────────────────────────────────────────────────────
@@ -168,6 +205,14 @@ def get_settings():
         except (TypeError, ValueError):
             settings[mk] = dv
 
+    try:    settings["clip_retention_days"] = int(settings["clip_retention_days"])
+    except: settings["clip_retention_days"] = 90
+    try:    settings["events_only_buffer_hours"] = int(settings["events_only_buffer_hours"])
+    except: settings["events_only_buffer_hours"] = 48
+    try:    settings["min_free_gb"] = float(settings["min_free_gb"])
+    except: settings["min_free_gb"] = 1
+    settings["events_only_record_segments"] = str(settings.get("events_only_record_segments", "false")).lower() in ("true", "1", "yes")
+
     settings["setup_complete"]    = settings.get("setup_complete", "false") == "true"
     settings["is_original_admin"] = is_original_admin()
     settings["ffmpeg_hwaccel"] = str(settings.get("ffmpeg_hwaccel", "none") or "none").strip().lower()
@@ -203,8 +248,13 @@ def update_settings():
         "motion_max_concurrent",
         "motion_analysis_max_width",
         "motion_rtsp_mode",
+        "clip_retention_days",
+        "events_only_buffer_hours",
+        "events_only_record_segments",
+        "min_free_gb",
     }
     updated = []
+    validated = []
 
     for key, value in data.items():
         if key not in allowed_keys:
@@ -324,8 +374,43 @@ def update_settings():
                 return api_error("motion_rtsp_mode must be auto, main, or sub.", 400)
             value = mode
 
-        set_setting(key, value)
-        updated.append(key)
+        elif key == "clip_retention_days":
+            try:
+                v = int(value)
+                if v < 1 or v > 3650:
+                    return api_error("clip_retention_days must be 1-3650.", 400)
+            except (ValueError, TypeError):
+                return api_error("clip_retention_days must be a number.", 400)
+
+        elif key == "events_only_buffer_hours":
+            try:
+                v = int(value)
+                if v < 1 or v > 720:
+                    return api_error("events_only_buffer_hours must be 1-720.", 400)
+            except (ValueError, TypeError):
+                return api_error("events_only_buffer_hours must be a number.", 400)
+
+        elif key == "events_only_record_segments":
+            value = "true" if str(value).lower() in ("true", "1", "yes") else "false"
+
+        elif key == "min_free_gb":
+            try:
+                v = float(value)
+                if v < 0 or v > 1000:
+                    return api_error("min_free_gb must be 0-1000.", 400)
+            except (ValueError, TypeError):
+                return api_error("min_free_gb must be a number.", 400)
+
+        validated.append((key, value))
+
+    with db.atomic():
+        _ensure_audit_table()
+        for key, value in validated:
+            old_val = get_setting(key)
+            set_setting(key, value)
+            if str(old_val) != str(value):
+                write_audit(key, old_val, value)
+            updated.append(key)
 
     _sync_env_vars()
 
@@ -352,11 +437,17 @@ def _sync_env_vars():
         "motion_max_concurrent": "MOTION_MAX_CONCURRENT",
         "motion_analysis_max_width": "MOTION_ANALYSIS_MAX_WIDTH",
         "motion_rtsp_mode": "MOTION_RTSP_MODE",
+        "clip_retention_days": "CLIP_RETENTION_DAYS",
+        "events_only_buffer_hours": "EVENTS_ONLY_BUFFER_HOURS",
+        "events_only_record_segments": "EVENTS_ONLY_RECORD_SEGMENTS",
+        "min_free_gb": "RECORDING_MIN_FREE_GB",
     }
     for setting_key, env_key in env_map.items():
         val = get_setting(setting_key)
         if val:
             os.environ[env_key] = str(val)
+        else:
+            os.environ.pop(env_key, None)
 
 
 # ── Bulk toggle (original admin only) ────────────────────────────────────────

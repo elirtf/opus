@@ -22,7 +22,7 @@ from app.routes.api.utils import env_bool
 logger = logging.getLogger("opus.recorder")
 
 RECORDINGS_DIR       = get_recordings_dir()
-SEGMENT_MINUTES      = int(os.environ.get("RECORDING_SEGMENT_MINUTES", "15"))
+SEGMENT_MINUTES      = int(os.environ.get("RECORDING_SEGMENT_MINUTES", "5"))
 RETENTION_DAYS       = int(os.environ.get("RECORDING_RETENTION_DAYS", "90"))
 CLIP_RETENTION_DAYS  = int(os.environ.get("CLIP_RETENTION_DAYS", "90"))
 MAX_STORAGE_GB       = float(os.environ.get("RECORDING_MAX_STORAGE_GB", "0"))
@@ -74,11 +74,11 @@ def _segment_minutes_from_db():
     try:
         from app.routes.api.recording_settings import get_setting
 
-        raw = get_setting("segment_minutes", "15")
-        v = int(raw or os.environ.get("RECORDING_SEGMENT_MINUTES", "15"))
+        raw = get_setting("segment_minutes", "5")
+        v = int(raw or os.environ.get("RECORDING_SEGMENT_MINUTES", "5"))
         return max(1, min(60, v))
     except Exception:
-        return max(1, min(60, int(os.environ.get("RECORDING_SEGMENT_MINUTES", "15"))))
+        return max(1, min(60, int(os.environ.get("RECORDING_SEGMENT_MINUTES", "5"))))
 
 
 class RecordingEngine:

@@ -58,6 +58,24 @@ function StatPill({ label, value, tone = 'neutral' }) {
   )
 }
 
+const APPLY_POLICIES = {
+  hot: { label: 'Applies immediately', cls: 'text-green-400 border-green-800 bg-green-950/30' },
+  recorder: { label: 'Recorder restart', cls: 'text-amber-400 border-amber-800 bg-amber-950/30' },
+  go2rtc: { label: 'go2rtc restart', cls: 'text-amber-400 border-amber-800 bg-amber-950/30' },
+  processor: { label: 'Processor restart', cls: 'text-amber-400 border-amber-800 bg-amber-950/30' },
+  app: { label: 'App restart', cls: 'text-red-400 border-red-800 bg-red-950/30' },
+}
+
+function ApplyBadge({ policy }) {
+  const info = APPLY_POLICIES[policy]
+  if (!info) return null
+  return (
+    <span className={`inline-flex items-center text-[10px] font-medium border rounded-full px-2 py-0.5 ${info.cls}`}>
+      {info.label}
+    </span>
+  )
+}
+
 function SystemPanel({ about, loading, error, setupStatus, isOriginalAdmin }) {
   if (loading) {
     return (
@@ -246,7 +264,7 @@ function StreamingPanel({ isOriginalAdmin, onSuccess, onError }) {
 
   return (
     <form onSubmit={handleSave} className="space-y-6">
-      <SectionCard title="Streaming basics" subtitle="Most installs only need ICE candidates and a save/restart.">
+      <SectionCard title="Streaming basics" subtitle={<>Most installs only need ICE candidates and a save/restart. <ApplyBadge policy="go2rtc" /></>}>
         <p className="text-sm text-gray-400 mb-3">
           One <strong className="text-gray-300">WebRTC ICE</strong> candidate per line. Each line must start with{' '}
           <code className="text-gray-300">stun:</code> or <code className="text-gray-300">turn:</code> (go2rtc
@@ -269,7 +287,7 @@ function StreamingPanel({ isOriginalAdmin, onSuccess, onError }) {
 
       <SectionCard
         title="Advanced streaming controls"
-        subtitle="Only needed for custom exec-based stream pipelines."
+        subtitle={<>Only needed for custom exec-based stream pipelines. <ApplyBadge policy="go2rtc" /></>}
         actions={
           <button
             type="button"
@@ -324,7 +342,7 @@ function StreamingPanel({ isOriginalAdmin, onSuccess, onError }) {
 
       <SectionCard
         title="Performance and decode"
-        subtitle="Tune hardware acceleration and motion decode pressure from the UI."
+        subtitle={<>Tune hardware acceleration and motion decode pressure from the UI. <ApplyBadge policy="recorder" /> <ApplyBadge policy="processor" /></>}
       >
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <label className="text-xs text-gray-400">
@@ -385,7 +403,14 @@ function StreamingPanel({ isOriginalAdmin, onSuccess, onError }) {
         </div>
       </SectionCard>
 
-      {restartHint && <p className="text-xs text-gray-500">{restartHint}</p>}
+      <div className="rounded-xl border border-gray-800 bg-gray-900/60 p-4 text-xs text-gray-500 space-y-1.5">
+        <p className="font-medium text-gray-400">What happens after saving</p>
+        <ul className="list-disc list-inside space-y-0.5">
+          <li><span className="text-amber-300">ICE candidates and streaming security</span> are written to go2rtc.yaml — restart the go2rtc container to apply.</li>
+          <li><span className="text-amber-300">Hardware accel</span> takes effect on the next recorder container restart (or FFmpeg auto-restart).</li>
+          <li><span className="text-amber-300">Motion concurrency and analysis width</span> need a processor container restart.</li>
+        </ul>
+      </div>
 
       <button
         type="submit"

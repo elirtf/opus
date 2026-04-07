@@ -64,3 +64,32 @@ export function setPlaybackModeOverride(mode) {
 /** User-facing copy when HLS/MSE fails and HEVC is a likely cause (short for overlays). */
 export const PLAYBACK_FAIL_HEVC_HINT =
   "If this stream is H.265/HEVC, set the sub stream to H.264 or add FFmpeg transcoding in go2rtc.";
+
+// ── Playback startup metrics ─────────────────────────────────────────────────
+// Bounded in-memory log of startup events (TTFF, failures, fallbacks).
+// Readable via getPlaybackMetrics() for debugging or future API export.
+
+const _metricsLog = [];
+const _MAX_METRICS = 200;
+
+/**
+ * Record a playback startup event (success or failure).
+ * @param {{ camera: string, mode: string, success: boolean, ttffMs?: number, fallbackReason?: string }} entry
+ */
+export function recordPlaybackMetric(entry) {
+  const record = { ...entry, ts: Date.now() };
+  _metricsLog.push(record);
+  if (_metricsLog.length > _MAX_METRICS) {
+    _metricsLog.splice(0, _metricsLog.length - _MAX_METRICS);
+  }
+  const tag = record.success ? "ok" : "fail";
+  console.debug(
+    `[playback:${tag}] ${record.camera} mode=${record.mode} ttff=${record.ttffMs ?? "—"}ms` +
+      (record.fallbackReason ? ` reason=${record.fallbackReason}` : "")
+  );
+}
+
+/** Read the in-memory playback metrics log (current session only). */
+export function getPlaybackMetrics() {
+  return [..._metricsLog];
+}

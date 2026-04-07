@@ -108,6 +108,7 @@ def create_app():
     from app.routes.api.go2rtc_settings import bp as api_go2rtc_settings_bp
     from app.routes.api.events import bp as api_events_bp
     from app.routes.api.processing_api import bp as api_processing_bp
+    from app.routes.api.config_schema import bp as api_config_schema_bp
 
     app.register_blueprint(api_auth_bp)
     app.register_blueprint(api_nvrs_bp)
@@ -120,6 +121,7 @@ def create_app():
     app.register_blueprint(api_go2rtc_settings_bp)
     app.register_blueprint(api_events_bp)
     app.register_blueprint(api_processing_bp)
+    app.register_blueprint(api_config_schema_bp)
 
 
     # ── Seed default admin if no users exist ─────────────────────────────────

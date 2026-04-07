@@ -19,7 +19,7 @@ bp = Blueprint("api_recording_settings", __name__, url_prefix="/api/recordings/s
 # ── Defaults ──────────────────────────────────────────────────────────────────
 
 DEFAULTS = {
-    "segment_minutes":    "15",
+    "segment_minutes":    "5",
     "retention_days":     "90",
     "max_storage_gb":     "0",
     "recordings_dir":     "/recordings",
@@ -146,7 +146,7 @@ def get_settings():
         settings[key] = get_setting(key, default)
 
     try:    settings["segment_minutes"] = int(settings["segment_minutes"])
-    except: settings["segment_minutes"] = 15
+    except: settings["segment_minutes"] = 5
     try:    settings["retention_days"] = int(settings["retention_days"])
     except: settings["retention_days"] = 90
     try:    settings["max_storage_gb"] = float(settings["max_storage_gb"])

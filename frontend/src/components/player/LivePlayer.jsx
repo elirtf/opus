@@ -11,6 +11,7 @@ import {
   isFirefox,
   PLAYBACK_FAIL_HEVC_HINT,
   shouldPreferHlsForDevice,
+  recordPlaybackMetric,
 } from "../../utils/streamPlayback";
 
 export { isFirefox, shouldPreferHlsForDevice } from "../../utils/streamPlayback";
@@ -57,7 +58,15 @@ export default function LivePlayer({
   playbackMode = "auto",
   nativeVideoControls = true,
 }) {
-  const mode = resolveMode(playbackMode);
+  const [iframeFailed, setIframeFailed] = useState(false);
+  const resolvedMode = resolveMode(playbackMode);
+  // Auto-fallback: when iframe (WebRTC/MSE) times out, try HLS before showing error
+  const mode = iframeFailed && resolvedMode !== "hls" ? "hls" : resolvedMode;
+
+  useEffect(() => {
+    setIframeFailed(false);
+  }, [cameraName, streamNameProp, playbackMode]);
+
   const streamKey = useMemo(() => {
     if (!cameraName || !enabled) return null;
     return (
@@ -109,11 +118,15 @@ export default function LivePlayer({
           src={hlsUrl}
           cameraName={cameraName}
           nativeControls={nativeVideoControls}
+          isFallback={iframeFailed}
         />
       ) : iframeSrc ? (
         <Go2rtcIframe
           src={iframeSrc}
           title={cameraName || "Live"}
+          cameraName={cameraName}
+          resolvedMode={resolvedMode}
+          onTimeout={() => setIframeFailed(true)}
         />
       ) : (
         <div className="absolute inset-0 flex items-center justify-center text-gray-500 text-sm">
@@ -124,10 +137,11 @@ export default function LivePlayer({
   );
 }
 
-function Go2rtcIframe({ src, title }) {
+function Go2rtcIframe({ src, title, cameraName, resolvedMode, onTimeout }) {
   const [loadTimedOut, setLoadTimedOut] = useState(false);
   const [nonce, setNonce] = useState(0);
   const timerRef = useRef(null);
+  const mountedAt = useRef(Date.now());
 
   const clearTimer = useCallback(() => {
     if (timerRef.current) {
@@ -137,19 +151,34 @@ function Go2rtcIframe({ src, title }) {
   }, []);
 
   useEffect(() => {
+    mountedAt.current = Date.now();
     setLoadTimedOut(false);
     clearTimer();
     timerRef.current = setTimeout(() => {
       setLoadTimedOut(true);
       timerRef.current = null;
+      recordPlaybackMetric({
+        camera: cameraName || title,
+        mode: resolvedMode || "iframe",
+        success: false,
+        ttffMs: Date.now() - mountedAt.current,
+        fallbackReason: "iframe_timeout",
+      });
+      if (onTimeout) onTimeout();
     }, IFRAME_LOAD_TIMEOUT_MS);
     return () => clearTimer();
-  }, [src, nonce, clearTimer]);
+  }, [src, nonce, clearTimer, cameraName, title, resolvedMode, onTimeout]);
 
   const handleLoad = useCallback(() => {
     setLoadTimedOut(false);
     clearTimer();
-  }, [clearTimer]);
+    recordPlaybackMetric({
+      camera: cameraName || title,
+      mode: resolvedMode || "iframe",
+      success: true,
+      ttffMs: Date.now() - mountedAt.current,
+    });
+  }, [clearTimer, cameraName, title, resolvedMode]);
 
   const handleRetry = useCallback(() => {
     setLoadTimedOut(false);
@@ -189,12 +218,14 @@ function Go2rtcIframe({ src, title }) {
   );
 }
 
-function HlsVideo({ src, cameraName, nativeControls = true }) {
+function HlsVideo({ src, cameraName, nativeControls = true, isFallback = false }) {
   const videoRef = useRef(null);
   const hlsRef = useRef(null);
   const retryCount = useRef(0);
   const retryTimer = useRef(null);
   const [err, setErr] = useState(null);
+  const mountedAt = useRef(Date.now());
+  const ttffRecorded = useRef(false);
 
   const cleanup = useCallback(() => {
     clearTimeout(retryTimer.current);
@@ -211,6 +242,8 @@ function HlsVideo({ src, cameraName, nativeControls = true }) {
 
     setErr(null);
     retryCount.current = 0;
+    mountedAt.current = Date.now();
+    ttffRecorded.current = false;
     video.controls = nativeControls;
     video.playsInline = true;
     video.setAttribute("playsinline", "");
@@ -223,6 +256,18 @@ function HlsVideo({ src, cameraName, nativeControls = true }) {
     video.muted = true;
 
     let cancelled = false;
+
+    function onFirstPlay() {
+      if (ttffRecorded.current || cancelled) return;
+      ttffRecorded.current = true;
+      recordPlaybackMetric({
+        camera: cameraName,
+        mode: isFallback ? "hls(fallback)" : "hls",
+        success: true,
+        ttffMs: Date.now() - mountedAt.current,
+      });
+    }
+    video.addEventListener("playing", onFirstPlay);
 
     function startHlsJs() {
       cleanup();
@@ -256,6 +301,13 @@ function HlsVideo({ src, cameraName, nativeControls = true }) {
           }, RETRY_DELAY_MS);
         } else {
           setErr(`Stream unavailable. ${PLAYBACK_FAIL_HEVC_HINT}`);
+          recordPlaybackMetric({
+            camera: cameraName,
+            mode: isFallback ? "hls(fallback)" : "hls",
+            success: false,
+            ttffMs: Date.now() - mountedAt.current,
+            fallbackReason: "hls_fatal_error",
+          });
         }
       });
 
@@ -282,6 +334,13 @@ function HlsVideo({ src, cameraName, nativeControls = true }) {
           }, RETRY_DELAY_MS);
         } else {
           setErr(`Stream unavailable. ${PLAYBACK_FAIL_HEVC_HINT}`);
+          recordPlaybackMetric({
+            camera: cameraName,
+            mode: isFallback ? "hls(fallback)" : "hls",
+            success: false,
+            ttffMs: Date.now() - mountedAt.current,
+            fallbackReason: "native_hls_error",
+          });
         }
       };
 
@@ -310,11 +369,12 @@ function HlsVideo({ src, cameraName, nativeControls = true }) {
 
     return () => {
       cancelled = true;
+      video.removeEventListener("playing", onFirstPlay);
       cleanup();
       video.removeAttribute("src");
       video.load();
     };
-  }, [src, nativeControls, cleanup]);
+  }, [src, nativeControls, cleanup, cameraName, isFallback]);
 
   return (
     <>

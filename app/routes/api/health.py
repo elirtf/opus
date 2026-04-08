@@ -25,7 +25,7 @@ def stream_health():
 @login_required_api
 @admin_required
 def host_diagnostics():
-    """Admin-only host/container capability snapshot (see docs/hw-diagnostics-spec.md)."""
+    """Admin-only host/container capability snapshot (CPU, RAM, disk, FFmpeg hints)."""
     return api_response(collect_host_diagnostics())
 
 

@@ -1,6 +1,6 @@
 """
 Host/container snapshot for admin diagnostics (CPU, RAM, /dev/dri, FFmpeg -hwaccels).
-See docs/hw-diagnostics-spec.md for the JSON schema.
+Returned JSON is consumed by GET /api/health/diagnostics and the Configuration UI.
 """
 
 import os

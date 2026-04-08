@@ -27,7 +27,8 @@ COPY . .
 COPY --from=frontend /frontend/dist /opt/opus-ui
 
 COPY docker-entrypoint-opus.sh /docker-entrypoint-opus.sh
-RUN chmod +x /docker-entrypoint-opus.sh
+# Strip Windows CRLF if present (same symptom as missing file: shebang becomes /bin/sh\r).
+RUN sed -i 's/\r$//' /docker-entrypoint-opus.sh && chmod +x /docker-entrypoint-opus.sh
 
 ENV FLASK_APP=run.py
 ENV FLASK_ENV=production

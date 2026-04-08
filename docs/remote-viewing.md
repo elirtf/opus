@@ -4,17 +4,13 @@
 
 ---
 
-## Checklist
+## Checklist (Using Tailscale)
 
-1. **Pick a VPN product** and create an account / tailnet / network.
-2. **Install the VPN on the Opus host** (the machine that runs Docker / nginx / Opus).
-3. **Install the VPN on every phone, tablet, and PC** that should view cameras remotely.
-4. **Join the same network** on each device (same account, same tailnet, or approved peers).
-5. **Find how to reach Opus over the VPN:**
-   - Use the **VPN IP** of the Opus host (often looks like `100.x.x.x`), **or**
-   - Use a **hostname** your VPN gives you (e.g. MagicDNS name).
-6. In the browser, open Opus using that address and the **same port you use on the LAN** (often `http://100.x.x.x` if nginx is on port 80, or add `:443` / `https://` if you use TLS on the server).
-7. **Test on cellular:** turn off Wi‑Fi on your phone, confirm the VPN connects, then open the same Opus URL.
+1. **Install the VPN on the Opus host**.
+2. **Install the VPN on every phone, tablet, and PC** that should view cameras remotely.
+3. **Join the same network** on each device (same account or same tailnet).
+4. In the browser, open Opus using the VPN IP address or MagicDNS name (often `http://100.x.x.x` if nginx is on port 80, or add `:443` / `https://` if you use TLS on the server).
+5.. **Test on cellular:** turn off Wi‑Fi on your phone, confirm the VPN connects, then open the same Opus URL.
 
 ---
 
@@ -22,14 +18,6 @@
 
 - **Inside the VPN**, many teams use **`http://`** to the VPN IP or internal name first. Traffic is already encrypted **between devices** by the VPN tunnel.
 - If you want a **browser padlock** anyway, set up **HTTPS on nginx** (e.g. Let’s Encrypt) or use your VPN’s **HTTPS feature** if it offers a certificate for a device name. Avoid **self-signed** certs for casual users; phones nag or block them.
-
----
-
-## Nginx and live video
-
-Opus expects **one front door** (nginx) for the website, `/api`, and `/go2rtc/`. Keep using that even over VPN.
-
-Live video uses **WebSockets** on `/go2rtc/`. If you ever put another proxy in front, it must allow **WebSocket upgrades** and **long-lived** connections. See `nginx/nginx.conf` in the repo.
 
 ---
 

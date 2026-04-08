@@ -169,8 +169,9 @@ export default function Sidebar({ mobileOpen = false, onNavigate }) {
 
   return (
     <aside
-      className={`w-56 bg-gray-900 border-r border-gray-800 flex flex-col h-screen shrink-0
+      className={`w-56 bg-gray-900 border-r border-gray-800 flex flex-col h-[100dvh] md:h-screen shrink-0
         max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-50 max-md:transition-transform max-md:duration-200 ease-out
+        max-md:pt-[env(safe-area-inset-top)] max-md:pb-[env(safe-area-inset-bottom)]
         ${mobileOpen ? 'max-md:translate-x-0' : 'max-md:-translate-x-full'}
         md:relative md:translate-x-0`}
     >

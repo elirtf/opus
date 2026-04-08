@@ -24,8 +24,14 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-950 flex items-center justify-center px-4">
-      <div className="w-full max-w-sm">
+    <div
+      className="min-h-[100dvh] bg-gray-950 flex items-center justify-center px-4 overflow-x-hidden overflow-y-auto box-border"
+      style={{
+        paddingTop: 'max(1rem, env(safe-area-inset-top))',
+        paddingBottom: 'max(1.5rem, env(safe-area-inset-bottom))',
+      }}
+    >
+      <div className="w-full max-w-sm py-4">
 
         {/* Logo / Brand */}
         <div className="text-center mb-8">
@@ -55,7 +61,7 @@ export default function Login() {
             <label className="block text-sm font-medium text-gray-300 mb-1.5">Username</label>
             <input
               name="username" type="text" required autoComplete="username" autoFocus
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2.5 text-sm
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2.5 text-base
                          text-white placeholder-gray-500 focus:outline-none focus:ring-2
                          focus:ring-indigo-500 focus:border-transparent transition-colors"
               placeholder="admin"
@@ -65,7 +71,7 @@ export default function Login() {
             <label className="block text-sm font-medium text-gray-300 mb-1.5">Password</label>
             <input
               name="password" type="password" required autoComplete="current-password"
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2.5 text-sm
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2.5 text-base
                          text-white placeholder-gray-500 focus:outline-none focus:ring-2
                          focus:ring-indigo-500 focus:border-transparent transition-colors"
               placeholder="••••••••"

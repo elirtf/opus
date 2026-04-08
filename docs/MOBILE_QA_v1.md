@@ -1,6 +1,6 @@
 # Mobile QA (v1.0)
 
-Run on a **phone** (and tablet if you care) over **cellular** or guest Wi‑Fi, using the **same public URL** you ship. Note device, OS, browser, and pass/fail.
+Run on a **phone** (and tablet if you care) over **cellular** or guest Wi‑Fi with your **VPN connected**, using the **same Opus URL** you use for remote viewing. Note device, OS, browser, and pass/fail.
 
 **Login:** No sideways scroll; Sign In stays reachable with keyboard. Login works; refresh still logged in.
 

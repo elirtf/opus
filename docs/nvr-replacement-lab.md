@@ -77,10 +77,3 @@ ffmpeg -re -f lavfi -i testsrc=size=1280x720:rate=15 \
 
 - **Parallel** to NVR until trust is earned, vs **primary** recorder only (v1 assumes **primary** for new installs).  
 - Failover expectations (who owns time sync, DNS, certificates).
-
-## Related
-
-- [certified-cameras.md](certified-cameras.md) — minimal supported list + short regression checklist
-- [deployment-profiles.md](deployment-profiles.md)
-- [hardware-sizing.md](hardware-sizing.md)
-

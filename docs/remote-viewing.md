@@ -1,63 +1,60 @@
-# Remote viewing
+# Remote Viewing VPN
 
-**v1.0 default:** tunnel + HTTPS
-
-Everyone uses **one HTTPS URL**. UI, API, and `/go2rtc/` should share that host.
+**Recommended path:** put Opus on a **private mesh VPN** (e.g. **Tailscale**, **Netbird**, **ZeroTier**). You do **not** open camera ports or Opus to the whole internet. Users install the same VPN app on their phone or laptop, join your network, then open Opus in the browser like they do at home.
 
 ---
 
-## DNS & HTTPS
+## Checklist
 
-- Stable hostname (DDNS if your public IP changes, or the name your tunnel gives you).
-- Trusted certificate (Let’s Encrypt, provider, or tunnel — not self-signed for phones).
-
-## Tunnel (v1.0)
-
-Agent on the LAN dials **out**; public URL forwards to nginx. Check the provider allows **WebSockets** and long streams for `/go2rtc/`. Video is heavy — read their bandwidth / terms.
-
-## Proxy / nginx
-
-Anything in front of Opus must pass **WebSocket upgrades** and keep connections open. See `nginx/nginx.conf`.
-
-## ICE (live stuck / “ICE failed”)
-
-**Configuration → Settings** → Streaming → one ICE line per row, each `stun:` or `turn:` (go2rtc format). Examples: `stun:stun.l.google.com:19302`, `stun:8555` (LAN), or your **TURN** URL for strict mobile NAT. Restart **go2rtc** after save.
+1. **Pick a VPN product** and create an account / tailnet / network.
+2. **Install the VPN on the Opus host** (the machine that runs Docker / nginx / Opus).
+3. **Install the VPN on every phone, tablet, and PC** that should view cameras remotely.
+4. **Join the same network** on each device (same account, same tailnet, or approved peers).
+5. **Find how to reach Opus over the VPN:**
+   - Use the **VPN IP** of the Opus host (often looks like `100.x.x.x`), **or**
+   - Use a **hostname** your VPN gives you (e.g. MagicDNS name).
+6. In the browser, open Opus using that address and the **same port you use on the LAN** (often `http://100.x.x.x` if nginx is on port 80, or add `:443` / `https://` if you use TLS on the server).
+7. **Test on cellular:** turn off Wi‑Fi on your phone, confirm the VPN connects, then open the same Opus URL.
 
 ---
 
-## Advanced (post-1.0)
+## HTTPS and certificates
 
-**VPN** (Tailscale, ZeroTier, …): users run a VPN app; Opus stays private. **Port forward / VPS reverse proxy**: expose 443 to nginx. Strong passwords; don’t publish go2rtc **1984** to the world — use nginx.
+- **Inside the VPN**, many teams use **`http://`** to the VPN IP or internal name first. Traffic is already encrypted **between devices** by the VPN tunnel.
+- If you want a **browser padlock** anyway, set up **HTTPS on nginx** (e.g. Let’s Encrypt) or use your VPN’s **HTTPS feature** if it offers a certificate for a device name. Avoid **self-signed** certs for casual users; phones nag or block them.
 
-**UI and API on different hosts:** set `CORS_ORIGINS`, use Bearer tokens (`POST /api/auth/token`). Rare.
+---
+
+## Nginx and live video
+
+Opus expects **one front door** (nginx) for the website, `/api`, and `/go2rtc/`. Keep using that even over VPN.
+
+Live video uses **WebSockets** on `/go2rtc/`. If you ever put another proxy in front, it must allow **WebSocket upgrades** and **long-lived** connections. See `nginx/nginx.conf` in the repo.
+
+---
+
+## If live view breaks (ICE / black screen)
+
+**Configuration → Settings** → Streaming → **WebRTC ICE candidates** (one per line, each starts with `stun:` or `turn:` in go2rtc format).
+
+Examples:
+
+- `stun:stun.l.google.com:19302` — often helps on the public internet; over VPN you may still use it or rely on direct paths.
+- `stun:8555` — works when the browser can reach go2rtc’s UDP on the Opus host (common on the same LAN; over VPN it depends on your layout).
+
+After changes, **restart the go2rtc container**. On the camera page, try **MSE** or **HLS** if a mode fails.
+
+---
+
+## Without a VPN (optional, later)
+
+If you **don’t** use a VPN, you typically need **one public HTTPS URL** and either an **outbound tunnel** (e.g. Cloudflare Tunnel) or **port forwarding** `443` to nginx. That exposes a public entry point — plan passwords, updates, and firewall carefully. **Do not** publish go2rtc’s admin port **1984** to the internet; use nginx on **443**.
 
 ---
 
 ## Quick checklist
 
-- [ ] HTTPS, login, live, and playback on a **phone**.
-- [ ] Prefer binding 1984/8554 to localhost on LAN (`compose.override.yml.example`); tune streaming in Settings, restart go2rtc.
-
----
-
-**Goal:** One **HTTPS** URL for everyone (phones, tablets, PCs) when off the LAN.
-
-**How:** Run an **outbound tunnel** from the Opus LAN (e.g. [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/) / `cloudflared`) so a provider hostname forwards to your **nginx** — not to go2rtc port 1984 on its own.
-
----
-
-**Must have**
-
-- Real TLS on the public URL (not self-signed for real users).
-- **WebSockets** + long-lived connections work through to `/go2rtc/`.
-- Same hostname for UI, `/api`, and `/go2rtc/`.
-
-**Live fails on cellular?** **Configuration → Settings** → Streaming → ICE lines (`stun:` / `turn:`), restart go2rtc. On the camera page try **MSE** or **HLS**.
-
----
-
-**Before you ship**
-
-- [ ] HTTPS, no cert warnings; login survives refresh (same host).
-- [ ] Live + recordings on a **phone** over **cellular**.
-- [ ] [MOBILE_QA_v1.md](MOBILE_QA_v1.md) on a real device.
+- [ ] VPN running on Opus host and on the test phone.
+- [ ] Same URL works on LAN and on phone **with VPN on** (cellular test).
+- [ ] Login, live tiles, one camera, recordings (and events if you use them).
+- [ ] Prefer binding go2rtc **1984** / **8554** to localhost on the server where possible; users still use nginx. See `compose.override.yml.example`.

@@ -51,11 +51,8 @@ Opus is a software in which security cameras on the network send their video to 
 | --- | ----- |
 | [certified-cameras.md](certified-cameras.md) | Certified models + regression checklist |
 | [nvr-replacement-lab.md](nvr-replacement-lab.md) | Migration / lab validation |
-| [remote-viewing.md](remote-viewing.md) | Remote viewing (HTTPS, VPN, tunnels) |
-| [operations.md](operations.md) | Webhook alerts, backup/DR |
+| [remote-viewing.md](remote-viewing.md) | Remote Viewing |
 | [hardware-sizing.md](hardware-sizing.md) | Storage, retention, tiers |
-| [deployment-profiles.md](deployment-profiles.md) | Hardware profile defaults |
-| [streaming-playback.md](streaming-playback.md) | Live/playback behavior |
-| [hw-diagnostics-spec.md](hw-diagnostics-spec.md) | Diagnostics API |
+| [MOBILE_QA_v1.md](MOBILE_QA_v1.md) | Mobile QA |
 | [DEV_WORKFLOW.md](DEV_WORKFLOW.md) | Local development |
 | [README](../README.md) | Quick start |

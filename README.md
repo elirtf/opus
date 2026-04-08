@@ -28,7 +28,7 @@
 ### Streaming
 ### Devices & Configuration
 
-Sites (legacy NVR import), camera list, and **Configuration** (system info, **Streaming** / go2rtc hardening, diagnostics, per-site stream table with RTSP edit).
+Sites (legacy NVR import), camera list, and **Configuration** (system info, **Settings** / go2rtc + recording options, diagnostics, per-site stream table with RTSP edit).
 ### Authentication & Access Control
 
 ---
@@ -64,7 +64,7 @@ cd opus
 # 2. Create your environment file
 # Edit .env and set SECRET_KEY, and optionally GO2RTC_URL
       # GO2RTC_URL=http://go2rtc:1984 (Default)
-      # GO2RTC_CONFIG_PATH=/config/go2rtc.yaml (Default — Opus writes this from Configuration → Streaming)
+      # GO2RTC_CONFIG_PATH=/config/go2rtc.yaml (Default — Opus writes this from Configuration → Settings)
       # GO2RTC_RTSP_URL=rtsp://go2rtc:8554 (Default)
       # GO2RTC_ALLOW_ARBITRARY_EXEC=false (Optional — overrides UI “allow exec sources” when set)
       # SECRET_KEY=secret-key
@@ -78,6 +78,10 @@ docker compose up --build
 The app will be available at **http://localhost**.
 
 You do **not** need Node.js or `npm` on your PC for this — the Docker build installs frontend dependencies and produces the UI inside the image. Run `npm install` / `npm run dev` in `frontend` only when you are **developing or testing the web UI yourself** (especially **mobile**: layout, PWA, live view on a phone). See [docs/DEV_WORKFLOW.md](docs/DEV_WORKFLOW.md) for that optional workflow.
+
+### Remote access (v1.0)
+
+**Off-site / phones:** [docs/remote-access-v1.md](docs/remote-access-v1.md) (tunnel + HTTPS). Extras: [docs/remote-viewing.md](docs/remote-viewing.md). Pre-release: [docs/MOBILE_QA_v1.md](docs/MOBILE_QA_v1.md) on cellular.
 
 ### Default Login
 
@@ -132,8 +136,10 @@ Opus can record **continuously** (full timeline retention) or in **Events** mode
 | [docs/DEV_WORKFLOW.md](docs/DEV_WORKFLOW.md) | Local dev: Windows vs WSL/Linux, Compose vs split loop, Makefile |
 | [docs/mainstream-substream.md](docs/mainstream-substream.md) | Main vs sub streams: recording, motion, live view |
 | [docs/operations.md](docs/operations.md) | Webhook alerts, backup/restore, DR notes |
-| [docs/remote-viewing.md](docs/remote-viewing.md) | Watching Opus from **outside the local network** (HTTPS, VPN, tunnel, or port forward) |
-| [mobile/README.md](mobile/README.md) | Optional **App Store / Play** wrapper around the same Opus website |
+| [docs/remote-access-v1.md](docs/remote-access-v1.md) | Remote access v1.0: tunnel + HTTPS |
+| [docs/remote-viewing.md](docs/remote-viewing.md) | Remote viewing + advanced (VPN, port forward) |
+| [docs/MOBILE_QA_v1.md](docs/MOBILE_QA_v1.md) | Mobile QA before release |
+| [mobile/README.md](mobile/README.md) | Optional **App Store / Play** wrapper (**post-1.0** for most teams) |
 
 ---
 

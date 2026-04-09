@@ -19,7 +19,9 @@ const VIEW_MODES = [
 ]
 
 function liveStreamName(cam) {
-  return cam.live_view_stream_name || cam.name.replace('-main', '-sub')
+  if (cam.live_view_stream_name) return cam.live_view_stream_name
+  // No server hint: do not assume a sub stream exists (many cameras are main-only).
+  return cam.name
 }
 
 function isProblemCamera(health, cam) {

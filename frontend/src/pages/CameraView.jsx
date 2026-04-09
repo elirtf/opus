@@ -47,6 +47,8 @@ export default function CameraView() {
           nvr_name: null,
           recording_enabled: status.recording_enabled,
           online: status.online,
+          live_view_stream_name: status.live_view_stream_name,
+          live_view_selection_reason: status.live_view_selection_reason,
         });
 
         setErr(null);

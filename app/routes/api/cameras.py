@@ -298,7 +298,11 @@ def create_camera():
     stream_sync(cam)
 
     nvr_map = {nvr.id: nvr for nvr in NVR.select()}
-    return api_response(camera_to_dict(cam, nvr_map), message="Camera created.", status=201)
+    health = _get_stream_health_cached()
+    name_set = {r.name for r in Camera.select(Camera.name)}
+    return api_response(
+        camera_to_dict(cam, nvr_map, health, name_set), message="Camera created.", status=201
+    )
 
 
 @bp.route("/<int:cam_id>", methods=["PATCH"])
@@ -376,7 +380,9 @@ def update_camera(cam_id):
     stream_sync(cam)
 
     nvr_map = {nvr.id: nvr for nvr in NVR.select()}
-    return api_response(camera_to_dict(cam, nvr_map), message="Camera updated.")
+    health = _get_stream_health_cached()
+    name_set = {r.name for r in Camera.select(Camera.name)}
+    return api_response(camera_to_dict(cam, nvr_map, health, name_set), message="Camera updated.")
 
 
 @bp.route("/<int:cam_id>/recording", methods=["POST"], strict_slashes=False)

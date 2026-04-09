@@ -26,11 +26,22 @@ def camera_online_from_health_map(cam_name: str, health_map: dict[str, Any]) -> 
     """
     Return True/False from health_map, or None if the stream key is unknown
     (go2rtc has no entry yet).
+
+    For *-main* cameras we normally key off the paired *-sub* stream; if the sub
+    is explicitly down but the main stream still has producers, treat as online
+    so the UI matches live playback (main fallback).
     """
     key = health_lookup_stream_name(cam_name)
     online = health_map.get(key)
     if online is None and key != cam_name:
         online = health_map.get(cam_name)
+    if (
+        online is False
+        and cam_name.endswith("-main")
+        and key != cam_name
+        and health_map.get(cam_name) is True
+    ):
+        return True
     return online
 
 

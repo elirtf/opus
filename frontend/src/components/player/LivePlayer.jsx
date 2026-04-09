@@ -16,6 +16,23 @@ import {
 
 export { isFirefox, shouldPreferHlsForDevice } from "../../utils/streamPlayback";
 
+/** Ordered go2rtc keys to try: preferred (often *-sub), then *-main when different. */
+function buildLiveStreamKeyChain(cameraName, streamNameProp, preferSubStream, enabled) {
+  if (!cameraName || !enabled) return [];
+  const mainName = cameraName.endsWith("-main") ? cameraName : null;
+  const derivedSub =
+    preferSubStream && mainName ? mainName.replace(/-main$/, "-sub") : null;
+  const trimmedProp =
+    streamNameProp && String(streamNameProp).trim()
+      ? String(streamNameProp).trim()
+      : null;
+  const preferred = trimmedProp || derivedSub || cameraName;
+  const keys = [];
+  if (preferred) keys.push(preferred);
+  if (mainName && preferred !== mainName) keys.push(mainName);
+  return [...new Set(keys)];
+}
+
 /**
  * Live playback strategy: go2rtc `stream.html` iframe for MSE/WebRTC,
  * with hls.js fallback.  Auto mode now defaults to MSE on desktop
@@ -60,9 +77,36 @@ export default function LivePlayer({
   const resolvedMode = resolveMode(playbackMode);
   const [failedModes, setFailedModes] = useState(new Set());
 
+  const streamKeys = useMemo(
+    () => buildLiveStreamKeyChain(cameraName, streamNameProp, preferSubStream, enabled),
+    [cameraName, streamNameProp, preferSubStream, enabled],
+  );
+
+  const keyIndexRef = useRef(0);
+  const [keyIndex, setKeyIndex] = useState(0);
+
+  useEffect(() => {
+    keyIndexRef.current = 0;
+    setKeyIndex(0);
+    setFailedModes(new Set());
+  }, [cameraName, streamNameProp, playbackMode, streamKeys.join("|")]);
+
   useEffect(() => {
     setFailedModes(new Set());
-  }, [cameraName, streamNameProp, playbackMode]);
+  }, [keyIndex]);
+
+  const tryAdvanceStreamKey = useCallback(() => {
+    const max = streamKeys.length;
+    if (max <= 0) return false;
+    const k = keyIndexRef.current;
+    if (k < max - 1) {
+      const next = k + 1;
+      keyIndexRef.current = next;
+      setKeyIndex(next);
+      return true;
+    }
+    return false;
+  }, [streamKeys]);
 
   const mode = useMemo(() => {
     const chain = FALLBACK_CHAINS[resolvedMode] || [resolvedMode];
@@ -80,22 +124,16 @@ export default function LivePlayer({
 
   // Stable callback refs — prevents child effects from restarting on every parent render
   const onIframeTimeout = useCallback(() => {
+    if (tryAdvanceStreamKey()) return;
     handleModeFailed(mode);
-  }, [handleModeFailed, mode]);
+  }, [handleModeFailed, mode, tryAdvanceStreamKey]);
 
   const onHlsFailed = useCallback(() => {
+    if (tryAdvanceStreamKey()) return;
     handleModeFailed("hls");
-  }, [handleModeFailed]);
+  }, [handleModeFailed, tryAdvanceStreamKey]);
 
-  const streamKey = useMemo(() => {
-    if (!cameraName || !enabled) return null;
-    return (
-      streamNameProp ||
-      (preferSubStream && cameraName.endsWith("-main")
-        ? cameraName.replace(/-main$/, "-sub")
-        : cameraName)
-    );
-  }, [cameraName, streamNameProp, enabled, preferSubStream]);
+  const streamKey = streamKeys[keyIndex] ?? null;
 
   const iframeSrc = useMemo(() => {
     if (!streamKey || mode === "hls") return null;
@@ -142,10 +180,12 @@ export default function LivePlayer({
         />
       ) : iframeSrc ? (
         <Go2rtcIframe
+          key={`${streamKey}-${keyIndex}`}
           src={iframeSrc}
           title={cameraName || "Live"}
           cameraName={cameraName}
           currentMode={mode}
+          streamKey={streamKey}
           onTimeout={onIframeTimeout}
         />
       ) : (
@@ -157,7 +197,7 @@ export default function LivePlayer({
   );
 }
 
-function Go2rtcIframe({ src, title, cameraName, currentMode, onTimeout }) {
+function Go2rtcIframe({ src, title, cameraName, currentMode, streamKey, onTimeout }) {
   const [loadTimedOut, setLoadTimedOut] = useState(false);
   const [nonce, setNonce] = useState(0);
   const timerRef = useRef(null);
@@ -186,11 +226,12 @@ function Go2rtcIframe({ src, title, cameraName, currentMode, onTimeout }) {
         success: false,
         ttffMs: Date.now() - mountedAt.current,
         fallbackReason: "iframe_timeout",
+        streamKey: streamKey || "",
       });
       onTimeoutRef.current?.();
     }, IFRAME_LOAD_TIMEOUT_MS);
     return () => clearTimer();
-  }, [src, nonce, clearTimer, cameraName, title, currentMode]);
+  }, [src, nonce, clearTimer, cameraName, title, currentMode, streamKey]);
 
   const handleLoad = useCallback(() => {
     setLoadTimedOut(false);

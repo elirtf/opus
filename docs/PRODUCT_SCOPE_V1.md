@@ -35,7 +35,7 @@ Opus is a software in which security cameras on the network send their video to 
 
 **Push Notifications**
 
-- **Operational Alerts** (ex. low disk, recorder/processor issues, camera offline/online).
+- **Operational Alerts** (ex. low disk, recorder/processor issues, camera offline/online) via optional **webhook** and/or **SMTP email** (no extra apps — users get mail notifications on phones they already use).
 
 **Sizing / Platform**
 

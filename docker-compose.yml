@@ -36,6 +36,14 @@ services:
       - PROCESSOR_INTERNAL_STATUS_URL=http://processor:5056/status
       # Optional: POST JSON alerts — disk, recorder shelved, processor stuck, camera offline
       # - ALERT_WEBHOOK_URL=https://example.com/hooks/opus
+      # Optional: same alerts via email
+      # - ALERT_SMTP_HOST=smtp.example.com
+      # - ALERT_SMTP_USER=...
+      # - ALERT_SMTP_PASSWORD=...
+      # - ALERT_EMAIL_FROM=opus@example.com
+      # - ALERT_EMAIL_TO=you@example.com,other@example.com
+      # - ALERT_SMTP_SSL=1
+      # - ALERT_SMTP_STARTTLS=0
       # - ALERT_DISK_FREE_GB_THRESHOLD=5
       # ── Recording Engine Configuration ── Override any of these in your .env file
       - RECORDINGS_DIR=/recordings

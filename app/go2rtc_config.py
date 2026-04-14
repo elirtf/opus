@@ -17,7 +17,12 @@ logger = logging.getLogger(__name__)
 
 # Paths used by the UI (via nginx /go2rtc/) and server-side /api/streams.
 # Keep in sync with LivePlayer, cameras API, nginx.
+#
+# go2rtc registers the embedded www/ static file server with handler pattern "/".
+# With allow_paths set, HandleFunc only registers routes that appear in this list
+# (exact match). Omitting "/" skips static entirely → /stream.html and assets 404.
 _DEFAULT_ALLOW_PATHS: tuple[str, ...] = (
+    "/",
     "/api/streams",
     "/api/ws",
     "/api/webrtc",

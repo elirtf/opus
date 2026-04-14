@@ -7,7 +7,9 @@ login_manager = LoginManager()
 
 def create_app():
     app = Flask(__name__)
-    app.config["SECRET_KEY"]        = os.environ.get("SECRET_KEY", "change-me-in-production")
+    app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY")
+    if not app.config["SECRET_KEY"]:
+        raise RuntimeError("SECRET_KEY is not set. Add it to .env")
     app.config["DATABASE_PATH"]     = os.environ.get("DATABASE_PATH", "/app/instance/opus.db")
     app.config["DATABASE_URL"]      = os.environ.get("DATABASE_URL")
     app.config["GO2RTC_URL"]        = os.environ.get("GO2RTC_URL", "http://go2rtc:1984")

@@ -58,7 +58,8 @@ services:
       - RECORDING_STAGGER_SECONDS=2
       # - GO2RTC_RTSP_URL=rtsp://go2rtc:8554  # Uncomment to record via go2rtc relay
     volumes:
-      - ./instance:/app/instance
+      # SQLite data volume — do NOT docker volume rm this in production
+      - opus_data:/app/instance
       - ./go2rtc:/config
       - static_files:/app/app/static
       - recordings:/recordings
@@ -96,7 +97,8 @@ services:
       # - FFMPEG_HWACCEL=none
       # - FFMPEG_HWACCEL_DEVICE=0
     volumes:
-      - ./instance:/app/instance
+      # SQLite data volume — do NOT docker volume rm this in production
+      - opus_data:/app/instance
       - ./go2rtc:/config
       - recordings:/recordings
     depends_on:
@@ -138,7 +140,8 @@ services:
       # Intel QSV — often FFMPEG_HWACCEL=qsv (requires /dev/dri). NVIDIA — FFMPEG_HWACCEL=cuda
       # plus GPU device/runtime per nvidia-container-toolkit docs. Verify with ffmpeg -hwaccels in the container.
     volumes:
-      - ./instance:/app/instance
+      # SQLite data volume — do NOT docker volume rm this in production
+      - opus_data:/app/instance
       - recordings:/recordings
     depends_on:
       - go2rtc
@@ -190,6 +193,7 @@ networks:
     driver: bridge
 
 volumes:
+  opus_data:
   static_files:
   recordings:
     # For production with large storage, consider binding to a dedicated disk:

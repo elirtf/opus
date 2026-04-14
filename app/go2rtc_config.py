@@ -37,8 +37,8 @@ _DEFAULT_ALLOW_PATHS: tuple[str, ...] = (
 
 
 def _base_modules(include_exec: bool) -> list[str]:
-    # Keep streams enabled explicitly; /api/ws and /api/streams rely on it.
-    mods = ["api", "streams", "rtsp", "webrtc", "ffmpeg", "mjpeg"]
+    # Keep ws/mp4/hls/streams enabled explicitly; stream.html relies on /api/ws and HLS/MP4 APIs.
+    mods = ["api", "ws", "streams", "rtsp", "webrtc", "ffmpeg", "mp4", "hls", "mjpeg"]
     if include_exec:
         mods.append("exec")
     return mods

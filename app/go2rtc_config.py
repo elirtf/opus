@@ -113,10 +113,19 @@ def _build_streams_from_db() -> dict[str, list[str]]:
     return dict(sorted(streams.items(), key=lambda kv: kv[0]))
 
 
+def _streams_need_exec_module(streams: dict[str, list[str]]) -> bool:
+    for srcs in streams.values():
+        for src in srcs:
+            if isinstance(src, str) and src.startswith("ffmpeg:"):
+                return True
+    return False
+
+
 def build_go2rtc_config_dict() -> dict[str, Any]:
     """Merged go2rtc config (safe defaults + DB)."""
     candidates = get_webrtc_candidates()
-    include_exec = allow_exec_module()
+    streams = _build_streams_from_db()
+    include_exec = allow_exec_module() or _streams_need_exec_module(streams)
 
     cfg: dict[str, Any] = {
         "app": {"modules": _base_modules(include_exec)},
@@ -131,7 +140,6 @@ def build_go2rtc_config_dict() -> dict[str, Any]:
     if include_exec:
         cfg["exec"] = {"allow_paths": ["ffmpeg"]}
 
-    streams = _build_streams_from_db()
     if streams:
         cfg["streams"] = streams
 

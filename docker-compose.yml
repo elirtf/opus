@@ -30,6 +30,9 @@ services:
       - TZ=America/Chicago
       # Optional: shown in Configuration → System (defaults to "dev" if unset)
       # - OPUS_VERSION=1.0.0
+      # Default per-camera go2rtc stream mode when Camera.transcode is NULL:
+      # true = ffmpeg:rtsp://...#video=h264, false = direct rtsp:// passthrough
+      # - GO2RTC_TRANSCODE_DEFAULT=true
       # Recorder runs in the `recorder` service — proxy status into the API for the dashboard.
       - RECORDER_INTERNAL_STATUS_URL=http://recorder:5055/status
       # Processor status for dashboard + optional alerting (ALERT_WEBHOOK_URL below)

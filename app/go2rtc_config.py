@@ -42,6 +42,75 @@ def _base_modules(include_exec: bool) -> list[str]:
     return mods
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = (os.environ.get(name) or "").strip().lower()
+    if raw == "":
+        return default
+    return raw in ("1", "true", "yes", "on")
+
+
+def _transcode_default() -> bool:
+    return _env_bool("GO2RTC_TRANSCODE_DEFAULT", True)
+
+
+def _transcode_source(rtsp_url: str, should_transcode: bool) -> str:
+    if not should_transcode:
+        return rtsp_url
+    return f"ffmpeg:{rtsp_url}#video=h264"
+
+
+def _camera_transcode_value(camera, default: bool) -> bool:
+    val = getattr(camera, "transcode", None)
+    if val is None:
+        return default
+    return bool(val)
+
+
+def _build_streams_from_db() -> dict[str, list[str]]:
+    """
+    Build go2rtc streams from active camera rows.
+    - Each camera row contributes its own stream key.
+    - A *-main row can also define a virtual paired *-sub stream via rtsp_substream_url
+      when no real *-sub row exists.
+    """
+    try:
+        from app.models import Camera
+    except Exception as e:
+        logger.warning("Could not import Camera model for go2rtc stream generation: %s", e)
+        return {}
+
+    try:
+        rows = list(Camera.select().where(Camera.active == True))
+    except Exception as e:
+        logger.warning("Could not read cameras for go2rtc stream generation: %s", e)
+        return {}
+
+    by_name = {c.name: c for c in rows}
+    default_transcode = _transcode_default()
+    streams: dict[str, list[str]] = {}
+
+    for cam in rows:
+        rtsp = (getattr(cam, "rtsp_url", None) or "").strip()
+        if rtsp:
+            source = _transcode_source(rtsp, _camera_transcode_value(cam, default_transcode))
+            streams[cam.name] = [source]
+
+        # Build paired sub stream from the main row when there is no explicit *-sub camera row.
+        if cam.name.endswith("-main"):
+            sub_name = cam.name[: -len("-main")] + "-sub"
+            if sub_name in by_name:
+                continue
+            sub_rtsp = (getattr(cam, "rtsp_substream_url", None) or "").strip()
+            if sub_rtsp:
+                source = _transcode_source(
+                    sub_rtsp,
+                    _camera_transcode_value(cam, default_transcode),
+                )
+                streams[sub_name] = [source]
+
+    return dict(sorted(streams.items(), key=lambda kv: kv[0]))
+
+
 def build_go2rtc_config_dict() -> dict[str, Any]:
     """Merged go2rtc config (safe defaults + DB)."""
     candidates = get_webrtc_candidates()
@@ -59,6 +128,10 @@ def build_go2rtc_config_dict() -> dict[str, Any]:
 
     if include_exec:
         cfg["exec"] = {"allow_paths": ["ffmpeg"]}
+
+    streams = _build_streams_from_db()
+    if streams:
+        cfg["streams"] = streams
 
     return cfg
 

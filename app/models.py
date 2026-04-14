@@ -99,6 +99,10 @@ class Camera(BaseModel):
     # Stream role model inspired by Frigate-style semantics.
     stream_role = CharField(max_length=10, default="main")  # main | sub
     paired_stream_name = CharField(max_length=50, null=True)
+    # True: force H.264 output via go2rtc ffmpeg source for MSE compatibility.
+    # False: passthrough RTSP source directly (camera/NVR should already be H.264).
+    # None: fall back to GO2RTC_TRANSCODE_DEFAULT at config generation time.
+    transcode = BooleanField(default=True, null=True)
 
     class Meta:
         table_name = "camera"

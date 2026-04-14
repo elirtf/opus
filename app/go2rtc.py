@@ -26,6 +26,30 @@ ENABLE_GO2RTC_RECORD_SOURCE = os.environ.get("GO2RTC_ENABLE_RECORD_SOURCE", "").
 )
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = (os.environ.get(name) or "").strip().lower()
+    if raw == "":
+        return default
+    return raw in ("1", "true", "yes", "on")
+
+
+def _transcode_default() -> bool:
+    return _env_bool("GO2RTC_TRANSCODE_DEFAULT", True)
+
+
+def _camera_transcode_value(camera, default: bool) -> bool:
+    val = getattr(camera, "transcode", None)
+    if val is None:
+        return default
+    return bool(val)
+
+
+def _transcode_source(rtsp_url: str, should_transcode: bool) -> str:
+    if not should_transcode:
+        return rtsp_url
+    return f"ffmpeg:{rtsp_url}#video=h264"
+
+
 def _put_stream_ok(base_url: str, name: str, src: str, what: str) -> bool:
     """PUT one source onto a go2rtc stream; log and return False on HTTP errors."""
     try:
@@ -91,6 +115,11 @@ def stream_sync(camera) -> bool:
 
     base_url = _go2rtc_url()
     name = camera.name
+    transcode_default = _transcode_default()
+    main_source = _transcode_source(
+        camera.rtsp_url,
+        _camera_transcode_value(camera, transcode_default),
+    )
 
     try:
         err = validate_stream_url_for_go2rtc(camera.rtsp_url)
@@ -98,8 +127,8 @@ def stream_sync(camera) -> bool:
             logger.warning("go2rtc stream_sync skipped for %s: %s", name, err)
             return False
 
-        # Always register the RTSP source (required for live/record)
-        if not _put_stream_ok(base_url, name, camera.rtsp_url, "rtsp"):
+        # Register live source in either passthrough RTSP or ffmpeg->H.264 mode.
+        if not _put_stream_ok(base_url, name, main_source, "live"):
             return False
 
         # Optional go2rtc record sink. Disabled by default because the recorder service
@@ -122,7 +151,11 @@ def stream_sync(camera) -> bool:
                 if sub_err:
                     logger.warning("go2rtc stream_sync skipped sub %s: %s", sub_name, sub_err)
                 else:
-                    _put_stream_ok(base_url, sub_name, sub_url, "substream")
+                    sub_source = _transcode_source(
+                        sub_url,
+                        _camera_transcode_value(camera, transcode_default),
+                    )
+                    _put_stream_ok(base_url, sub_name, sub_source, "substream")
             else:
                 if not stream_delete(sub_name):
                     logger.warning("go2rtc stream_sync could not delete stale sub stream %s", sub_name)

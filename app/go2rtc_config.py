@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 # (exact match). Omitting "/" skips static entirely → /stream.html and assets 404.
 _DEFAULT_ALLOW_PATHS: tuple[str, ...] = (
     "/",
+    "/api",
     "/api/streams",
     "/api/ws",
     "/api/webrtc",
@@ -36,7 +37,8 @@ _DEFAULT_ALLOW_PATHS: tuple[str, ...] = (
 
 
 def _base_modules(include_exec: bool) -> list[str]:
-    mods = ["api", "rtsp", "webrtc", "ffmpeg", "mjpeg"]
+    # Keep streams enabled explicitly; /api/ws and /api/streams rely on it.
+    mods = ["api", "streams", "rtsp", "webrtc", "ffmpeg", "mjpeg"]
     if include_exec:
         mods.append("exec")
     return mods

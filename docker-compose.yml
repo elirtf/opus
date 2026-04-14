@@ -59,6 +59,8 @@ services:
       - ./go2rtc:/config
       - static_files:/app/app/static
       - recordings:/recordings
+    mem_limit: 768m
+    cpus: 1.00
     networks:
       - opusnet
 
@@ -78,11 +80,12 @@ services:
       - RECORDING_MAX_STORAGE_GB=25
       - RECORDING_MIN_FREE_GB=1
       - RECORDING_STAGGER_SECONDS=2
+      - RECORDING_PROBE_DURATIONS=0
       # Optional: reduce RTSP input thread queue warnings when many segment writers run
-      # - FFMPEG_RTSP_THREAD_QUEUE_SIZE=1024
+      - FFMPEG_RTSP_THREAD_QUEUE_SIZE=1024
       # Events (motion) cameras: 0 = clip-only (default), 1 = rolling segment buffer (see README)
       # - EVENTS_ONLY_RECORD_SEGMENTS=1
-      # - GO2RTC_RTSP_URL=rtsp://go2rtc:8554
+      - GO2RTC_RTSP_URL=rtsp://go2rtc:8554
       # FFmpeg hwaccel (optional): segments use stream copy — FFMPEG_HWACCEL has minimal effect on
       # recording CPU; set for future decode/transcode paths. Intel/AMD Linux: often vaapi or qsv
       # after passing /dev/dri (see processor service). NVIDIA: cuda + nvidia-container-toolkit.
@@ -96,6 +99,8 @@ services:
     depends_on:
       - go2rtc
     command: ["python", "-m", "app.recording_service"]
+    mem_limit: 1024m
+    cpus: 1.50
     networks:
       - opusnet
 
@@ -118,13 +123,14 @@ services:
       - MOTION_DETECTOR=opencv
       # opencv_mog2 = stronger outdoor motion; raise MOTION_MAX_CONCURRENT on big CPUs (default 4)
       # - MOTION_MAX_CONCURRENT=6
-      # - MOTION_ANALYSIS_MAX_WIDTH=320
+      - MOTION_ANALYSIS_MAX_WIDTH=320
+      - MOTION_SKIP_FRAMES=12
       # auto = sample sub for motion when configured (lighter); main = always main; sub = prefer sub, else main
       - MOTION_RTSP_MODE=auto
       - PROCESSOR_STATUS_PORT=5056
       - FFMPEG_HWACCEL=none
       # Match recorder: relay RTSP through go2rtc (uncomment both here and on recorder)
-      # - GO2RTC_RTSP_URL=rtsp://go2rtc:8554
+      - GO2RTC_RTSP_URL=rtsp://go2rtc:8554
       # Hwaccel examples (Linux): VAAPI — add devices: /dev/dri, env FFMPEG_HWACCEL=vaapi
       # Intel QSV — often FFMPEG_HWACCEL=qsv (requires /dev/dri). NVIDIA — FFMPEG_HWACCEL=cuda
       # plus GPU device/runtime per nvidia-container-toolkit docs. Verify with ffmpeg -hwaccels in the container.
@@ -134,6 +140,8 @@ services:
     depends_on:
       - go2rtc
     command: ["python", "-m", "app.processing_service"]
+    mem_limit: 1536m
+    cpus: 2.00
     networks:
       - opusnet
 
@@ -152,6 +160,8 @@ services:
     ports:
       - "1984:1984"
       - "8554:8554"
+    mem_limit: 512m
+    cpus: 1.00
     networks:
       - opusnet
 
@@ -167,6 +177,8 @@ services:
     depends_on:
       - opus
       - go2rtc
+    mem_limit: 256m
+    cpus: 0.50
     networks:
       - opusnet
 

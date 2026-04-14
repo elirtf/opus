@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import queue
 import smtplib
 import threading
 import time
@@ -50,6 +51,8 @@ _last_fired: dict[str, float] = {}
 
 # Per-camera last known online bool for transition detection (not persisted).
 _camera_prev_online: dict[str, bool | None] = {}
+_alert_queue: "queue.Queue[tuple[str, dict]]" = queue.Queue(maxsize=256)
+_dispatcher_started = False
 
 
 def _cooldown_ok(key: str, cooldown: float) -> bool:
@@ -132,12 +135,30 @@ def _send_alert_email(payload: dict) -> None:
         logger.exception("Alert email SMTP failed")
 
 
-def _dispatch_alert(webhook: str, payload: dict) -> None:
+def _dispatch_alert_now(webhook: str, payload: dict) -> None:
     w = (webhook or "").strip()
     if w:
         _post_webhook(w, payload)
     if _smtp_settings():
         _send_alert_email(payload)
+
+
+def _dispatch_alert(webhook: str, payload: dict) -> None:
+    try:
+        _alert_queue.put_nowait(((webhook or "").strip(), payload))
+    except queue.Full:
+        logger.warning("Alert queue full; dropping alert: %s", payload.get("alert"))
+
+
+def _dispatch_worker() -> None:
+    while True:
+        webhook, payload = _alert_queue.get()
+        try:
+            _dispatch_alert_now(webhook, payload)
+        except Exception:
+            logger.exception("alert dispatch worker failed")
+        finally:
+            _alert_queue.task_done()
 
 
 def _alerts_enabled() -> bool:
@@ -378,7 +399,12 @@ def ops_alert_loop(app):
 
 
 def start_ops_alerts_thread(app) -> None:
+    global _dispatcher_started
     if not _alerts_enabled():
         return
+    if not _dispatcher_started:
+        td = threading.Thread(target=_dispatch_worker, daemon=True, name="ops-alert-dispatch")
+        td.start()
+        _dispatcher_started = True
     t = threading.Thread(target=ops_alert_loop, args=(app,), daemon=True, name="ops-alerts")
     t.start()

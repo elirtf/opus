@@ -36,6 +36,7 @@ SHELVE_RETRY_MIN     = int(os.environ.get("RECORDING_SHELVE_RETRY_MINUTES", "10"
 STAGGER_DELAY        = float(os.environ.get("RECORDING_STAGGER_SECONDS", "2"))
 # Rolling segment buffer for events_only cameras (hours); older segments are purged first.
 EVENTS_ONLY_BUFFER_HOURS = int(os.environ.get("EVENTS_ONLY_BUFFER_HOURS", "48"))
+PROBE_SEGMENT_DURATIONS = env_bool("RECORDING_PROBE_DURATIONS", False)
 
 
 # When True, events_only cameras get 24/7 FFmpeg segment recording (rolling buffer up to EVENTS_ONLY_BUFFER_HOURS).
@@ -482,12 +483,13 @@ class RecordingEngine:
                 continue
             if not files:
                 continue
+            parsed_ts = {fn: self._parse_ts(fn) for fn in files}
 
             newest = files[-1] if cam_name in writing else None
             cam_obj = Camera.get_or_none(Camera.name == cam_name)
             cam_id = cam_obj.id if cam_obj else None
 
-            for fn in files:
+            for idx, fn in enumerate(files):
                 if (cam_name, fn) in known or fn == newest:
                     continue
                 fp = os.path.join(cam_dir, fn)
@@ -497,11 +499,19 @@ class RecordingEngine:
                     continue
                 if sz < 10240:
                     continue
-                sa = self._parse_ts(fn)
+                sa = parsed_ts.get(fn)
                 if sa is None:
                     continue
-                dur = self._probe_dur(fp)
-                ea = (sa + timedelta(seconds=int(dur))) if sa and dur else None
+                dur = None
+                if PROBE_SEGMENT_DURATIONS:
+                    dur = self._probe_dur(fp)
+                if dur is None and idx + 1 < len(files):
+                    next_sa = parsed_ts.get(files[idx + 1])
+                    if next_sa and next_sa > sa:
+                        dur = float((next_sa - sa).total_seconds())
+                if dur is None:
+                    dur = float(_segment_minutes_from_db() * 60)
+                ea = sa + timedelta(seconds=int(dur))
                 try:
                     db.execute_sql(
                         "INSERT INTO recording"

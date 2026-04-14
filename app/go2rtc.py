@@ -18,6 +18,12 @@ import logging
 from app.config import get_recordings_dir
 
 logger = logging.getLogger(__name__)
+ENABLE_GO2RTC_RECORD_SOURCE = os.environ.get("GO2RTC_ENABLE_RECORD_SOURCE", "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
 
 
 def _put_stream_ok(base_url: str, name: str, src: str, what: str) -> bool:
@@ -96,8 +102,9 @@ def stream_sync(camera) -> bool:
         if not _put_stream_ok(base_url, name, camera.rtsp_url, "rtsp"):
             return False
 
-        # Add record: output when enabled — failure still leaves RTSP live in go2rtc
-        if camera.recording_enabled:
+        # Optional go2rtc record sink. Disabled by default because the recorder service
+        # already writes segments, and duplicate sinks increase disk IO significantly.
+        if camera.recording_enabled and ENABLE_GO2RTC_RECORD_SOURCE:
             os.makedirs(os.path.join(get_recordings_dir(), name), exist_ok=True)
             _put_stream_ok(base_url, name, record_path(name), "record")
 

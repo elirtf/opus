@@ -1,7 +1,7 @@
 import os
 
 from flask import Blueprint, current_app
-from app.routes.api.utils import api_response, api_error, login_required_api, admin_required
+from app.routes.api.utils import api_response, api_error
 from app.services.camera_stream_health import fetch_stream_online_map
 from app.services.host_diagnostics import collect_host_diagnostics
 
@@ -9,7 +9,6 @@ bp = Blueprint("api_health", __name__, url_prefix="/api/health")
 
 
 @bp.route("/", methods=["GET"])
-@login_required_api
 def stream_health():
     """
     Returns { stream_name: bool } where True means the stream has at least
@@ -22,16 +21,12 @@ def stream_health():
 
 
 @bp.route("/diagnostics", methods=["GET"])
-@login_required_api
-@admin_required
 def host_diagnostics():
     """Admin-only host/container capability snapshot (CPU, RAM, disk, FFmpeg hints)."""
     return api_response(collect_host_diagnostics())
 
 
 @bp.route("/about", methods=["GET"])
-@login_required_api
-@admin_required
 def about_opus():
     """Opus version + host summary for Configuration → System (no secrets)."""
     diag = collect_host_diagnostics()

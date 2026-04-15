@@ -20,7 +20,7 @@ from app.models import Camera, Recording
 from app.routes.api.utils import (
     api_error,
     api_response,
-    login_required_api,
+    require_auth,
     recordings_view_allowed,
     to_iso,
     accessible_camera_names,
@@ -127,7 +127,7 @@ def _pick_recording_for_time(camera_name: str, at: datetime) -> Recording | None
 
 
 @bp.route("/segments", methods=["GET"])
-@login_required_api
+@require_auth
 @recordings_view_allowed
 def list_segments():
     """
@@ -204,7 +204,7 @@ def list_segments():
 
 
 @bp.route("/stream/<int:camera_id>/index.m3u8", methods=["GET"])
-@login_required_api
+@require_auth
 @recordings_view_allowed
 def stream_index(camera_id: int):
     """

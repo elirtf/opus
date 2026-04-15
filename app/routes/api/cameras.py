@@ -13,8 +13,8 @@ from app.services.camera_stream_health import (
 from app.routes.api.utils import (
     api_response,
     api_error,
-    login_required_api,
-    admin_required,
+    require_auth,
+    require_admin,
     camera_catalog_allowed,
     live_playback_allowed,
     accessible_camera_names,
@@ -235,7 +235,7 @@ def camera_to_dict(cam, nvr_map=None, health_map=None, all_camera_names=None):
 
 @bp.route("", methods=["GET"])
 @bp.route("/", methods=["GET"])
-@login_required_api
+@require_auth
 @camera_catalog_allowed
 def list_cameras():
     query = _cameras_query_for_user()
@@ -252,8 +252,7 @@ def list_cameras():
 
 @bp.route("", methods=["POST"])
 @bp.route("/", methods=["POST"])
-@login_required_api
-@admin_required
+@require_admin
 def create_camera():
     data = request.get_json(silent=True) or {}
     name = (data.get("name") or "").strip()
@@ -308,8 +307,7 @@ def create_camera():
 
 
 @bp.route("/<int:cam_id>", methods=["PATCH"])
-@login_required_api
-@admin_required
+@require_admin
 def update_camera(cam_id):
     try:
         cam = Camera.get_by_id(cam_id)
@@ -388,12 +386,9 @@ def update_camera(cam_id):
 
 
 @bp.route("/<int:cam_id>/recording", methods=["POST"], strict_slashes=False)
-@login_required_api
+@require_admin
 def toggle_recording(cam_id):
-    """Enable/disable recording for a camera (restricted)."""
-    if not is_original_admin():
-        return api_error("Only the original administrator can change recording settings.", 403)
-
+    """Enable/disable recording for a camera."""
     try:
         cam = Camera.get_by_id(cam_id)
     except Camera.DoesNotExist:
@@ -435,8 +430,7 @@ def toggle_recording(cam_id):
 
 
 @bp.route("/<int:cam_id>", methods=["DELETE"])
-@login_required_api
-@admin_required
+@require_admin
 def delete_camera(cam_id):
     try:
         cam = Camera.get_by_id(cam_id)
@@ -457,7 +451,7 @@ def delete_camera(cam_id):
 # ── Runtime endpoints ─────────────────────────────────────────────────────────
 
 @bp.route("/summary", methods=["GET"])
-@login_required_api
+@require_auth
 @camera_catalog_allowed
 def cameras_summary():
     """
@@ -477,8 +471,7 @@ def cameras_summary():
 
 
 @bp.route("/inventory", methods=["GET"])
-@login_required_api
-@admin_required
+@require_admin
 def cameras_inventory():
     """
     Admin-only extended list for Configuration → Camera management:
@@ -501,8 +494,7 @@ def cameras_inventory():
 
 
 @bp.route("/<int:cam_id>/source", methods=["GET"])
-@login_required_api
-@admin_required
+@require_admin
 def camera_source_secrets(cam_id):
     """Full RTSP URLs for editing (admin only)."""
     try:
@@ -521,7 +513,7 @@ def camera_source_secrets(cam_id):
 
 
 @bp.route("/<string:name>/status", methods=["GET"])
-@login_required_api
+@require_auth
 @live_playback_allowed
 def camera_status(name: str):
     """Returns status + metadata for a single camera."""
@@ -556,7 +548,7 @@ def camera_status(name: str):
 
 
 @bp.route("/<string:name>/streams", methods=["GET"])
-@login_required_api
+@require_auth
 @live_playback_allowed
 def camera_streams(name: str):
     """
@@ -586,7 +578,7 @@ def camera_streams(name: str):
     })
 
 @bp.route("/<string:name>/stats", methods=["GET"])
-@login_required_api
+@require_auth
 @live_playback_allowed
 def camera_stats(name: str):
     """

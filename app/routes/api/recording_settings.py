@@ -13,7 +13,7 @@ import os
 from datetime import datetime
 from flask import Blueprint, request
 from flask_login import current_user
-from app.routes.api.utils import api_response, api_error, login_required_api, admin_required, is_original_admin
+from app.routes.api.utils import api_response, api_error, require_admin, is_original_admin
 from app.database import db
 
 bp = Blueprint("api_recording_settings", __name__, url_prefix="/api/recordings/settings")
@@ -132,7 +132,7 @@ def write_audit(key, old_value, new_value):
 # ── Setup status ──────────────────────────────────────────────────────────────
 
 @bp.route("/setup-status", methods=["GET"])
-@login_required_api
+@require_admin
 def setup_status():
     """Check if first-run recording setup has been completed."""
     _ensure_table()
@@ -147,7 +147,7 @@ def setup_status():
 # ── First-run setup ──────────────────────────────────────────────────────────
 
 @bp.route("/setup", methods=["POST"])
-@login_required_api
+@require_admin
 def initial_setup():
     """
     First-run setup — only the original admin can complete this.
@@ -175,7 +175,7 @@ def initial_setup():
 # ── GET settings ──────────────────────────────────────────────────────────────
 
 @bp.route("/", methods=["GET"])
-@login_required_api
+@require_admin
 def get_settings():
     _ensure_table()
     settings = {}
@@ -225,7 +225,7 @@ def get_settings():
 # ── PUT settings ──────────────────────────────────────────────────────────────
 
 @bp.route("/", methods=["PUT"])
-@login_required_api
+@require_admin
 def update_settings():
     """Only the original administrator can update recording settings."""
     if not is_original_admin():
@@ -453,7 +453,7 @@ def _sync_env_vars():
 # ── Bulk toggle (original admin only) ────────────────────────────────────────
 
 @bp.route("/bulk-toggle", methods=["POST"])
-@login_required_api
+@require_admin
 def bulk_toggle_recording():
     """Only the original administrator can bulk-toggle recording."""
     if not is_original_admin():
@@ -504,7 +504,7 @@ def bulk_toggle_recording():
 # ── Engine control (original admin only) ──────────────────────────────────────
 
 @bp.route("/engine/restart", methods=["POST"])
-@login_required_api
+@require_admin
 def restart_engine():
     if not is_original_admin():
         return api_error("Only the original administrator can restart the recording engine.", 403)

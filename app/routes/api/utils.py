@@ -1,7 +1,9 @@
 import os
 from functools import wraps
-from flask import jsonify, send_from_directory
+from flask import jsonify, redirect, request, send_from_directory
 from flask_login import current_user
+
+from app.models import User
 
 
 def api_response(data=None, message=None, status=200):
@@ -19,24 +21,51 @@ def api_error(message, status=400):
     return jsonify({"error": message}), status
 
 
-def admin_required(f):
-    """Decorator — returns 403 JSON instead of redirecting."""
+def _setup_redirect_if_no_users():
+    """First-run: empty user table → send browser to SPA /setup (not JSON 401)."""
+    try:
+        if User.select().count() == 0:
+            return redirect("/setup", code=307)
+    except Exception:
+        pass
+    return None
+
+
+def require_auth(f):
+    """Valid JWT/proxy session (or legacy Bearer token). If no users exist yet, 307 → /setup."""
     @wraps(f)
     def decorated(*args, **kwargs):
-        if not current_user.is_authenticated or not current_user.is_admin:
+        if request.method == "OPTIONS":
+            return f(*args, **kwargs)
+        early = _setup_redirect_if_no_users()
+        if early is not None:
+            return early
+        if not current_user.is_authenticated:
+            return api_error("Authentication required.", 401)
+        return f(*args, **kwargs)
+    return decorated
+
+
+def require_admin(f):
+    """Admin role only; same first-run redirect as require_auth."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if request.method == "OPTIONS":
+            return f(*args, **kwargs)
+        early = _setup_redirect_if_no_users()
+        if early is not None:
+            return early
+        if not current_user.is_authenticated:
+            return api_error("Authentication required.", 401)
+        if not current_user.is_admin:
             return api_error("Admin access required.", 403)
         return f(*args, **kwargs)
     return decorated
 
 
-def login_required_api(f):
-    """Decorator — returns 401 JSON instead of redirecting to login page."""
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        if not current_user.is_authenticated:
-            return api_error("Authentication required.", 401)
-        return f(*args, **kwargs)
-    return decorated
+# Historical names — behave like Frigate-style require_* decorators
+admin_required = require_admin
+login_required_api = require_auth
 
 
 def accessible_camera_names(user):

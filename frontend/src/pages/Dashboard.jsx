@@ -49,7 +49,10 @@ function StatusDot({ online }) {
 
 function CameraTile({ cam, streamName, online, onClick }) {
   const { containerRef, enabled: streamEnabled } = useLiveStreamGate({
-    rootMargin: '100px',
+    // Tight viewport: avoid marking many off-screen tiles as "visible" (would open too many go2rtc sessions).
+    rootMargin: '0px',
+    // ~6 parallel MSE/WebSocket sessions per origin is a common browser limit over HTTP/1.1; excess tiles show go2rtc "stream not found".
+    maxConcurrentLiveDecoders: 6,
   })
 
   const label = cam.display_name

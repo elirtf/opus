@@ -22,8 +22,8 @@ from app.models import Recording, Camera
 from app.routes.api.utils import (
     api_response,
     api_error,
-    login_required_api,
-    admin_required,
+    require_auth,
+    require_admin,
     accessible_camera_names,
     to_iso,
     serve_mp4_file,
@@ -82,7 +82,7 @@ def _main_stream_names() -> set[str]:
 # ── List recordings ──────────────────────────────────────────────────────────
 
 @bp.route("/", methods=["GET"])
-@login_required_api
+@require_auth
 def list_recordings():
     """
     List recordings with filtering and pagination.
@@ -167,7 +167,7 @@ def list_recordings():
 # ── Timeline (for playback UI) ───────────────────────────────────────────────
 
 @bp.route("/timeline", methods=["GET"])
-@login_required_api
+@require_auth
 def timeline():
     """
     Compact timeline of recording availability for one or more cameras.
@@ -214,7 +214,7 @@ def timeline():
 # ── Available dates (for date picker) ────────────────────────────────────────
 
 @bp.route("/dates", methods=["GET"])
-@login_required_api
+@require_auth
 def available_dates():
     """
     Returns a list of dates that have recordings for a given camera.
@@ -280,7 +280,7 @@ def available_dates():
 # ── Serve recording file ─────────────────────────────────────────────────────
 
 @bp.route("/<camera_name>/<filename>", methods=["GET"])
-@login_required_api
+@require_auth
 def serve_recording(camera_name, filename):
     """Serve a recording file for download or in-browser playback."""
     cam = Camera.get_or_none(Camera.name == camera_name)
@@ -295,8 +295,7 @@ def serve_recording(camera_name, filename):
 # ── Delete a recording ───────────────────────────────────────────────────────
 
 @bp.route("/<int:recording_id>", methods=["DELETE"])
-@login_required_api
-@admin_required
+@require_admin
 def delete_recording(recording_id):
     """Delete a single recording segment (file + DB record)."""
     try:
@@ -318,8 +317,7 @@ def delete_recording(recording_id):
 # ── Bulk delete by camera + date range ────────────────────────────────────────
 
 @bp.route("/bulk-delete", methods=["POST"])
-@login_required_api
-@admin_required
+@require_admin
 def bulk_delete():
     """
     Delete recordings in a date range for a camera.
@@ -403,7 +401,7 @@ def _scan_mp4_folder(folder):
 
 
 @bp.route("/storage", methods=["GET"])
-@login_required_api
+@require_auth
 def storage_stats():
     """
     Filesystem-backed stats: rolling segments under <dir>/<camera>/ and motion clips
@@ -494,7 +492,7 @@ def storage_stats():
 # ── Recording engine status ──────────────────────────────────────────────────
 
 @bp.route("/engine/status", methods=["GET"])
-@login_required_api
+@require_auth
 def engine_status():
     """Returns the current status of the recording engine (processes, storage, config)."""
     from app.recorder import engine
@@ -529,8 +527,7 @@ def engine_status():
 
 
 @bp.route("/reconcile-storage", methods=["POST"])
-@login_required_api
-@admin_required
+@require_admin
 def reconcile_storage():
     """
     Remove database rows for segment/event files that no longer exist on disk.
@@ -546,8 +543,7 @@ def reconcile_storage():
 
 
 @bp.route("/engine/rescan", methods=["POST"])
-@login_required_api
-@admin_required
+@require_admin
 def force_rescan():
     """
     Force an immediate segment scan and return what was found.
@@ -608,8 +604,7 @@ def force_rescan():
 # ── RTSP Diagnostics ─────────────────────────────────────────────────────────
 
 @bp.route("/diagnose/<int:cam_id>", methods=["POST"])
-@login_required_api
-@admin_required
+@require_admin
 def diagnose_camera(cam_id):
     """
     Test whether FFmpeg can connect to a camera's RTSP stream.
@@ -640,8 +635,7 @@ def diagnose_camera(cam_id):
 
 
 @bp.route("/diagnose/url", methods=["POST"])
-@login_required_api
-@admin_required
+@require_admin
 def diagnose_url():
     """
     Test any RTSP URL directly (doesn't need to be a saved camera).

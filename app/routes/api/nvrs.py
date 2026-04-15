@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Blueprint, request, current_app
 from flask_login import current_user
 from app.models import NVR, Camera, UserNVR
-from app.routes.api.utils import api_response, api_error, login_required_api, admin_required
+from app.routes.api.utils import api_response, api_error, require_admin
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +116,7 @@ def import_cameras(nvr, probe_timeout: int | None = None):
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @bp.route("/", methods=["GET"])
-@login_required_api
+@require_admin
 def list_nvrs():
     allowed = current_user.allowed_nvr_ids()  # None = admin, set = restricted
 
@@ -134,8 +134,7 @@ def list_nvrs():
 
 
 @bp.route("/", methods=["POST"])
-@login_required_api
-@admin_required
+@require_admin
 def create_nvr():
     data = request.get_json(silent=True) or {}
     name         = (data.get("name") or "").strip()
@@ -177,8 +176,7 @@ def create_nvr():
 
 
 @bp.route("/<int:nvr_id>", methods=["PATCH"])
-@login_required_api
-@admin_required
+@require_admin
 def update_nvr(nvr_id):
     try:
         nvr = NVR.get_by_id(nvr_id)
@@ -207,8 +205,7 @@ def update_nvr(nvr_id):
 
 
 @bp.route("/<int:nvr_id>", methods=["DELETE"])
-@login_required_api
-@admin_required
+@require_admin
 def delete_nvr(nvr_id):
     try:
         nvr = NVR.get_by_id(nvr_id)
@@ -223,8 +220,7 @@ def delete_nvr(nvr_id):
 
 
 @bp.route("/<int:nvr_id>/sync", methods=["POST"])
-@login_required_api
-@admin_required
+@require_admin
 def sync_nvr(nvr_id):
     try:
         nvr = NVR.get_by_id(nvr_id)

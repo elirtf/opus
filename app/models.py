@@ -28,17 +28,18 @@ class User(UserMixin, BaseModel):
     role         = CharField(max_length=20, default="viewer")  # "admin" | "viewer"
     can_view_live = BooleanField(default=True)
     can_view_recordings = BooleanField(default=True)
-    # Hashed secret for Authorization: Bearer (optional; see POST /api/auth/token)
+    # Hashed secret for Authorization: Bearer (optional; legacy automation tokens)
     api_token_hash = CharField(max_length=255, null=True)
+    created_at = DateTimeField(null=True)
 
     class Meta:
         table_name = "user"
 
     def set_password(self, password: str):
-        """Bcrypt for new passwords (self-hosted default). Legacy rows may still use werkzeug hashes."""
-        self.password_hash = bcrypt.hashpw(
-            password.encode("utf-8"), bcrypt.gensalt(rounds=12)
-        ).decode("utf-8")
+        """PBKDF2-SHA256 (600k). Legacy bcrypt rows remain readable via check_password."""
+        self.password_hash = generate_password_hash(
+            password, method="pbkdf2:sha256:600000"
+        )
 
     def check_password(self, password: str) -> bool:
         h = self.password_hash or ""

@@ -4,7 +4,6 @@ import { healthApi } from '../api/health'
 import { camerasApi } from '../api/cameras'
 import { api } from '../api/client'
 import { go2rtcApi } from '../api/go2rtc'
-import { authApi } from '../api/auth'
 import Modal from '../components/Modal'
 import Spinner from '../components/Spinner'
 import { useToast, ToastList } from '../components/Toast'
@@ -507,49 +506,13 @@ function SystemPanel({ about, loading, error, setupStatus, isOriginalAdmin }) {
   )
 }
 
-function ApiTokenSettings({ onSuccess, onError }) {
-  const [busy, setBusy] = useState(false)
+function ApiTokenSettings() {
   const [open, setOpen] = useState(false)
-
-  async function generate() {
-    setBusy(true)
-    try {
-      const data = await authApi.createToken()
-      const token = data?.token
-      if (token) {
-        try {
-          await navigator.clipboard.writeText(token)
-        } catch (_e) {}
-        onSuccess(
-          'New API token created (copied to clipboard if permitted). Store it securely; you will not see it again. For browser clients on a different origin than Opus, paste it into localStorage key opus_bearer_token or your client config.'
-        )
-      }
-    } catch (e) {
-      onError(e.message || 'Could not create token')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  async function revoke() {
-    setBusy(true)
-    try {
-      await authApi.revokeToken()
-      if (typeof localStorage !== 'undefined') {
-        localStorage.removeItem('opus_bearer_token')
-      }
-      onSuccess('API token revoked.')
-    } catch (e) {
-      onError(e.message || 'Could not revoke token')
-    } finally {
-      setBusy(false)
-    }
-  }
 
   return (
     <SectionCard
       title="API access (advanced)"
-      subtitle="Use this only for scripts or external apps that cannot use normal login sessions."
+      subtitle="Scripts and split-origin clients use a signed JWT from login, not a separate API token."
       actions={
         <button
           type="button"
@@ -562,28 +525,21 @@ function ApiTokenSettings({ onSuccess, onError }) {
     >
       {open ? (
         <>
-          <p className="text-sm text-gray-400 mb-4">
-            Send <code className="text-gray-300">Authorization: Bearer &lt;token&gt;</code>. For different origins, set{' '}
-            <code className="text-gray-300">CORS_ORIGINS</code> on the server (see <code className="text-gray-400">docs/remote-viewing.md</code>).
+          <p className="text-sm text-gray-400 mb-3">
+            Call <code className="text-gray-300">POST /api/auth/login</code> with JSON{' '}
+            <code className="text-gray-300">{'{ username, password }'}</code>. The response includes a{' '}
+            <code className="text-gray-300">token</code> string and sets an HttpOnly session cookie for browsers.
           </p>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              disabled={busy}
-              onClick={generate}
-              className="px-3 py-1.5 rounded-lg text-sm bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white"
-            >
-              Generate new token
-            </button>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={revoke}
-              className="px-3 py-1.5 rounded-lg text-sm border border-gray-600 hover:bg-gray-800 disabled:opacity-50 text-gray-300"
-            >
-              Revoke token
-            </button>
-          </div>
+          <p className="text-sm text-gray-400 mb-3">
+            For headless access, send <code className="text-gray-300">Authorization: Bearer &lt;token&gt;</code> on each
+            request (or rely on the <code className="text-gray-300">opus_session</code> cookie when calling from the same
+            browser origin). For different web origins, set <code className="text-gray-300">CORS_ORIGINS</code> on the
+            server (see <code className="text-gray-400">docs/remote-viewing.md</code>).
+          </p>
+          <p className="text-sm text-gray-400">
+            Optional: store the JWT in <code className="text-gray-300">localStorage</code> key{' '}
+            <code className="text-gray-300">opus_bearer_token</code> so the bundled client attaches it automatically.
+          </p>
         </>
       ) : (
         <p className="text-sm text-gray-500">Hidden to reduce noise during normal configuration.</p>
@@ -1083,7 +1039,7 @@ export default function Configuration() {
             isOriginalAdmin={isOriginalAdmin}
           />
           <div className="mt-6">
-            <ApiTokenSettings onSuccess={success} onError={toastError} />
+            <ApiTokenSettings />
           </div>
         </>
       )}

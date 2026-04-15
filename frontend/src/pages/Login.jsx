@@ -12,9 +12,9 @@ export default function Login() {
   useEffect(() => {
     let cancelled = false
     authApi
-      .setupRequired()
+      .setupStatus()
       .then((data) => {
-        if (!cancelled && data.setup_required) navigate('/setup', { replace: true })
+        if (!cancelled && data.needs_setup) navigate('/setup', { replace: true })
       })
       .catch(() => {})
     return () => {

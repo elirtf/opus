@@ -74,9 +74,9 @@ def create_app():
         if not db.is_closed():
             db.close()
 
-    # ── Auth - Flask-Login ───────────────────────────────────────────────────
+    # ── Auth - Flask-Login (identity from JWT cookie / Bearer, optional proxy headers) ──
     login_manager.init_app(app)
-    login_manager.login_view = "auth.login"
+    login_manager.login_view = None
 
     _cors_origins = os.environ.get("CORS_ORIGINS", "").strip()
     if _cors_origins:
@@ -89,30 +89,6 @@ def create_app():
             allow_headers=["Content-Type", "Authorization"],
         )
 
-    @app.before_request
-    def load_user_from_bearer():
-        """Optional API access via Authorization: Bearer (hashed token on User)."""
-        from flask import request
-        from flask_login import current_user, login_user
-        from werkzeug.security import check_password_hash
-        from app.models import User
-
-        if request.method == "OPTIONS":
-            return
-        if current_user.is_authenticated:
-            return
-        h = request.headers.get("Authorization", "") or ""
-        if not h.startswith("Bearer "):
-            return
-        raw = h[7:].strip()
-        if not raw:
-            return
-        q = User.select().where(User.api_token_hash.is_null(False))
-        for user in q:
-            if user.api_token_hash and check_password_hash(user.api_token_hash, raw):
-                login_user(user)
-                break
-
     from app.models import User
 
     @login_manager.user_loader
@@ -122,8 +98,20 @@ def create_app():
         except User.DoesNotExist:
             return None
 
+    @login_manager.request_loader
+    def load_user_from_request(req):
+        from app.opus_auth import load_user_for_request
+
+        return load_user_for_request(app, req)
+
+    @app.after_request
+    def _opus_jwt_cookie_refresh(resp):
+        from app.opus_auth import apply_jwt_rotation
+
+        return apply_jwt_rotation(resp)
+
     # ── Blueprints (API) ─────────────────────────────────────────────────────
-    from app.routes.api.auth    import bp as api_auth_bp
+    from app.routes.api.auth import bp as api_auth_bp, init_auth
     from app.routes.api.nvrs    import bp as api_nvrs_bp
     from app.routes.api.cameras import bp as api_cameras_bp
     from app.routes.api.users   import bp as api_users_bp
@@ -151,6 +139,7 @@ def create_app():
     app.register_blueprint(api_config_schema_bp)
     app.register_blueprint(api_playback_bp)
 
+    init_auth(app)
 
     from app.ops_alerts import start_ops_alerts_thread
 

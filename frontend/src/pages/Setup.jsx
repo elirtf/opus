@@ -13,10 +13,10 @@ export default function Setup() {
   useEffect(() => {
     let cancelled = false
     authApi
-      .setupRequired()
+      .setupStatus()
       .then((data) => {
         if (cancelled) return
-        if (!data.setup_required) navigate('/login', { replace: true })
+        if (!data.needs_setup) navigate('/login', { replace: true })
       })
       .catch(() => {
         if (!cancelled) setError('Could not reach the server.')

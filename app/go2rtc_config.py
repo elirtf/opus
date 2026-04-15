@@ -52,7 +52,11 @@ def _env_bool(name: str, default: bool) -> bool:
 
 
 def _transcode_default() -> bool:
-    return _env_bool("GO2RTC_TRANSCODE_DEFAULT", True)
+    # Default off: go2rtc 1.9+ serves MSE from stream.html using sources whose internal
+    # representation stays RTSP-based. ffmpeg:…#video=h264 is implemented as exec:ffmpeg …
+    # and MSE reports "unsupported scheme: exec:ffmpeg" for those producers.
+    # Set GO2RTC_TRANSCODE_DEFAULT=true or per-camera transcode when the camera is HEVC-only.
+    return _env_bool("GO2RTC_TRANSCODE_DEFAULT", False)
 
 
 def _transcode_source(rtsp_url: str, should_transcode: bool) -> str:

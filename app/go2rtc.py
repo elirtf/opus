@@ -34,7 +34,8 @@ def _env_bool(name: str, default: bool) -> bool:
 
 
 def _transcode_default() -> bool:
-    return _env_bool("GO2RTC_TRANSCODE_DEFAULT", True)
+    # Match go2rtc_config.py — see comment there (MSE + ffmpeg:/exec: in go2rtc 1.9+).
+    return _env_bool("GO2RTC_TRANSCODE_DEFAULT", False)
 
 
 def _camera_transcode_value(camera, default: bool) -> bool:

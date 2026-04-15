@@ -87,13 +87,13 @@ You do **not** need Node.js or `npm` on your PC for this — the Docker build in
 
 Background checks can **POST JSON** to `ALERT_WEBHOOK_URL` and/or send **email** via SMTP (`ALERT_SMTP_HOST`, `ALERT_EMAIL_FROM`, `ALERT_EMAIL_TO`, optional `ALERT_SMTP_USER` / `ALERT_SMTP_PASSWORD`). Email uses the same payloads as the webhook, so lock-screen notifications come from the mail app users already have. See commented variables in `docker-compose.yml` and the module docstring in `app/ops_alerts.py`.
 
-### Default Login
+### First-time Setup
 
-| Username | Password | Role |
-|---|---|---|
-| admin | admin | admin |
+On a **fresh database** (no user accounts), the UI sends you to **`/setup`** to create the administrator username and password. Passwords are stored with **bcrypt**. There are **no baked-in default credentials**.
 
-> **Change this immediately** after first login. Until you change it in the app, it stays **`admin` / `admin`** (your data is in `./instance`, not wiped by rebuilds). If you see the login page again after an update, your session simply expired — sign in with the same credentials.
+If `SECRET_KEY` is not set in `.env`, Opus writes a random key to **`instance/.flask_secret_key`** (next to the SQLite file) so the API container can start without manual env editing.
+
+If you see the login page again after an update, the session usually expired — sign in with the same credentials you created at setup.
 
 ---
 

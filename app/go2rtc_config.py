@@ -135,6 +135,8 @@ def build_go2rtc_config_dict() -> dict[str, Any]:
         },
         "log": {"format": "text"},
         "webrtc": {"candidates": candidates},
+        # Lets go2rtc pick up FFmpeg from PATH; reconnect behaviour is handled per producer internally.
+        "ffmpeg": {"bin": "ffmpeg"},
     }
 
     if include_exec:

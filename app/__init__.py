@@ -1,17 +1,41 @@
 import os
+import secrets
 from flask import Flask
 from flask_login import LoginManager
 
 login_manager = LoginManager()
 
 
+def _load_or_create_secret_key(database_path: str) -> str:
+    """
+    Persist SECRET_KEY next to the SQLite file so containers start without a pre-seeded .env.
+    Env SECRET_KEY still wins when set.
+    """
+    env_sk = (os.environ.get("SECRET_KEY") or "").strip()
+    if env_sk:
+        return env_sk
+    parent = os.path.dirname(database_path) or "."
+    path = os.path.join(parent, ".flask_secret_key")
+    try:
+        os.makedirs(parent, exist_ok=True)
+        if os.path.isfile(path):
+            with open(path, "r", encoding="utf-8") as f:
+                existing = f.read().strip()
+            if existing:
+                return existing
+        sk = secrets.token_hex(32)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(sk)
+        return sk
+    except OSError:
+        return secrets.token_hex(32)
+
+
 def create_app():
     app = Flask(__name__)
-    app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY")
-    if not app.config["SECRET_KEY"]:
-        raise RuntimeError("SECRET_KEY is not set. Add it to .env")
     app.config["DATABASE_PATH"]     = os.environ.get("DATABASE_PATH", "/app/instance/opus.db")
     app.config["DATABASE_URL"]      = os.environ.get("DATABASE_URL")
+    app.config["SECRET_KEY"]        = _load_or_create_secret_key(app.config["DATABASE_PATH"])
     app.config["GO2RTC_URL"]        = os.environ.get("GO2RTC_URL", "http://go2rtc:1984")
     app.config["GO2RTC_CONFIG_PATH"] = os.environ.get("GO2RTC_CONFIG_PATH", "/config/go2rtc.yaml")
     app.config["RECORDINGS_DIR"]    = os.environ.get("RECORDINGS_DIR", "/recordings")
@@ -111,6 +135,7 @@ def create_app():
     from app.routes.api.events import bp as api_events_bp
     from app.routes.api.processing_api import bp as api_processing_bp
     from app.routes.api.config_schema import bp as api_config_schema_bp
+    from app.routes.api.playback import bp as api_playback_bp
 
     app.register_blueprint(api_auth_bp)
     app.register_blueprint(api_nvrs_bp)
@@ -124,20 +149,8 @@ def create_app():
     app.register_blueprint(api_events_bp)
     app.register_blueprint(api_processing_bp)
     app.register_blueprint(api_config_schema_bp)
+    app.register_blueprint(api_playback_bp)
 
-
-    # ── Seed default admin if no users exist ─────────────────────────────────
-    # Recorder/processor/opus may start in parallel on a shared DB; only one insert wins.
-    from peewee import IntegrityError
-
-    if User.select().count() == 0:
-        try:
-            admin = User(username="admin", role="admin")
-            admin.set_password("admin")
-            admin.save(force_insert=True)
-            print("Default admin created — username: admin / password: admin")
-        except IntegrityError:
-            pass
 
     from app.ops_alerts import start_ops_alerts_thread
 
@@ -148,7 +161,11 @@ def create_app():
         from app.go2rtc import sync_all_on_startup
 
         write_go2rtc_yaml(app)
-        sync_all_on_startup()
+        try:
+            sync_all_on_startup()
+        except Exception:
+            # Defensive — sync_all_on_startup already catches internally.
+            pass
 
     @app.get("/healthz")
     def healthz():

@@ -3,6 +3,7 @@ import { AuthProvider } from './context/AuthContext'
 import ProtectedRoute from './components/ProtectedRoute'
 import Layout from './components/Layout'
 import Login from './pages/Login'
+import Setup from './pages/Setup'
 import Dashboard from './pages/Dashboard'
 import CameraView from './pages/CameraView'
 import DeviceSetup from './pages/DeviceSetup'
@@ -10,6 +11,7 @@ import Users from './pages/Users'
 import Recordings from './pages/Recordings'
 import Discovery from './pages/Discovery'
 import Configuration from './pages/Configuration'
+import PlaybackPage from './pages/playback/PlaybackPage'
 
 function AppLayout({
   children,
@@ -33,10 +35,12 @@ export default function App() {
     <BrowserRouter>
       <AuthProvider>
         <Routes>
+          <Route path="/setup"           element={<Setup />} />
           <Route path="/login"           element={<Login />} />
           <Route path="/"                element={<AppLayout requireLiveView><Dashboard /></AppLayout>} />
           <Route path="/camera/:name"    element={<AppLayout requireLiveView><CameraView /></AppLayout>} />
           <Route path="/recordings"      element={<AppLayout requireRecordingsView><Recordings /></AppLayout>} />
+          <Route path="/playback"        element={<AppLayout requireRecordingsView><PlaybackPage /></AppLayout>} />
           <Route path="/discovery"       element={<AppLayout adminOnly><Discovery /></AppLayout>} />
           <Route path="/devices"         element={<AppLayout adminOnly><DeviceSetup /></AppLayout>} />
           <Route path="/nvrs"            element={<Navigate to="/devices" replace />} />

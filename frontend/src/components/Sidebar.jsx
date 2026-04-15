@@ -229,7 +229,7 @@ export default function Sidebar({ mobileOpen = false, onNavigate }) {
 
       {/* Recordings — any user with recording permission */}
       {canRec && (
-        <div className={`px-3 ${canLive ? 'py-2' : 'pt-3'} border-t border-gray-800`}>
+        <div className={`px-3 ${canLive ? 'py-2' : 'pt-3'} border-t border-gray-800 space-y-0.5`}>
           <NavLink
             to="/recordings"
             onClick={() => onNavigate?.()}
@@ -243,6 +243,20 @@ export default function Sidebar({ mobileOpen = false, onNavigate }) {
               <path strokeLinecap="round" strokeLinejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 01-1.125-1.125M3.375 19.5h1.5C5.496 19.5 6 18.996 6 18.375m-3.75.125v-5.25A2.25 2.25 0 014.5 11.25h15A2.25 2.25 0 0121.75 13.5v3.75m-18.375 2.25c0 .621.504 1.125 1.125 1.125h15.75c.621 0 1.125-.504 1.125-1.125M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
             </svg>
             Recordings
+          </NavLink>
+          <NavLink
+            to="/playback"
+            onClick={() => onNavigate?.()}
+            className={({ isActive }) =>
+              `flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                isActive ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-800'
+              }`
+            }
+          >
+            <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 010 1.972l-11.54 6.347a1.125 1.125 0 01-1.667-.986V5.653z" />
+            </svg>
+            Playback
           </NavLink>
         </div>
       )}

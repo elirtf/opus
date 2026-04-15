@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 from abc import ABC, abstractmethod
 
 logger = logging.getLogger("opus.detectors")
@@ -42,20 +43,49 @@ def capture_skipped_frame_pair(rtsp_url: str, skip_frames: int):
     """
     Open RTSP, read first frame, skip `skip_frames` reads, read second frame.
     Returns (f0, f1) BGR numpy arrays or (None, None).
+
+    Without timeouts, FFmpeg can block ~60s per dead RTSP URL (DESCRIBE 404), which
+    stalls the motion worker pool and floods logs (OpenCV cap.cpp + libav rtsp warnings).
     """
+    # Pipe-separated FFmpeg options for the bundled FFmpeg backend (see OpenCV Video I/O).
+    os.environ.setdefault(
+        "OPENCV_FFMPEG_CAPTURE_OPTIONS",
+        "rtsp_transport;tcp|stimeout;5000000|rw_timeout;5000000|max_delay;500000",
+    )
     try:
         import cv2
     except ImportError:
         logger.warning("opencv not installed — motion detection disabled")
         return None, None
 
-    cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
+    cap = cv2.VideoCapture()
+    try:
+        open_timeout = getattr(cv2, "CAP_PROP_OPEN_TIMEOUT_MSEC", None)
+        read_timeout = getattr(cv2, "CAP_PROP_READ_TIMEOUT_MSEC", None)
+        if open_timeout is not None:
+            cap.set(open_timeout, 8000)
+        if read_timeout is not None:
+            cap.set(read_timeout, 12000)
+    except Exception:
+        pass
+    if not cap.open(rtsp_url, cv2.CAP_FFMPEG):
+        try:
+            cap.release()
+        except Exception:
+            pass
+        return None, None
     try:
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     except Exception:
         pass
     try:
-        ok, f0 = cap.read()
+        # Brief retries: go2rtc may still be publishing the path right after API registration.
+        ok, f0 = False, None
+        for _attempt in range(3):
+            ok, f0 = cap.read()
+            if ok and f0 is not None:
+                break
+            time.sleep(1.0)
         if not ok or f0 is None:
             return None, None
         for _ in range(max(0, skip_frames)):

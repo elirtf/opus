@@ -51,6 +51,8 @@ services:
       # ── Recording Engine Configuration ── Override any of these in your .env file
       - RECORDINGS_DIR=/recordings
       # Which cameras record is controlled in the UI (per-camera toggles + first-run setup), not env.
+      - GO2RTC_URL=http://go2rtc:1984
+      - FLASK_RUN_HOST=0.0.0.0
       - RECORDING_SEGMENT_MINUTES=15          # Length of each MP4 segment
       - RECORDING_RETENTION_DAYS=90           # Auto-delete recordings older than this
       - RECORDING_MAX_STORAGE_GB=25            # 0 = unlimited; set to cap disk usage
@@ -90,6 +92,8 @@ services:
       # Events (motion) cameras: 0 = clip-only (default), 1 = rolling segment buffer (see README)
       # - EVENTS_ONLY_RECORD_SEGMENTS=1
       - GO2RTC_RTSP_URL=rtsp://go2rtc:8554
+      # HTTP API for stream health (skip OpenCV probes when relay stream has no producers → avoids RTSP 404 storms).
+      - GO2RTC_URL=http://go2rtc:1984
       # FFmpeg hwaccel (optional): segments use stream copy — FFMPEG_HWACCEL has minimal effect on
       # recording CPU; set for future decode/transcode paths. Intel/AMD Linux: often vaapi or qsv
       # after passing /dev/dri (see processor service). NVIDIA: cuda + nvidia-container-toolkit.
@@ -136,6 +140,7 @@ services:
       - FFMPEG_HWACCEL=none
       # Match recorder: relay RTSP through go2rtc (uncomment both here and on recorder)
       - GO2RTC_RTSP_URL=rtsp://go2rtc:8554
+      - GO2RTC_URL=http://go2rtc:1984
       # Hwaccel examples (Linux): VAAPI — add devices: /dev/dri, env FFMPEG_HWACCEL=vaapi
       # Intel QSV — often FFMPEG_HWACCEL=qsv (requires /dev/dri). NVIDIA — FFMPEG_HWACCEL=cuda
       # plus GPU device/runtime per nvidia-container-toolkit docs. Verify with ffmpeg -hwaccels in the container.

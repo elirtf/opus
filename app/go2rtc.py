@@ -51,13 +51,32 @@ def _transcode_source(rtsp_url: str, should_transcode: bool) -> str:
 
 
 def _put_stream_ok(base_url: str, name: str, src: str, what: str) -> bool:
-    """PUT one source onto a go2rtc stream; log and return False on HTTP errors."""
+    """
+    Register one source on a go2rtc stream (API), idempotent vs go2rtc.yaml.
+
+    Newer go2rtc returns 400 on PUT when the stream already exists (e.g. loaded from
+    go2rtc.yaml written by Opus). In that case PATCH adds/updates the source instead.
+    """
+    base = (base_url or "").strip().rstrip("/")
+    url = f"{base}/api/streams"
     try:
-        r = http.put(
-            f"{base_url}/api/streams",
-            params={"name": name, "src": src},
-            timeout=3,
-        )
+        r = http.put(url, params={"name": name, "src": src}, timeout=8)
+        if r.ok:
+            return True
+        if r.status_code == 400:
+            rp = http.patch(url, params={"name": name, "src": src}, timeout=8)
+            if rp.ok:
+                return True
+            logger.warning(
+                "go2rtc PUT/PATCH %s failed for stream %s: PUT %s %s | PATCH %s %s",
+                what,
+                name,
+                r.status_code,
+                (r.text or "")[:200],
+                rp.status_code,
+                (rp.text or "")[:200],
+            )
+            return False
         r.raise_for_status()
         return True
     except Exception as e:
@@ -69,6 +88,11 @@ def is_restricted_source(url: str) -> bool:
     """echo:, expr:, and exec: sources can execute arbitrary commands if the API is abused."""
     s = (url or "").strip()
     return s.startswith(("echo:", "expr:", "exec:"))
+
+
+def register_stream_src(base_url: str, name: str, src: str, what: str = "api") -> bool:
+    """PUT/PATCH a stream source (idempotent). Call from blueprints with current_app.config['GO2RTC_URL']."""
+    return _put_stream_ok(base_url, name, src, what)
 
 
 def validate_stream_url_for_go2rtc(url: str) -> str | None:
@@ -188,10 +212,18 @@ def sync_all_on_startup():
     Called at app startup to ensure go2rtc has all streams registered,
     including record: outputs for cameras with recording enabled.
     go2rtc loses its dynamic streams on restart, so this re-registers them.
+    Never raises — a bad go2rtc response must not block Flask from listening.
     """
     from app.models import Camera
-    q = Camera.select().where(Camera.active == True)
-    rows = list(q)
-    for cam in rows:
-        stream_sync(cam)
-    logger.info("go2rtc startup sync complete — %s cameras registered.", len(rows))
+
+    try:
+        q = Camera.select().where(Camera.active == True)
+        rows = list(q)
+        for cam in rows:
+            try:
+                stream_sync(cam)
+            except Exception:
+                logger.exception("go2rtc startup sync failed for camera %s", getattr(cam, "name", cam))
+        logger.info("go2rtc startup sync complete — %s cameras processed.", len(rows))
+    except Exception:
+        logger.exception("go2rtc startup sync aborted")

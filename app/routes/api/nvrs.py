@@ -6,7 +6,6 @@ from flask import Blueprint, request, current_app
 from flask_login import current_user
 from app.models import NVR, Camera, UserNVR
 from app.routes.api.utils import api_response, api_error, login_required_api, admin_required
-import requests as http
 
 logger = logging.getLogger(__name__)
 
@@ -39,21 +38,14 @@ def nvr_to_dict(nvr, cam_count=None, admin=False):
 # ── go2rtc + import helpers ───────────────────────────────────────────────────
 
 def stream_add(name, rtsp_url):
-    from app.go2rtc import validate_stream_url_for_go2rtc
+    from app.go2rtc import validate_stream_url_for_go2rtc, register_stream_src
 
     err = validate_stream_url_for_go2rtc(rtsp_url)
     if err:
         current_app.logger.warning("go2rtc stream_add rejected %s: %s", name, err)
         return
-    try:
-        r = http.put(
-            f"{current_app.config['GO2RTC_URL']}/api/streams",
-            params={"name": name, "src": rtsp_url},
-            timeout=3,
-        )
-        r.raise_for_status()
-    except Exception as e:
-        current_app.logger.warning("go2rtc stream_add failed for %s: %s", name, e)
+    if not register_stream_src(current_app.config["GO2RTC_URL"], name, rtsp_url, "import"):
+        current_app.logger.warning("go2rtc stream_add failed for %s", name)
 
 
 def _probe_nvr_main_stream(base: str, channel_index: int, timeout: int) -> tuple[int, bool]:

@@ -233,6 +233,7 @@ def camera_to_dict(cam, nvr_map=None, health_map=None, all_camera_names=None):
 
 # ── Configuration endpoints ──────────────────────────────────────────────────
 
+@bp.route("", methods=["GET"])
 @bp.route("/", methods=["GET"])
 @login_required_api
 @camera_catalog_allowed
@@ -249,6 +250,7 @@ def list_cameras():
     return api_response([camera_to_dict(c, nvr_map, health, name_set) for c in rows])
 
 
+@bp.route("", methods=["POST"])
 @bp.route("/", methods=["POST"])
 @login_required_api
 @admin_required

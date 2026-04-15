@@ -28,6 +28,7 @@ CLIP_CONCAT_PRE = os.environ.get("CLIP_CONCAT_PRE", "1").strip().lower() in (
 )
 
 GO2RTC_RTSP_URL = os.environ.get("GO2RTC_RTSP_URL", "")
+GO2RTC_HTTP_URL = os.environ.get("GO2RTC_URL", "http://go2rtc:1984").strip().rstrip("/")
 # Defaults only for startup log; runtime uses recording_settings + env via read_motion_clip_settings().
 POLL_SECONDS = int(os.environ.get("PROCESSING_POLL_SECONDS", "6"))
 CLIP_SECONDS = int(os.environ.get("CLIP_SECONDS", "45"))
@@ -184,6 +185,30 @@ class ProcessingEngine:
             return sub_url
         return self._main_rtsp(cam)
 
+    def _go2rtc_stream_key_from_motion_rtsp(self, motion_rtsp: str) -> str | None:
+        """Last path segment of rtsp://go2rtc:8554/<key> when using the go2rtc relay."""
+        if not GO2RTC_RTSP_URL:
+            return None
+        base = GO2RTC_RTSP_URL.rstrip("/")
+        if not motion_rtsp.startswith(base + "/") and motion_rtsp != base:
+            return None
+        return motion_rtsp[len(base) :].lstrip("/") or None
+
+    def _motion_stream_has_go2rtc_producers(
+        self, motion_rtsp: str, health: dict[str, bool] | None
+    ) -> bool | None:
+        """
+        None = cannot decide (no relay, go2rtc unreachable, or direct camera RTSP) — still probe with OpenCV.
+        True = go2rtc lists the stream with active producers.
+        False = missing from /api/streams or no producers (OpenCV would usually hit RTSP DESCRIBE 404 / hang).
+        """
+        if health is None:
+            return None
+        key = self._go2rtc_stream_key_from_motion_rtsp(motion_rtsp)
+        if not key:
+            return None
+        return bool(health.get(key))
+
     def _tick(self):
         from app.models import Camera
         from app.routes.api.recording_settings import get_setting
@@ -215,18 +240,40 @@ class ProcessingEngine:
         if not eligible:
             return
 
-        def run_motion(cam):
+        health: dict[str, bool] | None = None
+        if GO2RTC_RTSP_URL:
+            from app.services.camera_stream_health import fetch_stream_online_map
+
+            health = fetch_stream_online_map(GO2RTC_HTTP_URL, timeout=2.0)
+
+        prepped: list[tuple] = []
+        for cam in eligible:
             src_motion = self._motion_rtsp(cam)
+            has_prod = self._motion_stream_has_go2rtc_producers(src_motion, health)
+            if has_prod is False:
+                logger.debug(
+                    "skip motion OpenCV probe for %s (go2rtc stream offline or not published: %s)",
+                    cam.name,
+                    self._go2rtc_stream_key_from_motion_rtsp(src_motion),
+                )
+                continue
+            prepped.append((cam, src_motion))
+
+        if not prepped:
+            return
+
+        def run_motion(item):
+            cam, src_motion = item
             try:
                 return cam, self._detector.detect_motion(src_motion, stream_key=cam.name)
             except Exception:
                 logger.exception("detector failed: %s", cam.name)
                 return cam, False
 
-        workers = min(MOTION_MAX_CONCURRENT, len(eligible))
+        workers = min(MOTION_MAX_CONCURRENT, len(prepped))
         fired = []
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {pool.submit(run_motion, cam): cam for cam in eligible}
+            futures = {pool.submit(run_motion, item): item[0] for item in prepped}
             for fut in as_completed(futures):
                 cam, motion = fut.result()
                 if motion:

@@ -1,12 +1,26 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { authApi } from '../api/auth'
 
 export default function Login() {
   const { login }             = useAuth()
   const navigate              = useNavigate()
   const [error, setError]     = useState('')
   const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    authApi
+      .setupRequired()
+      .then((data) => {
+        if (!cancelled && data.setup_required) navigate('/setup', { replace: true })
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [navigate])
 
   async function handleSubmit(e) {
     e.preventDefault()

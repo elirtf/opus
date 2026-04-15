@@ -10,6 +10,8 @@ from peewee import (
 )
 from flask_login import UserMixin
 from werkzeug.security import generate_password_hash, check_password_hash
+
+import bcrypt
 from app.database import db
 
 
@@ -33,9 +35,18 @@ class User(UserMixin, BaseModel):
         table_name = "user"
 
     def set_password(self, password: str):
-        self.password_hash = generate_password_hash(password)
+        """Bcrypt for new passwords (self-hosted default). Legacy rows may still use werkzeug hashes."""
+        self.password_hash = bcrypt.hashpw(
+            password.encode("utf-8"), bcrypt.gensalt(rounds=12)
+        ).decode("utf-8")
 
     def check_password(self, password: str) -> bool:
+        h = self.password_hash or ""
+        if h.startswith(("$2a$", "$2b$", "$2y$")):
+            try:
+                return bcrypt.checkpw(password.encode("utf-8"), h.encode("utf-8"))
+            except (ValueError, TypeError):
+                return False
         return check_password_hash(self.password_hash, password)
 
     @property

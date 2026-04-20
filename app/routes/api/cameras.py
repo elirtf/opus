@@ -13,15 +13,16 @@ from app.services.camera_stream_health import (
 from app.routes.api.utils import (
     api_response,
     api_error,
-    login_required_api,
-    admin_required,
+    require_auth,
+    require_admin,
     camera_catalog_allowed,
     live_playback_allowed,
     accessible_camera_names,
+    is_original_admin,
 )
 
 RECORDING_POLICIES = frozenset({"off", "continuous", "events_only"})
-from app.go2rtc import stream_sync, stream_delete
+from app.go2rtc import stream_sync, stream_delete, validate_stream_url_for_go2rtc
 
 bp = Blueprint("api_cameras", __name__, url_prefix="/api/cameras")
 
@@ -81,18 +82,6 @@ def _sync_policy_and_enabled(cam: Camera):
         cam.recording_enabled = True
 
 
-def _is_original_admin():
-    """
-    Restrict certain sensitive operations to the original admin account.
-    (Matches your existing design: admin + user id == 1)
-    """
-    return (
-            current_user.is_authenticated
-            and current_user.is_admin
-            and current_user.id == 1
-    )
-
-
 def _fetch_go2rtc_streams():
     """
     Raw go2rtc stream data from /api/streams.
@@ -127,6 +116,28 @@ def _get_stream_health_cached():
         return _state_cache.get("health", {}) or {}
 
 
+def _live_view_playback_warnings(video_codec: str | None) -> list[dict[str, str]]:
+    """
+    go2rtc WebRTC requires codecs the browser can negotiate (typically H.264, VP8, VP9, AV1).
+    H.265/HEVC from the camera often yields: codecs not matched: video:H265 => ...
+    """
+    if not video_codec:
+        return []
+    u = (video_codec or "").upper().replace(" ", "")
+    if "265" in u or "HEVC" in u:
+        return [
+            {
+                "code": "HEVC_WEBRTC",
+                "message": (
+                    "This stream is H.265 (HEVC). Web browsers cannot negotiate H.265 over WebRTC, "
+                    "so go2rtc reports a codec mismatch (for example: video:H265 vs H.264/VP8/VP9/AV1). "
+                    "Configure an H.264 sub stream, or add FFmpeg transcoding in go2rtc — see go2rtc/README-HEVC.md."
+                ),
+            }
+        ]
+    return []
+
+
 def _live_view_stream_name(cam, all_camera_names=None):
     """
     go2rtc stream key for live preview: use sub when configured (rtsp_substream_url or paired *-sub row).
@@ -146,6 +157,46 @@ def _live_view_stream_name(cam, all_camera_names=None):
     return cam.name
 
 
+def _stream_role_for_name(name: str) -> str:
+    n = (name or "").strip()
+    if n.endswith("-sub"):
+        return "sub"
+    return "main"
+
+
+def _paired_stream_name(name: str) -> str | None:
+    n = (name or "").strip()
+    if n.endswith("-main"):
+        return n[: -len("-main")] + "-sub"
+    if n.endswith("-sub"):
+        return n[: -len("-sub")] + "-main"
+    return None
+
+
+def _resolve_live_stream(cam, health_map=None, all_camera_names=None):
+    """
+    Prefer substream for live view when available and healthy.
+    Fallback to main when sub is missing/unhealthy.
+    Returns (stream_name, reason).
+    """
+    main_name = cam.name
+    preferred = _live_view_stream_name(cam, all_camera_names)
+    if preferred == main_name:
+        return main_name, "main_selected"
+
+    if health_map is None:
+        return preferred, "sub_selected"
+
+    sub_online = bool(health_map.get(preferred))
+    if sub_online:
+        return preferred, "sub_selected"
+
+    main_online = bool(health_map.get(main_name))
+    if main_online:
+        return main_name, "sub_unhealthy"
+    return main_name, "sub_missing_or_unhealthy"
+
+
 def camera_to_dict(cam, nvr_map=None, health_map=None, all_camera_names=None):
     nvr_name = None
     if cam.nvr and nvr_map:
@@ -157,6 +208,7 @@ def camera_to_dict(cam, nvr_map=None, health_map=None, all_camera_names=None):
         online = camera_online_from_health_map(cam.name, health_map)
 
     sub = getattr(cam, "rtsp_substream_url", None)
+    live_name, live_reason = _resolve_live_stream(cam, health_map, all_camera_names)
     return {
         "id": cam.id,
         "name": cam.name,
@@ -170,9 +222,10 @@ def camera_to_dict(cam, nvr_map=None, health_map=None, all_camera_names=None):
         "recording_policy": getattr(cam, "recording_policy", None) or "continuous",
         "is_main": cam.name.endswith("-main"),
         "is_sub": cam.name.endswith("-sub"),
-        # Keep for compatibility with any existing frontend usage:
-        "stream_url": f"/go2rtc/stream.html?src={cam.name}&mode=mse",
-        "live_view_stream_name": _live_view_stream_name(cam, all_camera_names),
+        "stream_role": getattr(cam, "stream_role", None) or _stream_role_for_name(cam.name),
+        "paired_stream_name": getattr(cam, "paired_stream_name", None) or _paired_stream_name(cam.name),
+        "live_view_stream_name": live_name,
+        "live_view_selection_reason": live_reason,
         # Optional runtime field for UI badges:
         "online": online,
     }
@@ -180,8 +233,9 @@ def camera_to_dict(cam, nvr_map=None, health_map=None, all_camera_names=None):
 
 # ── Configuration endpoints ──────────────────────────────────────────────────
 
+@bp.route("", methods=["GET"])
 @bp.route("/", methods=["GET"])
-@login_required_api
+@require_auth
 @camera_catalog_allowed
 def list_cameras():
     query = _cameras_query_for_user()
@@ -191,12 +245,14 @@ def list_cameras():
     nvr_map = {nvr.id: nvr for nvr in NVR.select()}
     rows = list(query)
     name_set = {c.name for c in rows}
-    return api_response([camera_to_dict(c, nvr_map, None, name_set) for c in rows])
+    # Same health-aware live key as /summary so tiles fall back to main when sub is absent/offline.
+    health = _get_stream_health_cached()
+    return api_response([camera_to_dict(c, nvr_map, health, name_set) for c in rows])
 
 
+@bp.route("", methods=["POST"])
 @bp.route("/", methods=["POST"])
-@login_required_api
-@admin_required
+@require_admin
 def create_camera():
     data = request.get_json(silent=True) or {}
     name = (data.get("name") or "").strip()
@@ -216,6 +272,16 @@ def create_camera():
     if policy != "off" and not name.endswith("-main"):
         return api_error("Recording policies other than off require a main stream (-main).", 400)
     sub = (data.get("rtsp_substream_url") or "").strip() or None
+    if sub and not name.endswith("-main"):
+        return api_error("rtsp_substream_url is only allowed on main streams (-main).", 400)
+
+    v_err = validate_stream_url_for_go2rtc(rtsp_url)
+    if v_err:
+        return api_error(v_err, 400)
+    if sub:
+        s_err = validate_stream_url_for_go2rtc(sub)
+        if s_err:
+            return api_error(f"Substream: {s_err}", 400)
 
     cam = Camera.create(
         name=name,
@@ -226,17 +292,22 @@ def create_camera():
         recording_enabled=(policy != "off"),
         recording_policy=policy,
         rtsp_substream_url=sub,
+        stream_role=_stream_role_for_name(name),
+        paired_stream_name=_paired_stream_name(name),
     )
 
     stream_sync(cam)
 
     nvr_map = {nvr.id: nvr for nvr in NVR.select()}
-    return api_response(camera_to_dict(cam, nvr_map), message="Camera created.", status=201)
+    health = _get_stream_health_cached()
+    name_set = {r.name for r in Camera.select(Camera.name)}
+    return api_response(
+        camera_to_dict(cam, nvr_map, health, name_set), message="Camera created.", status=201
+    )
 
 
 @bp.route("/<int:cam_id>", methods=["PATCH"])
-@login_required_api
-@admin_required
+@require_admin
 def update_camera(cam_id):
     try:
         cam = Camera.get_by_id(cam_id)
@@ -262,7 +333,7 @@ def update_camera(cam_id):
         cam.rtsp_substream_url = (v or "").strip() or None
 
     if "recording_policy" in data:
-        if not _is_original_admin():
+        if not is_original_admin():
             return api_error("Only the original administrator can change recording settings.", 403)
         pol = (data.get("recording_policy") or "").strip().lower()
         if pol not in RECORDING_POLICIES:
@@ -274,7 +345,7 @@ def update_camera(cam_id):
 
     # Recording enable/disable is restricted and only allowed on main streams.
     if "recording_enabled" in data:
-        if not _is_original_admin():
+        if not is_original_admin():
             return api_error("Only the original administrator can change recording settings.", 403)
         if bool(data["recording_enabled"]) and not cam.name.endswith("-main"):
             return api_error("Recording is only supported on main streams.", 400)
@@ -285,23 +356,39 @@ def update_camera(cam_id):
         else:
             cam.recording_policy = "off"
 
+    if cam.rtsp_substream_url and not cam.name.endswith("-main"):
+        return api_error("rtsp_substream_url is only allowed on main streams (-main).", 400)
+    cam.stream_role = _stream_role_for_name(cam.name)
+    cam.paired_stream_name = _paired_stream_name(cam.name)
+
+    v_err = validate_stream_url_for_go2rtc(cam.rtsp_url)
+    if v_err:
+        return api_error(v_err, 400)
+    if cam.rtsp_substream_url:
+        s_err = validate_stream_url_for_go2rtc(cam.rtsp_substream_url)
+        if s_err:
+            return api_error(f"Substream: {s_err}", 400)
+
     cam.save()
 
     if old_name != cam.name:
         stream_delete(old_name)
+        old_pair = _paired_stream_name(old_name)
+        new_pair = _paired_stream_name(cam.name)
+        if old_pair and old_pair != new_pair:
+            stream_delete(old_pair)
     stream_sync(cam)
 
     nvr_map = {nvr.id: nvr for nvr in NVR.select()}
-    return api_response(camera_to_dict(cam, nvr_map), message="Camera updated.")
+    health = _get_stream_health_cached()
+    name_set = {r.name for r in Camera.select(Camera.name)}
+    return api_response(camera_to_dict(cam, nvr_map, health, name_set), message="Camera updated.")
 
 
 @bp.route("/<int:cam_id>/recording", methods=["POST"], strict_slashes=False)
-@login_required_api
+@require_admin
 def toggle_recording(cam_id):
-    """Enable/disable recording for a camera (restricted)."""
-    if not _is_original_admin():
-        return api_error("Only the original administrator can change recording settings.", 403)
-
+    """Enable/disable recording for a camera."""
     try:
         cam = Camera.get_by_id(cam_id)
     except Camera.DoesNotExist:
@@ -343,8 +430,7 @@ def toggle_recording(cam_id):
 
 
 @bp.route("/<int:cam_id>", methods=["DELETE"])
-@login_required_api
-@admin_required
+@require_admin
 def delete_camera(cam_id):
     try:
         cam = Camera.get_by_id(cam_id)
@@ -365,7 +451,7 @@ def delete_camera(cam_id):
 # ── Runtime endpoints ─────────────────────────────────────────────────────────
 
 @bp.route("/summary", methods=["GET"])
-@login_required_api
+@require_auth
 @camera_catalog_allowed
 def cameras_summary():
     """
@@ -385,8 +471,7 @@ def cameras_summary():
 
 
 @bp.route("/inventory", methods=["GET"])
-@login_required_api
-@admin_required
+@require_admin
 def cameras_inventory():
     """
     Admin-only extended list for Configuration → Camera management:
@@ -409,8 +494,7 @@ def cameras_inventory():
 
 
 @bp.route("/<int:cam_id>/source", methods=["GET"])
-@login_required_api
-@admin_required
+@require_admin
 def camera_source_secrets(cam_id):
     """Full RTSP URLs for editing (admin only)."""
     try:
@@ -429,7 +513,7 @@ def camera_source_secrets(cam_id):
 
 
 @bp.route("/<string:name>/status", methods=["GET"])
-@login_required_api
+@require_auth
 @live_playback_allowed
 def camera_status(name: str):
     """Returns status + metadata for a single camera."""
@@ -446,8 +530,8 @@ def camera_status(name: str):
     health = _get_stream_health_cached()
     online = camera_online_from_health_map(cam.name, health)
 
-    name_set = {r.name for r in Camera.select(Camera.name)}
-
+    all_names = {r.name for r in Camera.select(Camera.name)}
+    live_name, live_reason = _resolve_live_stream(cam, health, all_names)
     return api_response({
         "name": cam.name,
         "display_name": cam.display_name,
@@ -456,12 +540,15 @@ def camera_status(name: str):
         "recording_enabled": cam.recording_enabled,
         "recording_policy": getattr(cam, "recording_policy", None) or "continuous",
         "online": online,
-        "live_view_stream_name": _live_view_stream_name(cam, name_set),
+        "stream_role": getattr(cam, "stream_role", None) or _stream_role_for_name(cam.name),
+        "paired_stream_name": getattr(cam, "paired_stream_name", None) or _paired_stream_name(cam.name),
+        "live_view_stream_name": live_name,
+        "live_view_selection_reason": live_reason,
     })
 
 
 @bp.route("/<string:name>/streams", methods=["GET"])
-@login_required_api
+@require_auth
 @live_playback_allowed
 def camera_streams(name: str):
     """
@@ -478,15 +565,20 @@ def camera_streams(name: str):
     if allowed_names is not None and cam.name not in allowed_names:
         return api_error("Forbidden.", 403)
 
+    all_names = {c.name for c in Camera.select(Camera.name)}
+    health = _get_stream_health_cached()
+    live_key, live_reason = _resolve_live_stream(cam, health, all_names)
     return api_response({
-        "webrtc": f"/go2rtc/api/webrtc?src={name}",
-        "mse": f"/go2rtc/stream.mse?src={name}",
-        "hls": f"/go2rtc/stream.m3u8?src={name}",
-        "html": f"/go2rtc/stream.html?src={name}&mode=mse",
+        "stream_name": live_key,
+        "stream_selection_reason": live_reason,
+        "webrtc": f"/go2rtc/api/webrtc?src={live_key}",
+        "mse": f"/go2rtc/stream.mse?src={live_key}",
+        "hls": f"/go2rtc/stream.m3u8?src={live_key}",
+        "html": f"/go2rtc/stream.html?src={live_key}&mode=mse",
     })
 
 @bp.route("/<string:name>/stats", methods=["GET"])
-@login_required_api
+@require_auth
 @live_playback_allowed
 def camera_stats(name: str):
     """
@@ -508,19 +600,30 @@ def camera_stats(name: str):
         return api_error("Forbidden.", 403)
 
     try:
+        all_names = {c.name for c in Camera.select(Camera.name)}
+        health = _get_stream_health_cached()
+        live_key, live_reason = _resolve_live_stream(cam, health, all_names)
+
         streams = _fetch_go2rtc_streams()
-        info = streams.get(name)
+        info = streams.get(live_key) or streams.get(cam.name) or streams.get(name)
 
         if not info:
-            return api_response({
-                "online": False,
-                "producers": 0,
-                "consumers": 0,
-                "codec": None,
-                "resolution": None,
-                "bitrate_kbps": None,
-                "fps": None,
-            })
+            return api_response(
+                {
+                    "online": False,
+                    "producers": 0,
+                    "consumers": 0,
+                    "codec": None,
+                    "resolution": None,
+                    "bitrate_kbps": None,
+                    "fps": None,
+                    "live_view_stream_name": live_key,
+                    "live_view_warnings": [],
+                    "live_view_selection_reason": live_reason,
+                    "producer_type": None,
+                    "producer_url": None,
+                }
+            )
 
         producers = info.get("producers") or []
         consumers = info.get("consumers") or []
@@ -532,6 +635,8 @@ def camera_stats(name: str):
 
         if producers:
             video = producers[0].get("video") or {}
+            source = producers[0].get("url") or producers[0].get("source")
+            source_type = producers[0].get("type")
 
             codec = video.get("codec")
             width = video.get("width")
@@ -542,15 +647,33 @@ def camera_stats(name: str):
             if width and height:
                 resolution = f"{width}x{height}"
 
-        return api_response({
-            "online": len(producers) > 0,
-            "producers": len(producers),
-            "consumers": len(consumers),
-            "codec": codec,
-            "resolution": resolution,
-            "fps": fps,
-            "bitrate_kbps": bitrate,
-        })
+        warnings = _live_view_playback_warnings(codec)
+        producer_url = source if producers else None
+        producer_type = source_type if producers else None
+        source_text = f"{producer_type or ''} {producer_url or ''}".lower()
+        is_transcoded_live = any(x in source_text for x in ("ffmpeg", "exec:", "expr:", "echo:"))
+
+        return api_response(
+            {
+                "online": len(producers) > 0,
+                "producers": len(producers),
+                "consumers": len(consumers),
+                "codec": codec,
+                "resolution": resolution,
+                "fps": fps,
+                "bitrate_kbps": bitrate,
+                "live_view_stream_name": live_key,
+                "live_view_warnings": warnings,
+                "live_view_selection_reason": live_reason,
+                "producer_type": producer_type,
+                "producer_url": producer_url,
+                "is_transcoded_live": is_transcoded_live,
+                "benchmark_hint": {
+                    "target_test_minutes_per_mode": 3,
+                    "modes": ["webrtc", "mse", "hls"],
+                },
+            }
+        )
 
     except Exception as e:
         current_app.logger.warning(f"camera stats fetch failed for {name}: {e}")

@@ -14,21 +14,25 @@ Key improvements over the original:
 
 import os
 import requests
-from datetime import datetime, timedelta
-from flask import Blueprint, request, current_app, send_from_directory
+from datetime import datetime
+from flask import Blueprint, request, current_app
 from flask_login import current_user
+from app.config import get_recordings_dir
 from app.models import Recording, Camera
 from app.routes.api.utils import (
     api_response,
     api_error,
-    login_required_api,
-    admin_required,
+    require_auth,
+    require_admin,
     accessible_camera_names,
+    to_iso,
+    serve_mp4_file,
+    parse_timeline_params,
+    to_hms,
 )
 
 bp = Blueprint("api_recordings", __name__, url_prefix="/api/recordings")
 
-RECORDINGS_DIR = os.environ.get("RECORDINGS_DIR", "/recordings")
 # Docker: set to http://recorder:5055/status so the API can show recorder process status.
 RECORDER_INTERNAL_STATUS_URL = os.environ.get("RECORDER_INTERNAL_STATUS_URL", "").strip()
 
@@ -46,15 +50,6 @@ def _recordings_perm():
     return api_error("Recorded footage access is disabled for this account.", 403)
 
 
-def _to_iso(val):
-    """Convert a value to ISO string — handles both datetime objects and strings."""
-    if val is None:
-        return None
-    if isinstance(val, str):
-        return val
-    return val.isoformat()
-
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def recording_to_dict(rec: Recording) -> dict:
@@ -64,8 +59,8 @@ def recording_to_dict(rec: Recording) -> dict:
         "filename":         rec.filename,
         "file_size":        rec.file_size,
         "size_mb":          round(rec.file_size / (1024 * 1024), 1),
-        "started_at":       _to_iso(rec.started_at),
-        "ended_at":         _to_iso(rec.ended_at),
+        "started_at":       to_iso(rec.started_at),
+        "ended_at":         to_iso(rec.ended_at),
         "duration_seconds": rec.duration_seconds,
         "status":           rec.status,
         "download_url":     f"/api/recordings/{rec.camera_name}/{rec.filename}",
@@ -77,10 +72,17 @@ def _get_allowed_camera_names() -> set | None:
     return accessible_camera_names(current_user)
 
 
+def _main_stream_names() -> set[str]:
+    rows = Camera.select(Camera.name).where(
+        (Camera.name.endswith("-main")) | (Camera.stream_role == "main")
+    )
+    return {r.name for r in rows}
+
+
 # ── List recordings ──────────────────────────────────────────────────────────
 
 @bp.route("/", methods=["GET"])
-@login_required_api
+@require_auth
 def list_recordings():
     """
     List recordings with filtering and pagination.
@@ -101,6 +103,13 @@ def list_recordings():
     # Access control
     allowed_cameras = _get_allowed_camera_names()
     if allowed_cameras is not None and not allowed_cameras:
+        return api_response({"recordings": [], "total": 0})
+    main_names = _main_stream_names()
+    if allowed_cameras is None:
+        allowed_cameras = main_names
+    else:
+        allowed_cameras = set(allowed_cameras).intersection(main_names)
+    if not allowed_cameras:
         return api_response({"recordings": [], "total": 0})
 
     # Parse query params
@@ -158,53 +167,25 @@ def list_recordings():
 # ── Timeline (for playback UI) ───────────────────────────────────────────────
 
 @bp.route("/timeline", methods=["GET"])
-@login_required_api
+@require_auth
 def timeline():
     """
-    Returns a compact timeline of recording availability for one or more cameras.
+    Compact timeline of recording availability for one or more cameras.
     Designed for the playback UI timeline scrubber.
 
     Query params:
       camera  — camera name (required, can repeat for multiple cameras)
       date    — ISO date string, e.g. "2024-01-15" (default: today)
-
-    Returns: {
-      "date": "2024-01-15",
-      "cameras": {
-        "warehouse-ch1-main": [
-          {"start": "08:00:00", "end": "08:15:00", "filename": "...", "id": 1},
-          {"start": "08:15:00", "end": "08:30:00", "filename": "...", "id": 2},
-          ...
-        ]
-      }
-    }
     """
-    camera_names = request.args.getlist("camera")
-    date_str     = request.args.get("date")
-
+    result = parse_timeline_params()
+    if not isinstance(result, tuple):
+        return result
+    camera_names, target_date, day_start, day_end = result
+    main_names = _main_stream_names()
+    camera_names = [n for n in camera_names if n in main_names]
     if not camera_names:
-        return api_error("At least one 'camera' query param is required.", 400)
+        return api_error("Playback timeline is available for main streams only.", 400)
 
-    # Access control
-    allowed_cameras = _get_allowed_camera_names()
-    if allowed_cameras is not None:
-        camera_names = [c for c in camera_names if c in allowed_cameras]
-        if not camera_names:
-            return api_error("Access denied to the requested cameras.", 403)
-
-    # Parse date
-    if date_str:
-        try:
-            target_date = datetime.fromisoformat(date_str).date()
-        except ValueError:
-            return api_error("Invalid 'date' format. Use ISO 8601 (YYYY-MM-DD).", 400)
-    else:
-        target_date = datetime.now().date()
-
-    day_start = datetime.combine(target_date, datetime.min.time())
-    day_end   = day_start + timedelta(days=1)
-
-    # Query recordings for the day
     recs = (
         Recording.select()
         .where(
@@ -216,50 +197,24 @@ def timeline():
         .order_by(Recording.started_at.asc())
     )
 
-    # Group by camera
     cameras = {name: [] for name in camera_names}
     for rec in recs:
-        # started_at/ended_at may be strings (from raw SQL inserts) or datetimes
-        start_str = None
-        if rec.started_at:
-            if isinstance(rec.started_at, str):
-                # "2024-01-15 08:00:00" or "2024-01-15T08:00:00"
-                try:
-                    start_str = rec.started_at.split("T")[-1].split(" ")[-1][:8]
-                except Exception:
-                    start_str = rec.started_at
-            else:
-                start_str = rec.started_at.strftime("%H:%M:%S")
-
-        end_str = None
-        if rec.ended_at:
-            if isinstance(rec.ended_at, str):
-                try:
-                    end_str = rec.ended_at.split("T")[-1].split(" ")[-1][:8]
-                except Exception:
-                    end_str = rec.ended_at
-            else:
-                end_str = rec.ended_at.strftime("%H:%M:%S")
-
         cameras.setdefault(rec.camera_name, []).append({
             "id":       rec.id,
-            "start":    start_str,
-            "end":      end_str,
+            "start":    to_hms(rec.started_at),
+            "end":      to_hms(rec.ended_at),
             "filename": rec.filename,
             "size_mb":  round(rec.file_size / (1024 * 1024), 1),
             "duration": rec.duration_seconds,
         })
 
-    return api_response({
-        "date":    target_date.isoformat(),
-        "cameras": cameras,
-    })
+    return api_response({"date": target_date.isoformat(), "cameras": cameras})
 
 
 # ── Available dates (for date picker) ────────────────────────────────────────
 
 @bp.route("/dates", methods=["GET"])
-@login_required_api
+@require_auth
 def available_dates():
     """
     Returns a list of dates that have recordings for a given camera.
@@ -277,6 +232,12 @@ def available_dates():
     allowed_cameras = _get_allowed_camera_names()
     if allowed_cameras is not None and camera_name not in allowed_cameras:
         return api_error("Access denied.", 403)
+    cam = Camera.get_or_none(Camera.name == camera_name)
+    if cam is None:
+        return api_error("Camera not found.", 404)
+    role = getattr(cam, "stream_role", None) or ("sub" if cam.name.endswith("-sub") else "main")
+    if role != "main":
+        return api_error("Playback dates are available for main streams only.", 400)
 
     month_str = request.args.get("month")
     if month_str:
@@ -319,38 +280,22 @@ def available_dates():
 # ── Serve recording file ─────────────────────────────────────────────────────
 
 @bp.route("/<camera_name>/<filename>", methods=["GET"])
-@login_required_api
+@require_auth
 def serve_recording(camera_name, filename):
     """Serve a recording file for download or in-browser playback."""
-    # Sanitize — prevent path traversal
-    if ".." in camera_name or ".." in filename:
-        return api_error("Invalid path.", 400)
-    if not filename.endswith(".mp4"):
-        return api_error("Invalid file type.", 400)
-
-    # Access control — resolve camera to its NVR
-    allowed_cameras = _get_allowed_camera_names()
-    if allowed_cameras is not None and camera_name not in allowed_cameras:
-        return api_error("Access denied.", 403)
-
-    cam_dir = os.path.join(RECORDINGS_DIR, camera_name)
-    filepath = os.path.join(cam_dir, filename)
-    if not os.path.isfile(filepath):
-        return api_error("Recording not found.", 404)
-
-    return send_from_directory(
-        cam_dir,
-        filename,
-        as_attachment=False,  # allows in-browser playback via <video> tag
-        mimetype="video/mp4",
-    )
+    cam = Camera.get_or_none(Camera.name == camera_name)
+    if cam is None:
+        return api_error("Camera not found.", 404)
+    role = getattr(cam, "stream_role", None) or ("sub" if cam.name.endswith("-sub") else "main")
+    if role != "main":
+        return api_error("Playback files are available for main streams only.", 400)
+    return serve_mp4_file(get_recordings_dir(), camera_name, filename)
 
 
 # ── Delete a recording ───────────────────────────────────────────────────────
 
 @bp.route("/<int:recording_id>", methods=["DELETE"])
-@login_required_api
-@admin_required
+@require_admin
 def delete_recording(recording_id):
     """Delete a single recording segment (file + DB record)."""
     try:
@@ -372,8 +317,7 @@ def delete_recording(recording_id):
 # ── Bulk delete by camera + date range ────────────────────────────────────────
 
 @bp.route("/bulk-delete", methods=["POST"])
-@login_required_api
-@admin_required
+@require_admin
 def bulk_delete():
     """
     Delete recordings in a date range for a camera.
@@ -389,6 +333,12 @@ def bulk_delete():
 
     if not camera_name:
         return api_error("camera_name is required.", 400)
+    cam = Camera.get_or_none(Camera.name == camera_name)
+    if cam is None:
+        return api_error("Camera not found.", 404)
+    role = getattr(cam, "stream_role", None) or ("sub" if cam.name.endswith("-sub") else "main")
+    if role != "main":
+        return api_error("Bulk delete is only supported for main stream recordings.", 400)
 
     query = Recording.select().where(Recording.camera_name == camera_name)
 
@@ -422,19 +372,6 @@ def bulk_delete():
 
 # ── Storage stats ─────────────────────────────────────────────────────────────
 
-def _resolved_recordings_dir():
-    """DB `recordings_dir` (settings) then env — matches recorder/processor volume."""
-    try:
-        from app.routes.api.recording_settings import get_setting
-
-        p = (get_setting("recordings_dir") or "").strip()
-        if p.startswith("/"):
-            return p
-    except Exception:
-        pass
-    return os.environ.get("RECORDINGS_DIR", RECORDINGS_DIR)
-
-
 def _scan_mp4_folder(folder):
     """Non-recursive MP4 count/size under folder. Returns (count, bytes, oldest, newest)."""
     cam_count = 0
@@ -464,15 +401,13 @@ def _scan_mp4_folder(folder):
 
 
 @bp.route("/storage", methods=["GET"])
-@login_required_api
+@require_auth
 def storage_stats():
     """
     Filesystem-backed stats: rolling segments under <dir>/<camera>/ and motion clips
     under <dir>/clips/<camera>/ (events_only). Uses the same recordings path as settings.
     """
-    import shutil
-
-    recordings_dir = _resolved_recordings_dir()
+    recordings_dir = get_recordings_dir()
     by_cam = {}
     total_segment_files = 0
     total_clip_files = 0
@@ -540,18 +475,7 @@ def storage_stats():
         row["total_gb"] = round(tb / (1024**3), 2) if tb else 0.0
         cameras.append(row)
 
-    disk = None
-    if os.path.exists(recordings_dir):
-        try:
-            usage = shutil.disk_usage(recordings_dir)
-            disk = {
-                "total_gb": round(usage.total / (1024**3), 2),
-                "used_gb":  round(usage.used / (1024**3), 2),
-                "free_gb":  round(usage.free / (1024**3), 2),
-                "percent_used": round(usage.used / usage.total * 100, 1),
-            }
-        except OSError:
-            pass
+    from app.services.disk_usage import get_disk_usage
 
     return api_response({
         "recordings_dir":  recordings_dir,
@@ -561,14 +485,14 @@ def storage_stats():
         "total_files":     total_segment_files + total_clip_files,
         "total_gb":        round(all_bytes / (1024**3), 2),
         "total_bytes":     all_bytes,
-        "disk":            disk,
+        "disk":            get_disk_usage(recordings_dir),
     })
 
 
 # ── Recording engine status ──────────────────────────────────────────────────
 
 @bp.route("/engine/status", methods=["GET"])
-@login_required_api
+@require_auth
 def engine_status():
     """Returns the current status of the recording engine (processes, storage, config)."""
     from app.recorder import engine
@@ -603,8 +527,7 @@ def engine_status():
 
 
 @bp.route("/reconcile-storage", methods=["POST"])
-@login_required_api
-@admin_required
+@require_admin
 def reconcile_storage():
     """
     Remove database rows for segment/event files that no longer exist on disk.
@@ -620,8 +543,7 @@ def reconcile_storage():
 
 
 @bp.route("/engine/rescan", methods=["POST"])
-@login_required_api
-@admin_required
+@require_admin
 def force_rescan():
     """
     Force an immediate segment scan and return what was found.
@@ -649,9 +571,8 @@ def force_rescan():
     after_count = Recording.select().count()
 
     # Also report what's on disk
-    import os
     disk_report = {}
-    recordings_dir = os.environ.get("RECORDINGS_DIR", "/recordings")
+    recordings_dir = get_recordings_dir()
     if os.path.exists(recordings_dir):
         for cam_name in sorted(os.listdir(recordings_dir)):
             cam_dir = os.path.join(recordings_dir, cam_name)
@@ -683,8 +604,7 @@ def force_rescan():
 # ── RTSP Diagnostics ─────────────────────────────────────────────────────────
 
 @bp.route("/diagnose/<int:cam_id>", methods=["POST"])
-@login_required_api
-@admin_required
+@require_admin
 def diagnose_camera(cam_id):
     """
     Test whether FFmpeg can connect to a camera's RTSP stream.
@@ -715,8 +635,7 @@ def diagnose_camera(cam_id):
 
 
 @bp.route("/diagnose/url", methods=["POST"])
-@login_required_api
-@admin_required
+@require_admin
 def diagnose_url():
     """
     Test any RTSP URL directly (doesn't need to be a saved camera).
@@ -737,44 +656,3 @@ def diagnose_url():
 
     result = RecordingEngine.test_rtsp(rtsp_url)
     return api_response(result)
-
-@bp.route("/timeline/<string:camera>", methods=["GET"])
-@login_required_api
-def recording_timeline(camera):
-    """
-    Returns time ranges where recordings exist for a camera.
-
-    Used by the frontend to render a playback timeline.
-    """
-
-    start = request.args.get("start")
-    end = request.args.get("end")
-
-    if not start or not end:
-        return api_error("start and end query parameters are required.")
-
-    try:
-        segments = (
-            Recording
-            .select()
-            .where(
-                (Recording.camera == camera) &
-                (Recording.start_time >= start) &
-                (Recording.end_time <= end)
-            )
-            .order_by(Recording.start_time)
-        )
-    except Exception as e:
-        current_app.logger.warning(f"timeline query failed: {e}")
-        return api_error("Unable to query recordings.", 500)
-
-    timeline = []
-
-    for seg in segments:
-        timeline.append({
-            "start": seg.start_time,
-            "end": seg.end_time,
-            "duration": (seg.end_time - seg.start_time).total_seconds()
-        })
-
-    return api_response(timeline)

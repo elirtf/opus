@@ -28,7 +28,7 @@
 ### Streaming
 ### Devices & Configuration
 
-Sites (legacy NVR import), camera list, and **Configuration** (system info, diagnostics, per-site stream table with RTSP edit).
+Sites (legacy NVR import), camera list, and **Configuration** (system info, **Settings** / go2rtc + recording options, diagnostics, per-site stream table with RTSP edit).
 ### Authentication & Access Control
 
 ---
@@ -64,7 +64,9 @@ cd opus
 # 2. Create your environment file
 # Edit .env and set SECRET_KEY, and optionally GO2RTC_URL
       # GO2RTC_URL=http://go2rtc:1984 (Default)
+      # GO2RTC_CONFIG_PATH=/config/go2rtc.yaml (Default — Opus writes this from Configuration → Settings)
       # GO2RTC_RTSP_URL=rtsp://go2rtc:8554 (Default)
+      # GO2RTC_ALLOW_ARBITRARY_EXEC=false (Optional — overrides UI “allow exec sources” when set)
       # SECRET_KEY=secret-key
       # Optional: comma-separated browser origins for split-host UIs (enables flask-cors)
       # CORS_ORIGINS=https://app.example.com,http://localhost:5173
@@ -77,13 +79,21 @@ The app will be available at **http://localhost**.
 
 You do **not** need Node.js or `npm` on your PC for this — the Docker build installs frontend dependencies and produces the UI inside the image. Run `npm install` / `npm run dev` in `frontend` only when you are **developing or testing the web UI yourself** (especially **mobile**: layout, PWA, live view on a phone). See [docs/DEV_WORKFLOW.md](docs/DEV_WORKFLOW.md) for that optional workflow.
 
-### Default Login
+### Remote access
 
-| Username | Password | Role |
-|---|---|---|
-| admin | admin | admin |
+**Off-site / phones:** use a **mesh VPN** (e.g. Tailscale) so devices reach Opus privately — see **[docs/remote-viewing.md](docs/remote-viewing.md)**. Before release, run **[docs/MOBILE_QA_v1.md](docs/MOBILE_QA_v1.md)** with VPN on and cellular data.
 
-> **Change this immediately** after first login. Until you change it in the app, it stays **`admin` / `admin`** (your data is in `./instance`, not wiped by rebuilds). If you see the login page again after an update, your session simply expired — sign in with the same credentials.
+### Operational alerts
+
+Background checks can **POST JSON** to `ALERT_WEBHOOK_URL` and/or send **email** via SMTP (`ALERT_SMTP_HOST`, `ALERT_EMAIL_FROM`, `ALERT_EMAIL_TO`, optional `ALERT_SMTP_USER` / `ALERT_SMTP_PASSWORD`). Email uses the same payloads as the webhook, so lock-screen notifications come from the mail app users already have. See commented variables in `docker-compose.yml` and the module docstring in `app/ops_alerts.py`.
+
+### First-time Setup
+
+On a **fresh database** (no user accounts), the UI sends you to **`/setup`** to create the administrator username and password. Passwords are stored with **bcrypt**. There are **no baked-in default credentials**.
+
+If `SECRET_KEY` is not set in `.env`, Opus writes a random key to **`instance/.flask_secret_key`** (next to the SQLite file) so the API container can start without manual env editing.
+
+If you see the login page again after an update, the session usually expired — sign in with the same credentials you created at setup.
 
 ---
 
@@ -108,11 +118,12 @@ IP Camera (RTSP)
 
 Opus can record **continuously** (full timeline retention) or in **Events** mode (motion-triggered clips). For Events mode:
 
-- Run the **`processor`** service from Docker Compose (`app.processing_service`). By default it samples the **sub** stream for motion when one exists (lower CPU); **clips** are still captured from **main** (`-c:v copy`). Set **`MOTION_RTSP_MODE=main`** on the processor to force full-res motion sampling. Clips live under `RECORDINGS_DIR/clips/`. Use the **Recordings → Events** tab (playback). **Live view** also prefers **sub** when configured — see [docs/mainstream-substream.md](docs/mainstream-substream.md).
+- Run the **`processor`** service from Docker Compose (`app.processing_service`). By default it samples the **sub** stream for motion when one exists (lower CPU); **clips** are still captured from **main** (`-c:v copy`). Set **`MOTION_RTSP_MODE=main`** on the processor to force full-res motion sampling. Clips live under `RECORDINGS_DIR/clips/`. Use the **Recordings → Events** tab (playback). **Live view** also prefers **sub** when configured.
 - Choose the mode per camera under **Recordings → Settings → Camera Recording**: **Off**, **Continuous**, or **Events (motion)**. You can also set `recording_policy` to `events_only` or `continuous` via `PATCH /api/cameras/<id>`.
 - **By default, Events mode does not run 24/7 segment recording** (no always-on FFmpeg writer for those cameras), so the **Playback** timeline stays empty for them — footage lives under **Events** as motion clips. Opus does **not** read camera/NVR “motion only” flags; it decides motion in software using the processor. If you want a **rolling segment buffer** on disk for pre-roll (like a traditional NVR), set **`EVENTS_ONLY_RECORD_SEGMENTS=1`** (or `true` / `yes` / `on`) on the **`recorder`** service — any other value leaves Events as **clip-only** (see [docker-compose.yml](docker-compose.yml) and [docs/hardware-sizing.md](docs/hardware-sizing.md)).
 - Tune behavior with environment variables on the `processor` (and shared retention settings): see [docs/hardware-sizing.md](docs/hardware-sizing.md) for `PROCESSING_POLL_SECONDS`, `CLIP_SECONDS`, `MOTION_COOLDOWN_SECONDS`, `MOTION_RTSP_MODE`, `EVENTS_ONLY_BUFFER_HOURS`, `CLIP_RETENTION_DAYS`, and related notes.
 - If you record through the **go2rtc RTSP relay** (`GO2RTC_RTSP_URL`), use the **same** URL on both the **`recorder`** and **`processor`** services so segments, motion sampling, and clips refer to the same paths (details in [docker-compose.yml](docker-compose.yml)).
+- **Clip timing:** Under **Recordings → Settings**, configure **core** capture length, optional **post-roll** (extra seconds after the trigger), **pre-roll** (up to 15s from the latest completed segment file when segment files exist), poll interval, and cooldown. The same values can be set via environment variables on the **`processor`** service (`CLIP_SECONDS`, `CLIP_PRE_SECONDS`, `CLIP_POST_SECONDS`, etc.); DB settings override env when set in the UI. True “seconds before motion” without any buffer is not possible from live RTSP alone — pre-roll uses recorded segments when available.
 
 ---
 
@@ -120,18 +131,14 @@ Opus can record **continuously** (full timeline retention) or in **Events** mode
 
 | Doc | Topic |
 |-----|--------|
-| [docs/certified-cameras.md](docs/certified-cameras.md) | Minimal certified list + short regression checklist |
-| [docs/hardware-sizing.md](docs/hardware-sizing.md) | Bitrate → storage, tiers, filesystems, retention env vars |
-| [docs/streaming-playback.md](docs/streaming-playback.md) | HLS/DASH/WebRTC vs go2rtc + MP4, browser notes |
-| [docs/deployment-profiles.md](docs/deployment-profiles.md) | Pi / NUC / workstation / hosted env defaults |
-| [docs/hw-diagnostics-spec.md](docs/hw-diagnostics-spec.md) | Admin `GET /api/health/diagnostics` JSON schema |
-| [docs/nvr-replacement-lab.md](docs/nvr-replacement-lab.md) | Lab tracks and migration validation |
-| [docs/hosted-ops-outline.md](docs/hosted-ops-outline.md) | Rented-appliance ops outline |
-| [docs/DEV_WORKFLOW.md](docs/DEV_WORKFLOW.md) | Local dev: Windows vs WSL/Linux, Compose vs split loop, Makefile |
-| [docs/mainstream-substream.md](docs/mainstream-substream.md) | Main vs sub streams: recording, motion, live view |
-| [docs/operations.md](docs/operations.md) | Webhook alerts, backup/restore, DR notes |
-| [docs/remote-viewing.md](docs/remote-viewing.md) | Watching Opus from **outside the local network** (HTTPS, VPN, tunnel, or port forward) |
-| [mobile/README.md](mobile/README.md) | Optional **App Store / Play** wrapper around the same Opus website |
+| [docs/certified-cameras.md](docs/certified-cameras.md) | Certified list + regression checklist |
+| [docs/hardware-sizing.md](docs/hardware-sizing.md) | Storage, retention, processor/recorder env notes |
+| [docs/nvr-replacement-lab.md](docs/nvr-replacement-lab.md) | Migration / lab validation |
+| [docs/DEV_WORKFLOW.md](docs/DEV_WORKFLOW.md) | Local dev: Compose vs split loop, Makefile |
+| [docs/remote-viewing.md](docs/remote-viewing.md) | **Remote viewing (VPN-first)** + optional public URL |
+| [docs/MOBILE_QA_v1.md](docs/MOBILE_QA_v1.md) | Mobile QA before release |
+| [docs/PRODUCT_SCOPE_V1.md](docs/PRODUCT_SCOPE_V1.md) | v1.0 scope summary |
+| [mobile/README.md](mobile/README.md) | Optional App Store / Play wrapper |
 
 ---
 

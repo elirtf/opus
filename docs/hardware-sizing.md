@@ -115,4 +115,4 @@ Documented in [docker-compose.yml](../docker-compose.yml) comments and recorder 
 2. `ffprobe -v error -show_entries format=bit_rate -of default=noprint_wrappers=1:nokey=1 <file.mp4>` on a segment.
 3. Under load, watch `iostat -x 1` (disk) and CPU per `ffmpeg` PID.
 
-See also [deployment-profiles.md](deployment-profiles.md), [streaming-playback.md](streaming-playback.md), and [operations.md](operations.md) (ops snapshot, webhook alerts, backup/DR).
+See also [certified-cameras.md](certified-cameras.md), [remote-viewing.md](remote-viewing.md), and [nvr-replacement-lab.md](nvr-replacement-lab.md).

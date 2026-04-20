@@ -3,14 +3,17 @@ import { useNavigate, useParams } from "react-router-dom";
 import LivePlayer from "../components/player/LivePlayer";
 import Spinner from "../components/Spinner";
 import { camerasApi } from "../api/cameras";
+import { cameraPagePlaybackMode, getPlaybackModeOverride, setPlaybackModeOverride } from "../utils/streamPlayback";
 
 export default function CameraView() {
   const { name } = useParams();
   const navigate = useNavigate();
 
   const [cam, setCam] = useState(null);
+  const [streamStats, setStreamStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
+  const [modeOverride, setModeOverride] = useState(getPlaybackModeOverride());
 
   useEffect(() => {
     let alive = true;
@@ -19,9 +22,13 @@ export default function CameraView() {
       try {
         setLoading(true);
 
-        // Prefer summary because it includes nvr_name, recording_enabled, online, etc.
-        const all = await camerasApi.summary();
+        const [all, st] = await Promise.all([
+          camerasApi.summary(),
+          camerasApi.stats(name).catch(() => null),
+        ]);
         if (!alive) return;
+
+        setStreamStats(st);
 
         const found = all.find((c) => c.name === name);
         if (found) {
@@ -30,17 +37,18 @@ export default function CameraView() {
           return;
         }
 
-        // Fallback: status endpoint if not in summary for any reason
-        const st = await camerasApi.status(name);
+        const status = await camerasApi.status(name);
         if (!alive) return;
 
         setCam({
           id: null,
-          name: st.name,
-          display_name: st.display_name,
+          name: status.name,
+          display_name: status.display_name,
           nvr_name: null,
-          recording_enabled: st.recording_enabled,
-          online: st.online,
+          recording_enabled: status.recording_enabled,
+          online: status.online,
+          live_view_stream_name: status.live_view_stream_name,
+          live_view_selection_reason: status.live_view_selection_reason,
         });
 
         setErr(null);
@@ -85,6 +93,9 @@ export default function CameraView() {
     .replace(" — ", " ")
     .replace(" Main", "");
 
+  const liveWarnings = streamStats?.live_view_warnings;
+  const playbackMode = modeOverride === "auto" ? cameraPagePlaybackMode(streamStats) : modeOverride;
+
   return (
     <div className="flex flex-col h-full">
       <div className="px-4 py-2.5 bg-gray-900 border-b border-gray-800 flex items-center justify-between shrink-0">
@@ -107,39 +118,72 @@ export default function CameraView() {
           )}
         </div>
 
-        {cam && (
-          <button
-            onClick={() => {
-              const today = new Date();
-              const yyyy = today.getFullYear();
-              const mm = String(today.getMonth() + 1).padStart(2, "0");
-              const dd = String(today.getDate()).padStart(2, "0");
-              const dateStr = `${yyyy}-${mm}-${dd}`;
-
-              // Navigate to recordings page with this camera and date pre-selected
-              navigate(
-                `/recordings?camera=${encodeURIComponent(
-                  cam.name
-                )}&date=${dateStr}`
-              );
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-gray-400">Mode</label>
+          <select
+            value={modeOverride}
+            onChange={(e) => {
+              const v = setPlaybackModeOverride(e.target.value);
+              setModeOverride(v);
             }}
-            className="text-xs px-3 py-1.5 rounded border border-indigo-500 text-indigo-200 hover:bg-indigo-500/10 transition-colors"
+            className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200"
+            title="Saved in this browser (opus_live_playback_mode). Applies to dashboard tiles too. If live is choppy, try WebRTC; if the stream fails (e.g. H.265), try MSE or HLS."
           >
-            View recordings
-          </button>
-        )}
+            <option value="auto">Auto</option>
+            <option value="webrtc">WebRTC</option>
+            <option value="mse">MSE</option>
+            <option value="hls">HLS</option>
+          </select>
+          {cam && (
+            <button
+              onClick={() => {
+                const today = new Date();
+                const yyyy = today.getFullYear();
+                const mm = String(today.getMonth() + 1).padStart(2, "0");
+                const dd = String(today.getDate()).padStart(2, "0");
+                const dateStr = `${yyyy}-${mm}-${dd}`;
+
+                navigate(
+                  `/recordings?camera=${encodeURIComponent(
+                    cam.name
+                  )}&date=${dateStr}`
+                );
+              }}
+              className="text-xs px-3 py-1.5 rounded border border-indigo-500 text-indigo-200 hover:bg-indigo-500/10 transition-colors"
+            >
+              View recordings
+            </button>
+          )}
+        </div>
       </div>
+
+      {Array.isArray(liveWarnings) && liveWarnings.length > 0 && (
+        <div className="shrink-0 px-4 py-2.5 bg-amber-950/50 border-b border-amber-900/80 text-amber-100 text-xs leading-relaxed space-y-1">
+          {liveWarnings.map((w) => (
+            <p key={w.code}>{w.message}</p>
+          ))}
+        </div>
+      )}
+      {streamStats && (
+        <div className="shrink-0 px-4 py-2 bg-gray-900/70 border-b border-gray-800 text-[11px] text-gray-400 flex flex-wrap gap-x-4 gap-y-1">
+          <span>mode: {playbackMode}</span>
+          <span>codec: {streamStats.codec || "unknown"}</span>
+          <span>fps: {streamStats.fps ?? "—"}</span>
+          <span>source: {streamStats.producer_type || "unknown"}</span>
+          {streamStats.is_transcoded_live && <span className="text-amber-300">transcoding detected</span>}
+        </div>
+      )}
 
       <div className="flex-1 bg-black min-h-0">
         {/*
-          MSE over HTTP works through nginx; WebRTC often hits ICE failures behind Docker/NAT
-          unless go2rtc advertises reachable candidates or TURN is configured.
-          Substream live preview matches the dashboard (lower bitrate).
+          Desktop: WebRTC for lower latency unless go2rtc stats report HEVC (then MSE).
+          Touch / narrow: same auto path as dashboard (HLS). Substream matches dashboard.
         */}
         <LivePlayer
           cameraName={cam.name}
           streamName={cam.live_view_stream_name}
           enabled={true}
+          playbackMode={playbackMode}
         />
       </div>
     </div>

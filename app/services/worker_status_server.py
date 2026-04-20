@@ -1,4 +1,4 @@
-"""Tiny HTTP JSON /status for the recorder process."""
+"""Generic HTTP /status server for worker processes (recorder, processor)."""
 
 from __future__ import annotations
 
@@ -7,8 +7,24 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 
-def start_recorder_status_server(engine, host: str = "0.0.0.0", port: int = 5055):
+def start_worker_status_server(
+    engine,
+    *,
+    port: int,
+    worker_name: str,
+    default_payload: dict | None = None,
+    host: str = "0.0.0.0",
+) -> HTTPServer:
+    """
+    Spin up a tiny HTTP server on *port* that responds to ``GET /status``
+    with the engine's ``get_status()`` dict (plus ``reported_by``).
+
+    *default_payload* is returned when the engine ref is None or not yet
+    initialised — each worker can supply its own shape so callers get a
+    predictable JSON schema even during startup.
+    """
     eng = engine
+    fallback = default_payload or {"engine_running": False, "message": "Engine not initialized"}
 
     class _Handler(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -18,15 +34,9 @@ def start_recorder_status_server(engine, host: str = "0.0.0.0", port: int = 5055
                 self.end_headers()
                 return
             try:
-                payload = eng.get_status() if eng else {
-                    "engine_running": False,
-                    "active_recordings": 0,
-                    "total_processes": 0,
-                    "processes": {},
-                    "message": "Engine not initialized",
-                }
+                payload = eng.get_status() if eng else dict(fallback)
                 payload = dict(payload)
-                payload["reported_by"] = "recorder_process"
+                payload["reported_by"] = f"{worker_name}_process"
                 body = json.dumps(payload).encode("utf-8")
             except Exception as exc:
                 body = json.dumps({"engine_running": False, "error": str(exc)}).encode("utf-8")
@@ -40,6 +50,10 @@ def start_recorder_status_server(engine, host: str = "0.0.0.0", port: int = 5055
             pass
 
     httpd = HTTPServer((host, port), _Handler, bind_and_activate=True)
-    thread = threading.Thread(target=httpd.serve_forever, daemon=True, name="recorder-status-http")
+    thread = threading.Thread(
+        target=httpd.serve_forever,
+        daemon=True,
+        name=f"{worker_name}-status-http",
+    )
     thread.start()
     return httpd

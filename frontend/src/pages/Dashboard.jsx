@@ -4,13 +4,23 @@ import { camerasApi } from '../api/cameras'
 import { healthApi } from '../api/health'
 import Spinner from '../components/Spinner'
 import LivePlayer from '../components/player/LivePlayer'
+import { useLiveStreamGate } from '../hooks/useLiveStreamGate'
 import { useAuth } from '../context/AuthContext'
 import { compareCamerasByDisplayName } from '../utils/naturalCompare'
+import { getPlaybackModeOverride } from '../utils/streamPlayback'
 
 const GRID_SIZES = [3, 4, 6]
 const HEALTH_POLL_MS = 30000
 
-/** 'all' | 'problems' | 'offlineFirst' */
+// Max dashboard tiles allowed to run a live decoder simultaneously. The gate in
+// useLiveStreamGate enforces this to avoid overwhelming slow devices; the number
+// is NOT a browser HTTP limit. MSE/WebRTC go over WebSocket whose per-origin
+// budget is in the hundreds (Chrome ~255, Firefox ~200). Previously 6 — which
+// capped the dashboard at the first 6 tiles on a 3×3 (9) / 4×4 (16) / 6×6 (36)
+// grid. 24 covers 3×3 and 4×4 in full and still leaves headroom for browser
+// tab + LivePlayer fallback chain connections.
+const MAX_CONCURRENT_LIVE_DECODERS = 24
+
 const VIEW_MODES = [
   { id: 'all', label: 'All' },
   { id: 'problems', label: 'Problems' },
@@ -18,7 +28,9 @@ const VIEW_MODES = [
 ]
 
 function liveStreamName(cam) {
-  return cam.live_view_stream_name || cam.name.replace('-main', '-sub')
+  if (cam.live_view_stream_name) return cam.live_view_stream_name
+  // No server hint: do not assume a sub stream exists (many cameras are main-only).
+  return cam.name
 }
 
 function isProblemCamera(health, cam) {
@@ -45,6 +57,12 @@ function StatusDot({ online }) {
 }
 
 function CameraTile({ cam, streamName, online, onClick }) {
+  const { containerRef, enabled: streamEnabled } = useLiveStreamGate({
+    // Tight viewport: avoid marking many off-screen tiles as "visible" (would open too many go2rtc sessions).
+    rootMargin: '0px',
+    maxConcurrentLiveDecoders: MAX_CONCURRENT_LIVE_DECODERS,
+  })
+
   const label = cam.display_name
     .replace(' — ', ' ')
     .replace(' Main', '')
@@ -52,6 +70,7 @@ function CameraTile({ cam, streamName, online, onClick }) {
 
   return (
     <div
+      ref={containerRef}
       className="bg-black overflow-hidden relative flex flex-col cursor-pointer group"
       onClick={onClick}
     >
@@ -62,7 +81,7 @@ function CameraTile({ cam, streamName, online, onClick }) {
         </div>
       )}
 
-      {/* Hover overlay — fullscreen hint */}
+      {/* Hover overlay */}
       <div className="absolute inset-0 z-10 bg-black/0 group-hover:bg-black/30 transition-colors duration-150 motion-reduce:transition-none motion-reduce:duration-0 flex items-center justify-center">
         <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-150 motion-reduce:transition-none motion-reduce:duration-0 bg-black/60 rounded-full p-2">
           <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -72,15 +91,14 @@ function CameraTile({ cam, streamName, online, onClick }) {
         </div>
       </div>
 
-      {/* Stream — HLS on touch / narrow viewports, MSE iframe on desktop */}
+      {/* Stream */}
       <div className="relative w-full" style={{ paddingBottom: '56.25%' }}>
         <div className="absolute inset-0 overflow-hidden">
-          {/* HLS tiles: go2rtc stream.html always enables native video controls (bad on Mac/Safari). */}
           <LivePlayer
             cameraName={cam.name}
             streamName={streamName}
-            enabled={true}
-            playbackMode="hls"
+            enabled={streamEnabled}
+            playbackMode={getPlaybackModeOverride()}
             nativeVideoControls={false}
             className="h-full"
           />
@@ -210,6 +228,7 @@ export default function Dashboard() {
           )}
         </div>
         <div className="flex flex-wrap items-center gap-2 justify-end">
+          {/* Status filter */}
           <div
             className="flex items-center bg-gray-800 rounded-lg p-0.5"
             role="group"
@@ -235,6 +254,7 @@ export default function Dashboard() {
               </button>
             ))}
           </div>
+
           {/* Grid size */}
           <div className="flex items-center bg-gray-800 rounded-lg p-0.5">
             {GRID_SIZES.map(s => (
@@ -250,7 +270,7 @@ export default function Dashboard() {
             ))}
           </div>
 
-          {/* Pagination — only show when needed */}
+          {/* Pagination */}
           {pages > 1 && (
             <div className="flex items-center gap-1">
               <button

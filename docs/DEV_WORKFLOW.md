@@ -84,9 +84,9 @@ Never remove the **`recordings`** volume unless you mean to delete footage.
 
 ## Login after an update
 
-The **`admin` / `admin`** account stays on whatever password you last set. If you never changed it in the app, it is still **`admin` / `admin`**. Rebuilding or `git pull` does not reset that — your database lives in **`./instance`**, not inside the image.
+New installs use **`/setup`** to create the first admin account (no default password in the image). Your users and passwords live in **`./instance`**, not inside the image — rebuilding or `git pull` does not reset them.
 
-You might **see the login page again** after an update. That usually means your **browser session ended** (for example if **`SECRET_KEY`** in `.env` changed). Sign in again with the **same** username and password as before — for most people that is still **`admin` / `admin`**.
+If you **see the login page again** after an update, the browser session usually ended (for example if **`SECRET_KEY`** changed). Sign in again with the same credentials. When `SECRET_KEY` is unset, Opus persists a random key under **`instance/.flask_secret_key`**.
 
 ---
 
@@ -130,6 +130,8 @@ python -m venv .venv
 pip install -r requirements.txt
 $env:SECRET_KEY = "dev"
 $env:GO2RTC_URL = "http://127.0.0.1:1984"
+# Optional: write generated go2rtc.yaml under ./go2rtc (matches Docker mount)
+$env:GO2RTC_CONFIG_PATH = Join-Path (Get-Location) "go2rtc\go2rtc.yaml"
 python run.py
 ```
 
@@ -141,6 +143,8 @@ source .venv/bin/activate
 pip install -r requirements.txt
 export SECRET_KEY=dev
 export GO2RTC_URL=http://127.0.0.1:1984
+# Optional: same path Docker uses for generated go2rtc.yaml
+export GO2RTC_CONFIG_PATH="$(pwd)/go2rtc/go2rtc.yaml"
 python run.py
 ```
 

@@ -1,14 +1,15 @@
 """
 Host/container snapshot for admin diagnostics (CPU, RAM, /dev/dri, FFmpeg -hwaccels).
-See docs/hw-diagnostics-spec.md for the JSON schema.
+Returned JSON is consumed by GET /api/health/diagnostics and the Configuration UI.
 """
 
 import os
 import platform
-import shutil
 import subprocess
 
+from app.config import get_recordings_dir
 from app.ffmpeg_config import get_video_pipeline_summary
+from app.services.disk_usage import get_disk_usage
 
 
 def _mem_total_kb_linux():
@@ -42,7 +43,7 @@ def _parse_ffmpeg_hwaccels(combined_output: str):
 
 
 def collect_host_diagnostics():
-    recordings_dir = os.environ.get("RECORDINGS_DIR", "/recordings")
+    recordings_dir = get_recordings_dir()
 
     out = {
         "schema_version": "1",
@@ -62,17 +63,12 @@ def collect_host_diagnostics():
     if mem_kb is not None:
         out["mem_total_kb"] = mem_kb
 
-    try:
-        du = shutil.disk_usage(recordings_dir)
-        gb = 1024**3
-        out["recordings_disk"] = {
-            "total_gb": round(du.total / gb, 2),
-            "used_gb": round((du.total - du.free) / gb, 2),
-            "free_gb": round(du.free / gb, 2),
-        }
-    except OSError as e:
+    disk = get_disk_usage(recordings_dir)
+    if disk is not None:
+        out["recordings_disk"] = disk
+    else:
         out["recordings_disk"] = None
-        out["recordings_disk_error"] = str(e)
+        out["recordings_disk_error"] = "Unable to read disk usage"
 
     try:
         proc = subprocess.run(

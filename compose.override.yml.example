@@ -8,4 +8,17 @@
 #     environment:
 #       - FLASK_DEBUG=1
 
+# ── go2rtc port hardening (production / untrusted LAN) ─────────────────────
+# Default compose publishes 1984 and 8554 on all interfaces for split dev.
+# To expose go2rtc only on localhost (nginx on :80 still proxies /go2rtc/):
+#
+# services:
+#   go2rtc:
+#     ports:
+#       - "127.0.0.1:1984:1984"
+#       - "127.0.0.1:8554:8554"
+#
+# To avoid publishing host ports at all (only other containers reach go2rtc),
+# remove or override the `ports` block for `go2rtc` as your Compose version allows.
+
 services: {}

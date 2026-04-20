@@ -1,3 +1,9 @@
+# DATABASE NOTE:
+# Currently using SQLite via named Docker volume — acceptable for development.
+# To migrate to PostgreSQL: swap DATABASE_URL to postgresql://... and
+# run flask db upgrade (or equivalent). All auth logic is ORM-abstracted
+# and requires no changes beyond the connection string.
+
 from peewee import DatabaseProxy
 from playhouse.sqliteq import SqliteQueueDatabase
 

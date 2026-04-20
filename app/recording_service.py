@@ -4,7 +4,7 @@ import time
 from . import create_app
 from . import recorder as recorder_module
 from .recorder import RecordingEngine
-from .recorder_status_server import start_recorder_status_server
+from .services.worker_status_server import start_worker_status_server
 
 
 def main():
@@ -37,7 +37,18 @@ def main():
     rec_engine.start()
 
     status_port = int(os.environ.get("RECORDER_STATUS_PORT", "5055"))
-    start_recorder_status_server(rec_engine, port=status_port)
+    start_worker_status_server(
+        rec_engine,
+        port=status_port,
+        worker_name="recorder",
+        default_payload={
+            "engine_running": False,
+            "active_recordings": 0,
+            "total_processes": 0,
+            "processes": {},
+            "message": "Engine not initialized",
+        },
+    )
     app.logger.info(
         "Recorder status HTTP on 0.0.0.0:%s (/status)", status_port
     )

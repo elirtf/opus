@@ -5,28 +5,23 @@ Event clips API (motion / future AI) — files live under RECORDINGS_DIR/clips/<
 import os
 from datetime import datetime
 
-from flask import Blueprint, request, send_from_directory
+from flask import Blueprint, request
 from flask_login import current_user
 
+from app.config import get_recordings_dir
 from app.models import RecordingEvent
 from app.routes.api.utils import (
     api_response,
     api_error,
     login_required_api,
     accessible_camera_names,
+    to_iso,
+    serve_mp4_file,
+    parse_timeline_params,
+    to_hms,
 )
 
 bp = Blueprint("api_events", __name__, url_prefix="/api/events")
-
-RECORDINGS_DIR = os.environ.get("RECORDINGS_DIR", "/recordings")
-
-
-def _to_iso(val):
-    if val is None:
-        return None
-    if isinstance(val, str):
-        return val
-    return val.isoformat()
 
 
 def event_to_dict(ev: RecordingEvent) -> dict:
@@ -36,8 +31,8 @@ def event_to_dict(ev: RecordingEvent) -> dict:
         "filename": ev.filename,
         "file_size": ev.file_size,
         "size_mb": round(ev.file_size / (1024 * 1024), 1),
-        "started_at": _to_iso(ev.started_at),
-        "ended_at": _to_iso(ev.ended_at),
+        "started_at": to_iso(ev.started_at),
+        "ended_at": to_iso(ev.ended_at),
         "duration_seconds": ev.duration_seconds,
         "reason": ev.reason,
         "download_url": f"/api/events/{ev.camera_name}/{ev.filename}",
@@ -105,29 +100,10 @@ def list_events():
 @login_required_api
 def events_timeline():
     """Same shape as recordings timeline for UI reuse: one day per camera."""
-    from datetime import timedelta
-
-    camera_names = request.args.getlist("camera")
-    date_str = request.args.get("date")
-    if not camera_names:
-        return api_error("At least one 'camera' query param is required.", 400)
-
-    allowed = accessible_camera_names(current_user)
-    if allowed is not None:
-        camera_names = [c for c in camera_names if c in allowed]
-        if not camera_names:
-            return api_error("Access denied to the requested cameras.", 403)
-
-    if date_str:
-        try:
-            target_date = datetime.fromisoformat(date_str).date()
-        except ValueError:
-            return api_error("Invalid 'date' format.", 400)
-    else:
-        target_date = datetime.now().date()
-
-    day_start = datetime.combine(target_date, datetime.min.time())
-    day_end = day_start + timedelta(days=1)
+    result = parse_timeline_params()
+    if not isinstance(result, tuple):
+        return result
+    camera_names, target_date, day_start, day_end = result
 
     evs = (
         RecordingEvent.select()
@@ -139,55 +115,24 @@ def events_timeline():
         )
         .order_by(RecordingEvent.started_at.asc())
     )
+
     cameras = {name: [] for name in camera_names}
     for ev in evs:
-        st = ev.started_at
-        if isinstance(st, str):
-            start_hms = st.split("T")[-1].split(" ")[-1][:8]
-        else:
-            start_hms = st.strftime("%H:%M:%S") if st else None
-        et = ev.ended_at
-        if et:
-            if isinstance(et, str):
-                end_hms = et.split("T")[-1].split(" ")[-1][:8]
-            else:
-                end_hms = et.strftime("%H:%M:%S")
-        else:
-            end_hms = None
-        cameras.setdefault(ev.camera_name, []).append(
-            {
-                "id": ev.id,
-                "start": start_hms,
-                "end": end_hms,
-                "filename": ev.filename,
-                "size_mb": round(ev.file_size / (1024 * 1024), 1),
-                "duration": ev.duration_seconds,
-                "reason": ev.reason,
-            }
-        )
+        cameras.setdefault(ev.camera_name, []).append({
+            "id": ev.id,
+            "start": to_hms(ev.started_at),
+            "end": to_hms(ev.ended_at),
+            "filename": ev.filename,
+            "size_mb": round(ev.file_size / (1024 * 1024), 1),
+            "duration": ev.duration_seconds,
+            "reason": ev.reason,
+        })
+
     return api_response({"date": target_date.isoformat(), "cameras": cameras})
 
 
 @bp.route("/<camera_name>/<filename>", methods=["GET"])
 @login_required_api
 def serve_event_clip(camera_name, filename):
-    if ".." in camera_name or ".." in filename:
-        return api_error("Invalid path.", 400)
-    if not filename.endswith(".mp4"):
-        return api_error("Invalid file type.", 400)
-
-    allowed = accessible_camera_names(current_user)
-    if allowed is not None and camera_name not in allowed:
-        return api_error("Access denied.", 403)
-
-    clip_dir = os.path.join(RECORDINGS_DIR, "clips", camera_name)
-    filepath = os.path.join(clip_dir, filename)
-    if not os.path.exists(filepath):
-        return api_error("Clip not found.", 404)
-
-    return send_from_directory(
-        clip_dir,
-        filename,
-        as_attachment=False,
-        mimetype="video/mp4",
-    )
+    clips_dir = os.path.join(get_recordings_dir(), "clips")
+    return serve_mp4_file(clips_dir, camera_name, filename)

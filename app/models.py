@@ -10,6 +10,8 @@ from peewee import (
 )
 from flask_login import UserMixin
 from werkzeug.security import generate_password_hash, check_password_hash
+
+import bcrypt
 from app.database import db
 
 
@@ -26,16 +28,26 @@ class User(UserMixin, BaseModel):
     role         = CharField(max_length=20, default="viewer")  # "admin" | "viewer"
     can_view_live = BooleanField(default=True)
     can_view_recordings = BooleanField(default=True)
-    # Hashed secret for Authorization: Bearer (optional; see POST /api/auth/token)
+    # Hashed secret for Authorization: Bearer (optional; legacy automation tokens)
     api_token_hash = CharField(max_length=255, null=True)
+    created_at = DateTimeField(null=True)
 
     class Meta:
         table_name = "user"
 
     def set_password(self, password: str):
-        self.password_hash = generate_password_hash(password)
+        """PBKDF2-SHA256 (600k). Legacy bcrypt rows remain readable via check_password."""
+        self.password_hash = generate_password_hash(
+            password, method="pbkdf2:sha256:600000"
+        )
 
     def check_password(self, password: str) -> bool:
+        h = self.password_hash or ""
+        if h.startswith(("$2a$", "$2b$", "$2y$")):
+            try:
+                return bcrypt.checkpw(password.encode("utf-8"), h.encode("utf-8"))
+            except (ValueError, TypeError):
+                return False
         return check_password_hash(self.password_hash, password)
 
     @property
@@ -96,6 +108,15 @@ class Camera(BaseModel):
     # off | continuous | events_only — synced with recording_enabled (off = disabled)
     recording_policy = CharField(max_length=20, default="continuous")
     rtsp_substream_url = CharField(max_length=255, null=True)
+    # Stream role model inspired by Frigate-style semantics.
+    stream_role = CharField(max_length=10, default="main")  # main | sub
+    paired_stream_name = CharField(max_length=50, null=True)
+    # True: force H.264 output via go2rtc ffmpeg source (use for HEVC-only cameras).
+    # False (default): passthrough RTSP source — avoids per-stream FFmpeg child
+    #   processes in go2rtc, which is the root cause of NVR RTSP session
+    #   exhaustion on multi-channel installs (see migration 013).
+    # None: fall back to GO2RTC_TRANSCODE_DEFAULT at config generation time.
+    transcode = BooleanField(default=False, null=True)
 
     class Meta:
         table_name = "camera"

@@ -5,8 +5,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Blueprint, request, current_app
 from flask_login import current_user
 from app.models import NVR, Camera, UserNVR
-from app.routes.api.utils import api_response, api_error, login_required_api, admin_required
-import requests as http
+from app.routes.api.utils import api_response, api_error, require_admin
 
 logger = logging.getLogger(__name__)
 
@@ -39,14 +38,14 @@ def nvr_to_dict(nvr, cam_count=None, admin=False):
 # ── go2rtc + import helpers ───────────────────────────────────────────────────
 
 def stream_add(name, rtsp_url):
-    try:
-        http.put(
-            f"{current_app.config['GO2RTC_URL']}/api/streams",
-            params={"name": name, "src": rtsp_url},
-            timeout=3,
-        )
-    except Exception as e:
-        current_app.logger.warning(f"go2rtc stream_add failed: {e}")
+    from app.go2rtc import validate_stream_url_for_go2rtc, register_stream_src
+
+    err = validate_stream_url_for_go2rtc(rtsp_url)
+    if err:
+        current_app.logger.warning("go2rtc stream_add rejected %s: %s", name, err)
+        return
+    if not register_stream_src(current_app.config["GO2RTC_URL"], name, rtsp_url, "import"):
+        current_app.logger.warning("go2rtc stream_add failed for %s", name)
 
 
 def _probe_nvr_main_stream(base: str, channel_index: int, timeout: int) -> tuple[int, bool]:
@@ -117,7 +116,7 @@ def import_cameras(nvr, probe_timeout: int | None = None):
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @bp.route("/", methods=["GET"])
-@login_required_api
+@require_admin
 def list_nvrs():
     allowed = current_user.allowed_nvr_ids()  # None = admin, set = restricted
 
@@ -135,8 +134,7 @@ def list_nvrs():
 
 
 @bp.route("/", methods=["POST"])
-@login_required_api
-@admin_required
+@require_admin
 def create_nvr():
     data = request.get_json(silent=True) or {}
     name         = (data.get("name") or "").strip()
@@ -178,8 +176,7 @@ def create_nvr():
 
 
 @bp.route("/<int:nvr_id>", methods=["PATCH"])
-@login_required_api
-@admin_required
+@require_admin
 def update_nvr(nvr_id):
     try:
         nvr = NVR.get_by_id(nvr_id)
@@ -208,8 +205,7 @@ def update_nvr(nvr_id):
 
 
 @bp.route("/<int:nvr_id>", methods=["DELETE"])
-@login_required_api
-@admin_required
+@require_admin
 def delete_nvr(nvr_id):
     try:
         nvr = NVR.get_by_id(nvr_id)
@@ -224,8 +220,7 @@ def delete_nvr(nvr_id):
 
 
 @bp.route("/<int:nvr_id>/sync", methods=["POST"])
-@login_required_api
-@admin_required
+@require_admin
 def sync_nvr(nvr_id):
     try:
         nvr = NVR.get_by_id(nvr_id)

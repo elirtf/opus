@@ -13,14 +13,16 @@ import threading
 import time
 import shutil
 import logging
-from datetime import datetime, timedelta
-
+from app.config import get_recordings_dir
 from app.ffmpeg_config import get_video_pipeline_summary
+from app import recorder_retention
+from app import recorder_segments
+from app.routes.api.utils import env_bool
 
 logger = logging.getLogger("opus.recorder")
 
-RECORDINGS_DIR       = os.environ.get("RECORDINGS_DIR", "/recordings")
-SEGMENT_MINUTES      = int(os.environ.get("RECORDING_SEGMENT_MINUTES", "15"))
+RECORDINGS_DIR       = get_recordings_dir()
+SEGMENT_MINUTES      = int(os.environ.get("RECORDING_SEGMENT_MINUTES", "5"))
 RETENTION_DAYS       = int(os.environ.get("RECORDING_RETENTION_DAYS", "90"))
 CLIP_RETENTION_DAYS  = int(os.environ.get("CLIP_RETENTION_DAYS", "90"))
 MAX_STORAGE_GB       = float(os.environ.get("RECORDING_MAX_STORAGE_GB", "0"))
@@ -34,26 +36,12 @@ SHELVE_RETRY_MIN     = int(os.environ.get("RECORDING_SHELVE_RETRY_MINUTES", "10"
 STAGGER_DELAY        = float(os.environ.get("RECORDING_STAGGER_SECONDS", "2"))
 # Rolling segment buffer for events_only cameras (hours); older segments are purged first.
 EVENTS_ONLY_BUFFER_HOURS = int(os.environ.get("EVENTS_ONLY_BUFFER_HOURS", "48"))
-
-
-def _env_opt_in(name: str, default: bool = False) -> bool:
-    """
-    True only when env is explicitly 1/true/yes/on.
-    Avoids accidental enable from typos or unknown values (older code used opt-out logic where
-    almost any string turned segment recording on for events_only cameras).
-    """
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    s = str(raw).strip().lower()
-    if s == "":
-        return default
-    return s in ("1", "true", "yes", "on")
+PROBE_SEGMENT_DURATIONS = env_bool("RECORDING_PROBE_DURATIONS", False)
 
 
 # When True, events_only cameras get 24/7 FFmpeg segment recording (rolling buffer up to EVENTS_ONLY_BUFFER_HOURS).
 # When False (default), events_only does not run segment recording — only motion clips from the processor.
-EVENTS_ONLY_RECORD_SEGMENTS = _env_opt_in("EVENTS_ONLY_RECORD_SEGMENTS", False)
+EVENTS_ONLY_RECORD_SEGMENTS = env_bool("EVENTS_ONLY_RECORD_SEGMENTS", False)
 
 
 def _norm_recording_policy(cam) -> str:
@@ -70,7 +58,7 @@ def _camera_should_record_segments(cam) -> bool:
     if pol == "off":
         return False
     if pol == "events_only":
-        return EVENTS_ONLY_RECORD_SEGMENTS
+        return _events_only_record_segments_from_db()
     return True
 
 
@@ -87,11 +75,47 @@ def _segment_minutes_from_db():
     try:
         from app.routes.api.recording_settings import get_setting
 
-        raw = get_setting("segment_minutes", "15")
-        v = int(raw or os.environ.get("RECORDING_SEGMENT_MINUTES", "15"))
+        raw = get_setting("segment_minutes", "5")
+        v = int(raw or os.environ.get("RECORDING_SEGMENT_MINUTES", "5"))
         return max(1, min(60, v))
     except Exception:
-        return max(1, min(60, int(os.environ.get("RECORDING_SEGMENT_MINUTES", "15"))))
+        return max(1, min(60, int(os.environ.get("RECORDING_SEGMENT_MINUTES", "5"))))
+
+
+def _clip_retention_days_from_db():
+    try:
+        from app.routes.api.recording_settings import get_setting
+        raw = get_setting("clip_retention_days", "90")
+        return max(1, int(raw or 90))
+    except Exception:
+        return max(1, int(os.environ.get("CLIP_RETENTION_DAYS", "90")))
+
+
+def _events_only_buffer_hours_from_db():
+    try:
+        from app.routes.api.recording_settings import get_setting
+        raw = get_setting("events_only_buffer_hours", "48")
+        return max(1, int(raw or 48))
+    except Exception:
+        return max(1, int(os.environ.get("EVENTS_ONLY_BUFFER_HOURS", "48")))
+
+
+def _events_only_record_segments_from_db():
+    try:
+        from app.routes.api.recording_settings import get_setting
+        raw = get_setting("events_only_record_segments", "false")
+        return str(raw).lower() in ("true", "1", "yes")
+    except Exception:
+        return env_bool("EVENTS_ONLY_RECORD_SEGMENTS", False)
+
+
+def _min_free_gb_from_db():
+    try:
+        from app.routes.api.recording_settings import get_setting
+        raw = get_setting("min_free_gb", "1")
+        return max(0.0, float(raw or "0"))
+    except Exception:
+        return float(os.environ.get("RECORDING_MIN_FREE_GB", "1") or "0")
 
 
 class RecordingEngine:
@@ -118,7 +142,7 @@ class RecordingEngine:
             _segment_minutes_from_db(),
             "yes" if GO2RTC_RTSP_URL else "no",
             STAGGER_DELAY,
-            "on" if EVENTS_ONLY_RECORD_SEGMENTS else "off",
+            "on" if _events_only_record_segments_from_db() else "off",
         )
         vp = get_video_pipeline_summary()
         logger.info(
@@ -188,15 +212,16 @@ class RecordingEngine:
 
     def _disk_pressure(self):
         """
-        True when free disk is below MIN_FREE_GB (new recordings should not start).
+        True when free disk is below min_free_gb (new recordings should not start).
         Existing FFmpeg processes are left running until they exit or desired set changes.
         """
-        if MIN_FREE_GB <= 0:
+        threshold = _min_free_gb_from_db()
+        if threshold <= 0:
             return False
         free = self._recordings_free_gb()
         if free is None:
             return False
-        return free < MIN_FREE_GB
+        return free < threshold
 
     def _sync(self):
         desired = self._desired()
@@ -215,7 +240,7 @@ class RecordingEngine:
                         logger.warning(
                             "Skipping record start for %s: disk pressure (free < %.2f GiB)",
                             name,
-                            MIN_FREE_GB,
+                            _min_free_gb_from_db(),
                         )
                         continue
                     if launches > 0:
@@ -309,7 +334,7 @@ class RecordingEngine:
                 "Skipping segment FFmpeg for %s (policy=%s, events_only_segment_buffer=%s)",
                 cam.name,
                 _norm_recording_policy(cam),
-                EVENTS_ONLY_RECORD_SEGMENTS,
+                _events_only_record_segments_from_db(),
             )
             return
 
@@ -391,37 +416,13 @@ class RecordingEngine:
     def _ensure_table(self):
         if self._table_ok:
             return True
-        from app.database import db
-        try:
-            db.execute_sql(
-                "CREATE TABLE IF NOT EXISTS recording ("
-                "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
-                "  camera INTEGER,"
-                "  camera_name VARCHAR(50) NOT NULL,"
-                "  filename VARCHAR(100) NOT NULL,"
-                "  file_path VARCHAR(255) NOT NULL,"
-                "  file_size INTEGER DEFAULT 0,"
-                "  started_at DATETIME,"
-                "  ended_at DATETIME,"
-                "  duration_seconds INTEGER,"
-                "  status VARCHAR(20) DEFAULT 'complete'"
-                ")"
-            )
-            db.execute_sql(
-                "CREATE INDEX IF NOT EXISTS idx_rec_cam_start "
-                "ON recording (camera_name, started_at)"
-            )
-            self._table_ok = True
+        ok = recorder_segments.ensure_recording_table()
+        if ok:
             logger.info("Recording table ready")
-            return True
-        except Exception:
-            logger.exception("Table creation failed")
-            return False
+        self._table_ok = bool(ok)
+        return self._table_ok
 
     def _scan_segments(self):
-        from app.database import db
-        from app.models import Camera
-
         if not os.path.exists(self.recordings_dir):
             return
         if not self._ensure_table():
@@ -433,241 +434,21 @@ class RecordingEngine:
                 if not p.get("shelved") and p["process"].poll() is None:
                     writing.add(n)
 
-        known = set()
-        try:
-            cur = db.execute_sql("SELECT camera_name, filename FROM recording")
-            for r in cur.fetchall():
-                known.add((r[0], r[1]))
-        except Exception:
-            logger.exception("Cannot query recordings")
-            return
-
-        added = 0
-        try:
-            dirs = sorted(os.listdir(self.recordings_dir))
-        except OSError:
-            return
-
-        for cam_name in dirs:
-            cam_dir = os.path.join(self.recordings_dir, cam_name)
-            if not os.path.isdir(cam_dir):
-                continue
-            try:
-                files = sorted(f for f in os.listdir(cam_dir) if f.endswith(".mp4"))
-            except OSError:
-                continue
-            if not files:
-                continue
-
-            newest = files[-1] if cam_name in writing else None
-            cam_obj = Camera.get_or_none(Camera.name == cam_name)
-            cam_id = cam_obj.id if cam_obj else None
-
-            for fn in files:
-                if (cam_name, fn) in known or fn == newest:
-                    continue
-                fp = os.path.join(cam_dir, fn)
-                try:
-                    sz = os.path.getsize(fp)
-                except OSError:
-                    continue
-                if sz < 10240:
-                    continue
-                sa = self._parse_ts(fn)
-                if sa is None:
-                    continue
-                dur = self._probe_dur(fp)
-                ea = (sa + timedelta(seconds=int(dur))) if sa and dur else None
-                try:
-                    db.execute_sql(
-                        "INSERT INTO recording"
-                        " (camera,camera_name,filename,file_path,file_size,"
-                        "  started_at,ended_at,duration_seconds,status)"
-                        " VALUES (?,?,?,?,?,?,?,?,?)",
-                        (cam_id, cam_name, fn, fp, sz,
-                         sa.isoformat() if sa else None,
-                         ea.isoformat() if ea else None,
-                         int(dur) if dur else None, "complete"),
-                    )
-                    added += 1
-                except Exception as exc:
-                    logger.debug("Insert skip %s: %s", fn, exc)
-
-        if added:
-            logger.info("Scan: registered %d new segments", added)
-
-    @staticmethod
-    def _parse_ts(fn):
-        try:
-            return datetime.strptime(fn.replace(".mp4", ""), "%Y-%m-%d_%H-%M-%S")
-        except ValueError:
-            return None
-
-    @staticmethod
-    def _probe_dur(fp):
-        try:
-            r = subprocess.run(
-                ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
-                 "-of", "default=noprint_wrappers=1:nokey=1", fp],
-                capture_output=True, text=True, timeout=10,
-            )
-            if r.returncode == 0 and r.stdout.strip():
-                return float(r.stdout.strip())
-        except Exception:
-            pass
-        return None
+        recorder_segments.scan_register_new_segments(
+            self.recordings_dir,
+            writing,
+            segment_minutes=_segment_minutes_from_db(),
+            probe_segment_durations=PROBE_SEGMENT_DURATIONS,
+        )
 
     def _enforce_retention(self):
-        from app.database import db
-        deleted = 0
-
-        if RETENTION_DAYS > 0:
-            cutoff = (datetime.now() - timedelta(days=RETENTION_DAYS)).isoformat()
-            try:
-                rows = db.execute_sql(
-                    "SELECT id, file_path FROM recording WHERE started_at < ?", (cutoff,)
-                ).fetchall()
-                for rid, fp in rows:
-                    try:
-                        if os.path.exists(fp):
-                            os.remove(fp)
-                        db.execute_sql("DELETE FROM recording WHERE id=?", (rid,))
-                        deleted += 1
-                    except Exception:
-                        pass
-            except Exception:
-                logger.exception("Age retention failed")
-
-        if MAX_STORAGE_GB > 0:
-            cap = MAX_STORAGE_GB * 1024 ** 3
-            total = self._disk_usage()
-            if total > cap:
-                try:
-                    rows = db.execute_sql(
-                        "SELECT id,file_path,file_size FROM recording ORDER BY started_at ASC"
-                    ).fetchall()
-                    freed = 0
-                    for rid, fp, sz in rows:
-                        if freed >= total - cap:
-                            break
-                        try:
-                            if os.path.exists(fp):
-                                os.remove(fp)
-                            db.execute_sql("DELETE FROM recording WHERE id=?", (rid,))
-                            freed += sz or 0
-                            deleted += 1
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
-
-        try:
-            rows = db.execute_sql("SELECT id,file_path FROM recording").fetchall()
-            orphans = [r[0] for r in rows if not os.path.exists(r[1])]
-            if orphans:
-                ph = ",".join("?" * len(orphans))
-                db.execute_sql("DELETE FROM recording WHERE id IN (%s)" % ph, orphans)
-                logger.info("Cleaned %d orphan records", len(orphans))
-        except Exception:
-            pass
-
-        try:
-            for d in os.listdir(self.recordings_dir):
-                p = os.path.join(self.recordings_dir, d)
-                if os.path.isdir(p) and not os.listdir(p):
-                    os.rmdir(p)
-        except OSError:
-            pass
-
-        if deleted:
-            logger.info("Retention: deleted %d segments", deleted)
-
-        if CLIP_RETENTION_DAYS > 0:
-            self._purge_old_clips()
-
-        # Short buffer for events_only: keep recent segments for pre-roll context only.
-        if EVENTS_ONLY_BUFFER_HOURS > 0:
-            self._purge_events_only_buffer()
-
-    def _purge_old_clips(self):
-        """Delete motion/AI clip rows and files past CLIP_RETENTION_DAYS."""
-        from app.database import db
-
-        cutoff = (datetime.now() - timedelta(days=CLIP_RETENTION_DAYS)).isoformat()
-        removed = 0
-        try:
-            rows = db.execute_sql(
-                "SELECT id, file_path FROM recording_event WHERE started_at < ?",
-                (cutoff,),
-            ).fetchall()
-            for rid, fp in rows:
-                try:
-                    if fp and os.path.exists(fp):
-                        os.remove(fp)
-                    db.execute_sql("DELETE FROM recording_event WHERE id=?", (rid,))
-                    removed += 1
-                except Exception:
-                    pass
-        except Exception:
-            logger.exception("Clip retention failed")
-        if removed:
-            logger.info("Clip retention: deleted %d event clips", removed)
-
-    def _purge_events_only_buffer(self):
-        from app.database import db
-        from app.models import Camera
-
-        try:
-            names = [
-                c.name
-                for c in Camera.select(Camera.name).where(
-                    (Camera.recording_policy == "events_only")
-                    & (Camera.active == True)
-                    & (Camera.recording_enabled == True)
-                )
-            ]
-        except Exception:
-            logger.exception("events_only buffer: camera query failed")
-            return
-        if not names:
-            return
-        cutoff = (datetime.now() - timedelta(hours=EVENTS_ONLY_BUFFER_HOURS)).isoformat()
-        deleted = 0
-        try:
-            for cam_name in names:
-                rows = db.execute_sql(
-                    "SELECT id, file_path FROM recording WHERE camera_name = ? AND started_at < ?",
-                    (cam_name, cutoff),
-                ).fetchall()
-                for rid, fp in rows:
-                    try:
-                        if fp and os.path.exists(fp):
-                            os.remove(fp)
-                        db.execute_sql("DELETE FROM recording WHERE id=?", (rid,))
-                        deleted += 1
-                    except Exception:
-                        pass
-        except Exception:
-            logger.exception("events_only buffer purge failed")
-        if deleted:
-            logger.info("events_only buffer: removed %d old segments", deleted)
-
-    def _disk_usage(self):
-        total = 0
-        try:
-            for d in os.listdir(self.recordings_dir):
-                dp = os.path.join(self.recordings_dir, d)
-                if not os.path.isdir(dp):
-                    continue
-                for f in os.listdir(dp):
-                    if f.endswith(".mp4"):
-                        try:
-                            total += os.path.getsize(os.path.join(dp, f))
-                        except OSError:
-                            pass
-        except OSError:
-            pass
-        return total
+        recorder_retention.enforce_recording_retention(
+            self.recordings_dir,
+            retention_days=RETENTION_DAYS,
+            max_storage_gb=MAX_STORAGE_GB,
+            clip_retention_days=_clip_retention_days_from_db(),
+            events_only_buffer_hours=_events_only_buffer_hours_from_db(),
+        )
 
     @staticmethod
     def test_rtsp(url, timeout=10):
@@ -735,7 +516,7 @@ class RecordingEngine:
                     "source": p.get("source", ""),
                 }
 
-        tb = self._disk_usage()
+        tb = recorder_retention.total_mp4_bytes_under(self.recordings_dir)
         disk = None
         free_gb = None
         if os.path.exists(self.recordings_dir):
@@ -761,10 +542,10 @@ class RecordingEngine:
                         "max_storage_gb": MAX_STORAGE_GB or None, "disk": disk},
             "config": {"segment_minutes": _segment_minutes_from_db(),
                        "retention_days": RETENTION_DAYS,
-                       "clip_retention_days": CLIP_RETENTION_DAYS,
-                       "events_only_record_segments": EVENTS_ONLY_RECORD_SEGMENTS,
-                       "events_only_buffer_hours": EVENTS_ONLY_BUFFER_HOURS,
-                       "min_free_gb": MIN_FREE_GB if MIN_FREE_GB > 0 else None,
+                       "clip_retention_days": _clip_retention_days_from_db(),
+                       "events_only_record_segments": _events_only_record_segments_from_db(),
+                       "events_only_buffer_hours": _events_only_buffer_hours_from_db(),
+                       "min_free_gb": _min_free_gb_from_db() or None,
                        "recordings_free_gb": free_gb,
                        "source": "go2rtc_relay" if GO2RTC_RTSP_URL else "direct_rtsp",
                        "stagger_seconds": STAGGER_DELAY,

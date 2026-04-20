@@ -1,6 +1,9 @@
+import os
 from functools import wraps
-from flask import jsonify
+from flask import jsonify, redirect, request, send_from_directory
 from flask_login import current_user
+
+from app.models import User
 
 
 def api_response(data=None, message=None, status=200):
@@ -18,24 +21,51 @@ def api_error(message, status=400):
     return jsonify({"error": message}), status
 
 
-def admin_required(f):
-    """Decorator — returns 403 JSON instead of redirecting."""
+def _setup_redirect_if_no_users():
+    """First-run: empty user table → send browser to SPA /setup (not JSON 401)."""
+    try:
+        if User.select().count() == 0:
+            return redirect("/setup", code=307)
+    except Exception:
+        pass
+    return None
+
+
+def require_auth(f):
+    """Valid JWT/proxy session (or legacy Bearer token). If no users exist yet, 307 → /setup."""
     @wraps(f)
     def decorated(*args, **kwargs):
-        if not current_user.is_authenticated or not current_user.is_admin:
+        if request.method == "OPTIONS":
+            return f(*args, **kwargs)
+        early = _setup_redirect_if_no_users()
+        if early is not None:
+            return early
+        if not current_user.is_authenticated:
+            return api_error("Authentication required.", 401)
+        return f(*args, **kwargs)
+    return decorated
+
+
+def require_admin(f):
+    """Admin role only; same first-run redirect as require_auth."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if request.method == "OPTIONS":
+            return f(*args, **kwargs)
+        early = _setup_redirect_if_no_users()
+        if early is not None:
+            return early
+        if not current_user.is_authenticated:
+            return api_error("Authentication required.", 401)
+        if not current_user.is_admin:
             return api_error("Admin access required.", 403)
         return f(*args, **kwargs)
     return decorated
 
 
-def login_required_api(f):
-    """Decorator — returns 401 JSON instead of redirecting to login page."""
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        if not current_user.is_authenticated:
-            return api_error("Authentication required.", 401)
-        return f(*args, **kwargs)
-    return decorated
+# Historical names — behave like Frigate-style require_* decorators
+admin_required = require_admin
+login_required_api = require_auth
 
 
 def accessible_camera_names(user):
@@ -104,3 +134,100 @@ def recordings_view_allowed(f):
             return api_error("Recorded footage access is disabled for this account.", 403)
         return f(*args, **kwargs)
     return decorated
+
+
+# ── Shared helpers ────────────────────────────────────────────────────────────
+
+def to_iso(val):
+    """Convert a value to ISO string — handles both datetime objects and raw strings."""
+    if val is None:
+        return None
+    if isinstance(val, str):
+        return val
+    return val.isoformat()
+
+
+def is_original_admin() -> bool:
+    """True only for the first admin account (id == 1). Used to gate sensitive settings."""
+    return (
+        current_user.is_authenticated
+        and current_user.is_admin
+        and current_user.id == 1
+    )
+
+
+def env_bool(name: str, default: bool = False) -> bool:
+    """Parse an env var as boolean (1/true/yes/on). Missing or empty → *default*."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    s = str(raw).strip().lower()
+    if s == "":
+        return default
+    return s in ("1", "true", "yes", "on")
+
+
+def serve_mp4_file(base_dir: str, camera_name: str, filename: str):
+    """
+    Shared handler for serving .mp4 files with path-traversal guard and access control.
+    Returns a Flask response or an api_error tuple.
+    """
+    if ".." in camera_name or ".." in filename:
+        return api_error("Invalid path.", 400)
+    if not filename.endswith(".mp4"):
+        return api_error("Invalid file type.", 400)
+
+    allowed = accessible_camera_names(current_user)
+    if allowed is not None and camera_name not in allowed:
+        return api_error("Access denied.", 403)
+
+    file_dir = os.path.join(base_dir, camera_name)
+    if not os.path.isfile(os.path.join(file_dir, filename)):
+        return api_error("File not found.", 404)
+
+    return send_from_directory(file_dir, filename, as_attachment=False, mimetype="video/mp4")
+
+
+def parse_timeline_params():
+    """
+    Shared param parsing for /timeline endpoints.
+    Returns (camera_names, target_date, day_start, day_end) or a Flask error response.
+    """
+    from datetime import datetime, timedelta
+    from flask import request as req
+
+    camera_names = req.args.getlist("camera")
+    date_str = req.args.get("date")
+
+    if not camera_names:
+        return api_error("At least one 'camera' query param is required.", 400)
+
+    allowed = accessible_camera_names(current_user)
+    if allowed is not None:
+        camera_names = [c for c in camera_names if c in allowed]
+        if not camera_names:
+            return api_error("Access denied to the requested cameras.", 403)
+
+    if date_str:
+        try:
+            target_date = datetime.fromisoformat(date_str).date()
+        except ValueError:
+            return api_error("Invalid 'date' format. Use ISO 8601 (YYYY-MM-DD).", 400)
+    else:
+        target_date = datetime.now().date()
+
+    day_start = datetime.combine(target_date, datetime.min.time())
+    day_end = day_start + timedelta(days=1)
+    return camera_names, target_date, day_start, day_end
+
+
+def to_hms(val) -> str | None:
+    """Extract HH:MM:SS from a datetime or ISO string (handles mixed types from Peewee/SQLite)."""
+    if val is None:
+        return None
+    if isinstance(val, str):
+        try:
+            return val.split("T")[-1].split(" ")[-1][:8]
+        except Exception:
+            return val
+    return val.strftime("%H:%M:%S")

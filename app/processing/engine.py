@@ -7,16 +7,22 @@ from __future__ import annotations
 
 import logging
 import os
-import subprocess
+import tempfile
 import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
+from app.config import get_recordings_dir
+from app.processing import clip_ffmpeg
+from app.processing import motion_rtsp as motion_rtsp_mod
+
 logger = logging.getLogger("opus.processing")
 
 GO2RTC_RTSP_URL = os.environ.get("GO2RTC_RTSP_URL", "")
+GO2RTC_HTTP_URL = os.environ.get("GO2RTC_URL", "http://go2rtc:1984").strip().rstrip("/")
+# Defaults only for startup log; runtime uses recording_settings + env via read_motion_clip_settings().
 POLL_SECONDS = int(os.environ.get("PROCESSING_POLL_SECONDS", "6"))
 CLIP_SECONDS = int(os.environ.get("CLIP_SECONDS", "45"))
 MOTION_COOLDOWN_SECONDS = int(os.environ.get("MOTION_COOLDOWN_SECONDS", "75"))
@@ -39,7 +45,7 @@ else:
 class ProcessingEngine:
     def __init__(self, app):
         self.app = app
-        self.recordings_dir = app.config.get("RECORDINGS_DIR", "/recordings")
+        self.recordings_dir = get_recordings_dir()
         self._running = False
         self._thread = None
         self._last_clip_at = {}
@@ -85,88 +91,14 @@ class ProcessingEngine:
         while self._running:
             try:
                 with self.app.app_context():
+                    from app.processing.motion_settings import read_motion_clip_settings
+
+                    poll = read_motion_clip_settings().poll_seconds
                     self._tick()
             except Exception:
                 logger.exception("processing tick failed")
-            time.sleep(POLL_SECONDS)
-
-    def _main_rtsp(self, cam) -> str:
-        """Record / clip source (always main)."""
-        if GO2RTC_RTSP_URL:
-            return "%s/%s" % (GO2RTC_RTSP_URL.rstrip("/"), cam.name)
-        return cam.rtsp_url
-
-    def _clip_rtsp(self, cam) -> str:
-        return self._main_rtsp(cam)
-
-    def _paired_sub_name(self, cam) -> str | None:
-        if cam.name.endswith("-main"):
-            return cam.name.replace("-main", "-sub", 1)
-        return None
-
-    def _resolve_sub_rtsp_url(self, cam) -> str | None:
-        """
-        Direct RTSP URL for the sub stream when not using go2rtc, or when we only have URLs in DB.
-        """
-        from app.models import Camera
-
-        sub = (getattr(cam, "rtsp_substream_url", None) or "").strip()
-        if sub:
-            return sub
-        sub_key = self._paired_sub_name(cam)
-        if not sub_key:
-            return None
-        sub_row = Camera.get_or_none(Camera.name == sub_key)
-        if not sub_row:
-            return None
-        return (sub_row.rtsp_url or "").strip() or None
-
-    def _sub_stream_registered(self, cam) -> bool:
-        """True if we should expect go2rtc to serve …-sub (virtual or NVR row)."""
-        from app.models import Camera
-
-        if (getattr(cam, "rtsp_substream_url", None) or "").strip():
-            return True
-        sk = self._paired_sub_name(cam)
-        if sk and Camera.select().where(Camera.name == sk).exists():
-            return True
-        return False
-
-    def _resolve_motion_sub_go2rtc(self, cam) -> str | None:
-        """go2rtc RTSP URL for the sub stream, if configured."""
-        if not GO2RTC_RTSP_URL or not self._sub_stream_registered(cam):
-            return None
-        sk = self._paired_sub_name(cam)
-        if not sk:
-            return None
-        return "%s/%s" % (GO2RTC_RTSP_URL.rstrip("/"), sk)
-
-    def _motion_rtsp(self, cam) -> str:
-        """
-        RTSP used only for OpenCV motion sampling.
-        Default (auto): sub when paired / rtsp_substream_url / go2rtc sub exists — lighter decode.
-        Clips still use _main_rtsp (full quality).
-        """
-        if MOTION_RTSP_MODE == "main":
-            return self._main_rtsp(cam)
-
-        sub_url = self._resolve_motion_sub_go2rtc(cam)
-        if not sub_url and not GO2RTC_RTSP_URL:
-            sub_url = self._resolve_sub_rtsp_url(cam)
-
-        if MOTION_RTSP_MODE == "sub":
-            if sub_url:
-                return sub_url
-            logger.warning(
-                "MOTION_RTSP_MODE=sub but no sub stream for %s; using main",
-                cam.name,
-            )
-            return self._main_rtsp(cam)
-
-        # auto
-        if sub_url:
-            return sub_url
-        return self._main_rtsp(cam)
+                poll = POLL_SECONDS
+            time.sleep(poll)
 
     def _tick(self):
         from app.models import Camera
@@ -177,6 +109,10 @@ class ProcessingEngine:
 
         if get_setting("setup_complete", "false") != "true":
             return
+
+        from app.processing.motion_settings import read_motion_clip_settings
+
+        cooldown_s = read_motion_clip_settings().cooldown_seconds
 
         qs = list(
             Camera.select().where(
@@ -190,23 +126,47 @@ class ProcessingEngine:
         eligible = [
             c
             for c in cams
-            if now - self._last_clip_at.get(c.name, 0) >= MOTION_COOLDOWN_SECONDS
+            if now - self._last_clip_at.get(c.name, 0) >= cooldown_s
         ]
         if not eligible:
             return
 
-        def run_motion(cam):
-            src_motion = self._motion_rtsp(cam)
+        health: dict[str, bool] | None = None
+        if GO2RTC_RTSP_URL:
+            from app.services.camera_stream_health import fetch_stream_online_map
+
+            health = fetch_stream_online_map(GO2RTC_HTTP_URL, timeout=2.0)
+
+        prepped: list[tuple] = []
+        for cam in eligible:
+            src_motion = motion_rtsp_mod.motion_rtsp(cam, GO2RTC_RTSP_URL, MOTION_RTSP_MODE)
+            has_prod = motion_rtsp_mod.motion_stream_has_go2rtc_producers(
+                src_motion, health, GO2RTC_RTSP_URL
+            )
+            if has_prod is False:
+                logger.debug(
+                    "skip motion OpenCV probe for %s (go2rtc stream offline or not published: %s)",
+                    cam.name,
+                    motion_rtsp_mod.go2rtc_stream_key_from_motion_rtsp(src_motion, GO2RTC_RTSP_URL),
+                )
+                continue
+            prepped.append((cam, src_motion))
+
+        if not prepped:
+            return
+
+        def run_motion(item):
+            cam, src_motion = item
             try:
                 return cam, self._detector.detect_motion(src_motion, stream_key=cam.name)
             except Exception:
                 logger.exception("detector failed: %s", cam.name)
                 return cam, False
 
-        workers = min(MOTION_MAX_CONCURRENT, len(eligible))
+        workers = min(MOTION_MAX_CONCURRENT, len(prepped))
         fired = []
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {pool.submit(run_motion, cam): cam for cam in eligible}
+            futures = {pool.submit(run_motion, item): item[0] for item in prepped}
             for fut in as_completed(futures):
                 cam, motion = fut.result()
                 if motion:
@@ -219,8 +179,15 @@ class ProcessingEngine:
                 self._last_clip_at[cam.name] = now
 
     def _write_clip(self, cam):
-        from app.ffmpeg_config import hwaccel_input_args, rtsp_input_queue_args
         from app.models import RecordingEvent
+        from app.processing.motion_settings import read_motion_clip_settings
+
+        ms = read_motion_clip_settings()
+        core = ms.clip_seconds
+        pre = ms.pre_seconds
+        post = ms.post_seconds
+        capture_sec = core + post
+        approx_duration = pre + capture_sec
 
         clips_dir = os.path.join(self.recordings_dir, "clips", cam.name)
         os.makedirs(clips_dir, exist_ok=True)
@@ -229,46 +196,60 @@ class ProcessingEngine:
             uuid.uuid4().hex[:8],
         )
         fp = os.path.join(clips_dir, fn)
-        src = self._clip_rtsp(cam)
-        cmd = [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            *hwaccel_input_args(),
-            *rtsp_input_queue_args(),
-            "-avoid_negative_ts",
-            "make_zero",
-            "-fflags",
-            "+genpts+discardcorrupt",
-            "-rtsp_transport",
-            "tcp",
-            "-timeout",
-            "10000000",
-            "-use_wallclock_as_timestamps",
-            "1",
-            "-i",
-            src,
-            "-t",
-            str(CLIP_SECONDS),
-            "-c:v",
-            "copy",
-            "-an",
-            "-y",
-            fp,
-        ]
+        src = motion_rtsp_mod.main_rtsp(cam, GO2RTC_RTSP_URL)
+
+        tmp_main = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False, dir=clips_dir)
+        tmp_main.close()
+        tmp_pre_path = None
+        concat_pre = clip_ffmpeg.concat_pre_enabled()
         try:
-            r = subprocess.run(cmd, capture_output=True, timeout=CLIP_SECONDS + 60)
-        except subprocess.TimeoutExpired:
-            logger.warning("clip ffmpeg timeout: %s", cam.name)
-            return None
-        except Exception:
-            logger.exception("clip ffmpeg failed: %s", cam.name)
-            return None
-        if r.returncode != 0:
-            err = (r.stderr or b"").decode(errors="replace")[-200:]
-            logger.warning("clip ffmpeg rc=%s %s", r.returncode, err)
-            return None
+            if not clip_ffmpeg.capture_rtsp_clip(
+                src, tmp_main.name, capture_sec, camera_name=cam.name
+            ):
+                return None
+
+            if pre > 0 and concat_pre:
+                seg = clip_ffmpeg.latest_stable_segment(self.recordings_dir, cam.name)
+                if seg:
+                    tmp_pre = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False, dir=clips_dir)
+                    tmp_pre.close()
+                    tmp_pre_path = tmp_pre.name
+                    if clip_ffmpeg.ffmpeg_extract_tail(seg, pre, tmp_pre_path):
+                        if clip_ffmpeg.ffmpeg_concat_copy([tmp_pre_path, tmp_main.name], fp):
+                            pass
+                        else:
+                            logger.warning(
+                                "concat pre+main failed for %s — saving core clip only",
+                                cam.name,
+                            )
+                            os.replace(tmp_main.name, fp)
+                    else:
+                        logger.info(
+                            "pre-roll extract skipped for %s (segment too short or unreadable)",
+                            cam.name,
+                        )
+                        os.replace(tmp_main.name, fp)
+                else:
+                    logger.debug(
+                        "no segment file for pre-roll on %s — enable rolling segments or continuous",
+                        cam.name,
+                    )
+                    os.replace(tmp_main.name, fp)
+            else:
+                if pre > 0 and not concat_pre:
+                    logger.debug(
+                        "CLIP_CONCAT_PRE disabled — skipping pre-roll concat for %s",
+                        cam.name,
+                    )
+                os.replace(tmp_main.name, fp)
+        finally:
+            for p in (tmp_main.name, tmp_pre_path):
+                if p and os.path.exists(p):
+                    try:
+                        os.remove(p)
+                    except OSError:
+                        pass
+
         try:
             sz = os.path.getsize(fp)
         except OSError:
@@ -288,7 +269,7 @@ class ProcessingEngine:
             file_size=sz,
             started_at=started,
             ended_at=None,
-            duration_seconds=CLIP_SECONDS,
+            duration_seconds=approx_duration,
             reason="motion",
             recording_id=None,
             status="complete",
@@ -296,12 +277,17 @@ class ProcessingEngine:
         return True
 
     def get_status(self):
+        from app.processing.motion_settings import read_motion_clip_settings
+
+        ms = read_motion_clip_settings()
         return {
             "engine_running": self._running,
             "detector": DETECTOR,
-            "poll_seconds": POLL_SECONDS,
-            "clip_seconds": CLIP_SECONDS,
-            "cooldown_seconds": MOTION_COOLDOWN_SECONDS,
+            "poll_seconds": ms.poll_seconds,
+            "clip_seconds": ms.clip_seconds,
+            "clip_pre_seconds": ms.pre_seconds,
+            "clip_post_seconds": ms.post_seconds,
+            "cooldown_seconds": ms.cooldown_seconds,
             "motion_rtsp_mode": MOTION_RTSP_MODE,
             "motion_max_concurrent": MOTION_MAX_CONCURRENT,
             "last_tick_unix": self._last_tick_ts,

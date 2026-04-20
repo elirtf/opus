@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import logging
 import os
-import subprocess
 import tempfile
 import threading
 import time
@@ -16,16 +15,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 from app.config import get_recordings_dir
+from app.processing import clip_ffmpeg
+from app.processing import motion_rtsp as motion_rtsp_mod
 
 logger = logging.getLogger("opus.processing")
-
-# Set to 0/false to skip pre-roll concat (two MP4s muxed together can confuse some browsers).
-CLIP_CONCAT_PRE = os.environ.get("CLIP_CONCAT_PRE", "1").strip().lower() in (
-    "1",
-    "true",
-    "yes",
-    "on",
-)
 
 GO2RTC_RTSP_URL = os.environ.get("GO2RTC_RTSP_URL", "")
 GO2RTC_HTTP_URL = os.environ.get("GO2RTC_URL", "http://go2rtc:1984").strip().rstrip("/")
@@ -107,108 +100,6 @@ class ProcessingEngine:
                 poll = POLL_SECONDS
             time.sleep(poll)
 
-    def _main_rtsp(self, cam) -> str:
-        """Record / clip source (always main)."""
-        if GO2RTC_RTSP_URL:
-            return "%s/%s" % (GO2RTC_RTSP_URL.rstrip("/"), cam.name)
-        return cam.rtsp_url
-
-    def _clip_rtsp(self, cam) -> str:
-        return self._main_rtsp(cam)
-
-    def _paired_sub_name(self, cam) -> str | None:
-        if cam.name.endswith("-main"):
-            return cam.name.replace("-main", "-sub", 1)
-        return None
-
-    def _resolve_sub_rtsp_url(self, cam) -> str | None:
-        """
-        Direct RTSP URL for the sub stream when not using go2rtc, or when we only have URLs in DB.
-        """
-        from app.models import Camera
-
-        sub = (getattr(cam, "rtsp_substream_url", None) or "").strip()
-        if sub:
-            return sub
-        sub_key = self._paired_sub_name(cam)
-        if not sub_key:
-            return None
-        sub_row = Camera.get_or_none(Camera.name == sub_key)
-        if not sub_row:
-            return None
-        return (sub_row.rtsp_url or "").strip() or None
-
-    def _sub_stream_registered(self, cam) -> bool:
-        """True if we should expect go2rtc to serve …-sub (virtual or NVR row)."""
-        from app.models import Camera
-
-        if (getattr(cam, "rtsp_substream_url", None) or "").strip():
-            return True
-        sk = self._paired_sub_name(cam)
-        if sk and Camera.select().where(Camera.name == sk).exists():
-            return True
-        return False
-
-    def _resolve_motion_sub_go2rtc(self, cam) -> str | None:
-        """go2rtc RTSP URL for the sub stream, if configured."""
-        if not GO2RTC_RTSP_URL or not self._sub_stream_registered(cam):
-            return None
-        sk = self._paired_sub_name(cam)
-        if not sk:
-            return None
-        return "%s/%s" % (GO2RTC_RTSP_URL.rstrip("/"), sk)
-
-    def _motion_rtsp(self, cam) -> str:
-        """
-        RTSP used only for OpenCV motion sampling.
-        Default (auto): sub when paired / rtsp_substream_url / go2rtc sub exists — lighter decode.
-        Clips still use _main_rtsp (full quality).
-        """
-        if MOTION_RTSP_MODE == "main":
-            return self._main_rtsp(cam)
-
-        sub_url = self._resolve_motion_sub_go2rtc(cam)
-        if not sub_url and not GO2RTC_RTSP_URL:
-            sub_url = self._resolve_sub_rtsp_url(cam)
-
-        if MOTION_RTSP_MODE == "sub":
-            if sub_url:
-                return sub_url
-            logger.warning(
-                "MOTION_RTSP_MODE=sub but no sub stream for %s; using main",
-                cam.name,
-            )
-            return self._main_rtsp(cam)
-
-        # auto
-        if sub_url:
-            return sub_url
-        return self._main_rtsp(cam)
-
-    def _go2rtc_stream_key_from_motion_rtsp(self, motion_rtsp: str) -> str | None:
-        """Last path segment of rtsp://go2rtc:8554/<key> when using the go2rtc relay."""
-        if not GO2RTC_RTSP_URL:
-            return None
-        base = GO2RTC_RTSP_URL.rstrip("/")
-        if not motion_rtsp.startswith(base + "/") and motion_rtsp != base:
-            return None
-        return motion_rtsp[len(base) :].lstrip("/") or None
-
-    def _motion_stream_has_go2rtc_producers(
-        self, motion_rtsp: str, health: dict[str, bool] | None
-    ) -> bool | None:
-        """
-        None = cannot decide (no relay, go2rtc unreachable, or direct camera RTSP) — still probe with OpenCV.
-        True = go2rtc lists the stream with active producers.
-        False = missing from /api/streams or no producers (OpenCV would usually hit RTSP DESCRIBE 404 / hang).
-        """
-        if health is None:
-            return None
-        key = self._go2rtc_stream_key_from_motion_rtsp(motion_rtsp)
-        if not key:
-            return None
-        return bool(health.get(key))
-
     def _tick(self):
         from app.models import Camera
         from app.routes.api.recording_settings import get_setting
@@ -248,13 +139,15 @@ class ProcessingEngine:
 
         prepped: list[tuple] = []
         for cam in eligible:
-            src_motion = self._motion_rtsp(cam)
-            has_prod = self._motion_stream_has_go2rtc_producers(src_motion, health)
+            src_motion = motion_rtsp_mod.motion_rtsp(cam, GO2RTC_RTSP_URL, MOTION_RTSP_MODE)
+            has_prod = motion_rtsp_mod.motion_stream_has_go2rtc_producers(
+                src_motion, health, GO2RTC_RTSP_URL
+            )
             if has_prod is False:
                 logger.debug(
                     "skip motion OpenCV probe for %s (go2rtc stream offline or not published: %s)",
                     cam.name,
-                    self._go2rtc_stream_key_from_motion_rtsp(src_motion),
+                    motion_rtsp_mod.go2rtc_stream_key_from_motion_rtsp(src_motion, GO2RTC_RTSP_URL),
                 )
                 continue
             prepped.append((cam, src_motion))
@@ -285,137 +178,6 @@ class ProcessingEngine:
             if ev:
                 self._last_clip_at[cam.name] = now
 
-    def _latest_stable_segment(self, cam_name: str) -> str | None:
-        """Most recent completed MP4 segment under recordings_dir/cam_name (for pre-roll tail)."""
-        cam_dir = os.path.join(self.recordings_dir, cam_name)
-        if not os.path.isdir(cam_dir):
-            return None
-        try:
-            names = [f for f in os.listdir(cam_dir) if f.endswith(".mp4")]
-        except OSError:
-            return None
-        if not names:
-            return None
-        paths = [os.path.join(cam_dir, n) for n in names]
-        paths.sort(key=lambda p: os.path.getmtime(p), reverse=True)
-        now = time.time()
-        for p in paths:
-            try:
-                if now - os.path.getmtime(p) < 3.0:
-                    continue
-                if os.path.getsize(p) > 10240:
-                    return p
-            except OSError:
-                continue
-        return None
-
-    @staticmethod
-    def _ffmpeg_extract_tail(segment_path: str, pre_seconds: int, out_path: str) -> bool:
-        """Last N seconds of a seekable MP4 (segment file from recorder)."""
-        cmd = [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-sseof",
-            "-%d" % pre_seconds,
-            "-i",
-            segment_path,
-            "-c",
-            "copy",
-            "-movflags",
-            "+faststart",
-            out_path,
-        ]
-        try:
-            r = subprocess.run(cmd, capture_output=True, timeout=pre_seconds + 45)
-        except (subprocess.TimeoutExpired, OSError):
-            return False
-        return r.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 1024
-
-    @staticmethod
-    def _ffmpeg_concat_copy(paths: list[str], out_path: str) -> bool:
-        fd, list_path = tempfile.mkstemp(suffix=".txt", text=True)
-        try:
-            with os.fdopen(fd, "w") as f:
-                for p in paths:
-                    ap = os.path.abspath(p).replace("\\", "/")
-                    ap = ap.replace("'", "'\\''")
-                    f.write("file '%s'\n" % ap)
-            cmd = [
-                "ffmpeg",
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-y",
-                "-f",
-                "concat",
-                "-safe",
-                "0",
-                "-i",
-                list_path,
-                "-c",
-                "copy",
-                "-movflags",
-                "+faststart",
-                out_path,
-            ]
-            r = subprocess.run(cmd, capture_output=True, timeout=600)
-            return r.returncode == 0
-        except (OSError, subprocess.TimeoutExpired):
-            return False
-        finally:
-            try:
-                os.remove(list_path)
-            except OSError:
-                pass
-
-    def _capture_rtsp_clip(self, cam, src: str, out_path: str, duration_sec: int) -> bool:
-        from app.ffmpeg_config import hwaccel_input_args, rtsp_input_queue_args
-
-        cmd = [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            *hwaccel_input_args(),
-            *rtsp_input_queue_args(),
-            "-avoid_negative_ts",
-            "make_zero",
-            "-fflags",
-            "+genpts+discardcorrupt",
-            "-rtsp_transport",
-            "tcp",
-            "-timeout",
-            "10000000",
-            "-use_wallclock_as_timestamps",
-            "1",
-            "-i",
-            src,
-            "-t",
-            str(duration_sec),
-            "-c:v",
-            "copy",
-            "-an",
-            "-movflags",
-            "+faststart",
-            "-y",
-            out_path,
-        ]
-        try:
-            r = subprocess.run(cmd, capture_output=True, timeout=duration_sec + 90)
-        except (subprocess.TimeoutExpired, OSError):
-            return False
-        if r.returncode != 0:
-            err = (r.stderr or b"").decode(errors="replace")[-200:]
-            logger.warning("clip capture rc=%s %s", r.returncode, err)
-            return False
-        try:
-            return os.path.getsize(out_path) > 10240
-        except OSError:
-            return False
-
     def _write_clip(self, cam):
         from app.models import RecordingEvent
         from app.processing.motion_settings import read_motion_clip_settings
@@ -434,23 +196,26 @@ class ProcessingEngine:
             uuid.uuid4().hex[:8],
         )
         fp = os.path.join(clips_dir, fn)
-        src = self._clip_rtsp(cam)
+        src = motion_rtsp_mod.main_rtsp(cam, GO2RTC_RTSP_URL)
 
         tmp_main = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False, dir=clips_dir)
         tmp_main.close()
         tmp_pre_path = None
+        concat_pre = clip_ffmpeg.concat_pre_enabled()
         try:
-            if not self._capture_rtsp_clip(cam, src, tmp_main.name, capture_sec):
+            if not clip_ffmpeg.capture_rtsp_clip(
+                src, tmp_main.name, capture_sec, camera_name=cam.name
+            ):
                 return None
 
-            if pre > 0 and CLIP_CONCAT_PRE:
-                seg = self._latest_stable_segment(cam.name)
+            if pre > 0 and concat_pre:
+                seg = clip_ffmpeg.latest_stable_segment(self.recordings_dir, cam.name)
                 if seg:
                     tmp_pre = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False, dir=clips_dir)
                     tmp_pre.close()
                     tmp_pre_path = tmp_pre.name
-                    if self._ffmpeg_extract_tail(seg, pre, tmp_pre_path):
-                        if self._ffmpeg_concat_copy([tmp_pre_path, tmp_main.name], fp):
+                    if clip_ffmpeg.ffmpeg_extract_tail(seg, pre, tmp_pre_path):
+                        if clip_ffmpeg.ffmpeg_concat_copy([tmp_pre_path, tmp_main.name], fp):
                             pass
                         else:
                             logger.warning(
@@ -471,7 +236,7 @@ class ProcessingEngine:
                     )
                     os.replace(tmp_main.name, fp)
             else:
-                if pre > 0 and not CLIP_CONCAT_PRE:
+                if pre > 0 and not concat_pre:
                     logger.debug(
                         "CLIP_CONCAT_PRE disabled — skipping pre-roll concat for %s",
                         cam.name,

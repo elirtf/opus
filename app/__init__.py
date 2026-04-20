@@ -141,20 +141,9 @@ def create_app():
 
     init_auth(app)
 
-    from app.ops_alerts import start_ops_alerts_thread
+    from app.lifecycle import start_background_services
 
-    start_ops_alerts_thread(app)
-
-    with app.app_context():
-        from app.go2rtc_config import write_go2rtc_yaml
-        from app.go2rtc import sync_all_on_startup
-
-        write_go2rtc_yaml(app)
-        try:
-            sync_all_on_startup()
-        except Exception:
-            # Defensive — sync_all_on_startup already catches internally.
-            pass
+    start_background_services(app)
 
     @app.get("/healthz")
     def healthz():

@@ -66,6 +66,11 @@ services:
       - ./go2rtc:/config
       - static_files:/app/app/static
       - recordings:/recordings
+    # Without this, opus may finish create_app() before go2rtc is listening on
+    # 1984; see app/lifecycle.py — sync_all_on_startup retries in the background
+    # either way, but this reduces the race on cold boot.
+    depends_on:
+      - go2rtc
     mem_limit: 768m
     cpus: 1.00
     networks:

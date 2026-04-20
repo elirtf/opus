@@ -17,22 +17,12 @@ export function AuthProvider({ children }) {
 
   async function login(username, password) {
     const userData = await authApi.login(username, password)
-    if (typeof localStorage !== 'undefined') {
-      if (userData?.token) {
-        localStorage.setItem('opus_bearer_token', userData.token)
-      } else {
-        localStorage.removeItem('opus_bearer_token')
-      }
-    }
     setUser(userData)
     return userData
   }
 
   async function logout() {
     await authApi.logout().catch(() => {})
-    if (typeof localStorage !== 'undefined') {
-      localStorage.removeItem('opus_bearer_token')
-    }
     setUser(false)
   }
 

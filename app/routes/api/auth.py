@@ -1,25 +1,21 @@
 import re
 
-from flask import Blueprint, current_app, request
-from flask_login import current_user, logout_user
+from flask import Blueprint, request
+from flask_login import current_user, login_user, logout_user
 from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from peewee import IntegrityError
 
 from app.database import db
 from app.models import User, UserCamera, UserNVR
-from app.opus_auth import (
-    attach_session_cookie,
-    clear_session_cookie,
-    get_effective_client_ip,
-    mint_jwt,
-    proxy_auth_enabled,
-)
 from app.routes.api.recording_settings import set_setting
 from app.routes.api.utils import api_error, api_response, require_admin, require_auth
 
 bp = Blueprint("api_auth", __name__, url_prefix="/api/auth")
 
-limiter = Limiter(key_func=get_effective_client_ip, storage_uri="memory://")
+# Rate-limit login/setup by remote IP. ProxyFix (see app/__init__.py) normalizes
+# request.remote_addr to the real client IP when behind nginx.
+limiter = Limiter(key_func=get_remote_address, storage_uri="memory://")
 
 _SETUP_USER_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{1,49}$")
 
@@ -36,21 +32,15 @@ def init_auth(app):
 
 
 def _session_payload(user: User):
-    """JSON body for login/setup responses (browser cookie + headless token)."""
-    app = current_app._get_current_object()
-    tok = mint_jwt(app, user)
-    return (
-        {
-            "ok": True,
-            "role": user.role,
-            "username": user.username,
-            "id": user.id,
-            "can_view_live": getattr(user, "can_view_live", True),
-            "can_view_recordings": getattr(user, "can_view_recordings", True),
-            "token": tok,
-        },
-        tok,
-    )
+    """JSON body for login/setup responses. No token — the browser cookie is the session."""
+    return {
+        "ok": True,
+        "role": user.role,
+        "username": user.username,
+        "id": user.id,
+        "can_view_live": getattr(user, "can_view_live", True),
+        "can_view_recordings": getattr(user, "can_view_recordings", True),
+    }
 
 
 @bp.route("/setup", methods=["GET"])
@@ -85,19 +75,17 @@ def setup():
     except IntegrityError:
         return api_error("That username is already taken.", 400)
 
-    payload, tok = _session_payload(user)
-    resp = api_response(payload, message="Administrator account created.", status=201)
-    body, status = resp
-    attach_session_cookie(body, tok)
-    return body, status
+    login_user(user, remember=True)
+    return api_response(
+        _session_payload(user),
+        message="Administrator account created.",
+        status=201,
+    )
 
 
 @bp.route("/login", methods=["POST"])
 @limiter.limit("5 per minute;20 per hour")
 def login():
-    if proxy_auth_enabled():
-        return api_error("Login is disabled when proxy authentication is enabled.", 503)
-
     data = request.get_json(silent=True) or {}
     username = data.get("username", "").strip()
     password = data.get("password") or ""
@@ -113,21 +101,15 @@ def login():
     if not user.check_password(password):
         return api_error("Invalid username or password.", 401)
 
-    payload, tok = _session_payload(user)
-    resp = api_response(payload, message="Logged in successfully.")
-    body, status = resp
-    attach_session_cookie(body, tok)
-    return body, status
+    login_user(user, remember=True)
+    return api_response(_session_payload(user), message="Logged in successfully.")
 
 
 @bp.route("/logout", methods=["POST"])
 @require_auth
 def logout():
     logout_user()
-    resp = api_response({"ok": True}, message="Logged out.")
-    body, status = resp
-    clear_session_cookie(body)
-    return body, status
+    return api_response({"ok": True}, message="Logged out.")
 
 
 @bp.route("/me", methods=["GET"])
@@ -219,9 +201,6 @@ def change_password(username: str):
         cur = data.get("current_password") or ""
         if not target.check_password(cur):
             return api_error("Current password is incorrect.", 400)
-    else:
-        # admin changing another user — no current_password required
-        pass
 
     target.set_password(new_pw)
     target.save()

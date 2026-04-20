@@ -23,13 +23,12 @@ export function withOrigin(path) {
 }
 
 /**
- * Low-level fetch with JSON handling, cookies, optional Bearer token (localStorage `opus_bearer_token`).
+ * Low-level fetch with JSON handling. Auth is carried by the HttpOnly
+ * `opus_session` cookie issued by Flask-Session — no client-side token handling.
  */
 export async function apiFetch(path, opts = {}) {
   const url = withOrigin(path)
   const headers = { ...opts.headers }
-  const token = typeof localStorage !== 'undefined' ? localStorage.getItem('opus_bearer_token') : null
-  if (token) headers['Authorization'] = `Bearer ${token}`
 
   if (opts.body !== undefined && headers['Content-Type'] === undefined) {
     headers['Content-Type'] = 'application/json'

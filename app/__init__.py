@@ -1,44 +1,78 @@
 import os
-import secrets
+from datetime import timedelta
+
 from flask import Flask
 from flask_login import LoginManager
+from flask_session import Session
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 login_manager = LoginManager()
+server_session = Session()
 
 
-def _load_or_create_secret_key(database_path: str) -> str:
+def _require_secret_key() -> str:
     """
-    Persist SECRET_KEY next to the SQLite file so containers start without a pre-seeded .env.
-    Env SECRET_KEY still wins when set.
+    SECRET_KEY MUST be provided via env. No on-disk fallback, no random generation:
+    an unstable secret silently invalidates every issued session cookie and was the
+    root cause of the 'must restart nginx to log in' bug (see plan).
     """
-    env_sk = (os.environ.get("SECRET_KEY") or "").strip()
-    if env_sk:
-        return env_sk
-    parent = os.path.dirname(database_path) or "."
-    path = os.path.join(parent, ".flask_secret_key")
+    sk = (os.environ.get("SECRET_KEY") or "").strip()
+    if not sk:
+        raise RuntimeError(
+            "SECRET_KEY env var is required. Set it in .env (or docker-compose) "
+            "to a long random string and keep it stable across restarts."
+        )
+    return sk
+
+
+def _session_lifetime_seconds() -> int:
     try:
-        os.makedirs(parent, exist_ok=True)
-        if os.path.isfile(path):
-            with open(path, "r", encoding="utf-8") as f:
-                existing = f.read().strip()
-            if existing:
-                return existing
-        sk = secrets.token_hex(32)
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(sk)
-        return sk
-    except OSError:
-        return secrets.token_hex(32)
+        v = int((os.environ.get("OPUS_SESSION_LENGTH") or "86400").strip())
+    except ValueError:
+        v = 86400
+    # Clamp: 5 minutes .. 30 days
+    return max(300, min(v, 86400 * 30))
 
 
 def create_app():
     app = Flask(__name__)
     app.config["DATABASE_PATH"]     = os.environ.get("DATABASE_PATH", "/app/instance/opus.db")
     app.config["DATABASE_URL"]      = os.environ.get("DATABASE_URL")
-    app.config["SECRET_KEY"]        = _load_or_create_secret_key(app.config["DATABASE_PATH"])
+    app.config["SECRET_KEY"]        = _require_secret_key()
     app.config["GO2RTC_URL"]        = os.environ.get("GO2RTC_URL", "http://go2rtc:1984")
     app.config["GO2RTC_CONFIG_PATH"] = os.environ.get("GO2RTC_CONFIG_PATH", "/config/go2rtc.yaml")
     app.config["RECORDINGS_DIR"]    = os.environ.get("RECORDINGS_DIR", "/recordings")
+
+    # ── Reverse proxy awareness ──────────────────────────────────────────────
+    # nginx terminates the client TCP conn; X-Forwarded-Proto tells Flask whether
+    # the original request was HTTPS so SESSION_COOKIE_SECURE can behave correctly.
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=0)
+
+    # ── Server-side sessions (Flask-Session, filesystem backend) ─────────────
+    # Stored in the same volume as SQLite so container restarts do NOT invalidate
+    # live sessions. Cookie value is an opaque session id signed by SECRET_KEY.
+    instance_dir = os.path.dirname(app.config["DATABASE_PATH"]) or "/app/instance"
+    session_dir = os.path.join(instance_dir, "sessions")
+    try:
+        os.makedirs(session_dir, exist_ok=True)
+    except OSError:
+        # If this fails at boot, Flask-Session will also fail — surface it then.
+        pass
+
+    app.config.update(
+        SESSION_TYPE="filesystem",
+        SESSION_FILE_DIR=session_dir,
+        SESSION_PERMANENT=True,
+        PERMANENT_SESSION_LIFETIME=timedelta(seconds=_session_lifetime_seconds()),
+        SESSION_USE_SIGNER=True,
+        SESSION_COOKIE_NAME="opus_session",
+        SESSION_COOKIE_HTTPONLY=True,
+        SESSION_COOKIE_SAMESITE="Lax",
+        # Secure flag is decided per-request by Flask based on request.is_secure
+        # (populated via ProxyFix + X-Forwarded-Proto from nginx).
+        SESSION_COOKIE_SECURE=False,
+    )
+    server_session.init_app(app)
 
     # ── Database - Peewee init ───────────────────────────────────────────────
     from app.database import db, init_database
@@ -74,7 +108,7 @@ def create_app():
         if not db.is_closed():
             db.close()
 
-    # ── Auth - Flask-Login (identity from JWT cookie / Bearer, optional proxy headers) ──
+    # ── Auth - Flask-Login identity from Flask-Session cookie ────────────────
     login_manager.init_app(app)
     login_manager.login_view = None
 
@@ -86,7 +120,7 @@ def create_app():
             app,
             origins=[o.strip() for o in _cors_origins.split(",") if o.strip()],
             supports_credentials=True,
-            allow_headers=["Content-Type", "Authorization"],
+            allow_headers=["Content-Type"],
         )
 
     from app.models import User
@@ -95,20 +129,8 @@ def create_app():
     def load_user(user_id):
         try:
             return User.get_by_id(int(user_id))
-        except User.DoesNotExist:
+        except (User.DoesNotExist, TypeError, ValueError):
             return None
-
-    @login_manager.request_loader
-    def load_user_from_request(req):
-        from app.opus_auth import load_user_for_request
-
-        return load_user_for_request(app, req)
-
-    @app.after_request
-    def _opus_jwt_cookie_refresh(resp):
-        from app.opus_auth import apply_jwt_rotation
-
-        return apply_jwt_rotation(resp)
 
     # ── Blueprints (API) ─────────────────────────────────────────────────────
     from app.routes.api.auth import bp as api_auth_bp, init_auth

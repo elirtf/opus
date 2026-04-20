@@ -506,48 +506,6 @@ function SystemPanel({ about, loading, error, setupStatus, isOriginalAdmin }) {
   )
 }
 
-function ApiTokenSettings() {
-  const [open, setOpen] = useState(false)
-
-  return (
-    <SectionCard
-      title="API access (advanced)"
-      subtitle="Scripts and split-origin clients use a signed JWT from login, not a separate API token."
-      actions={
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          className="text-xs text-indigo-400 hover:text-indigo-300 border border-indigo-900 hover:border-indigo-700 px-3 py-1 rounded-lg"
-        >
-          {open ? 'Hide' : 'Show'}
-        </button>
-      }
-    >
-      {open ? (
-        <>
-          <p className="text-sm text-gray-400 mb-3">
-            Call <code className="text-gray-300">POST /api/auth/login</code> with JSON{' '}
-            <code className="text-gray-300">{'{ username, password }'}</code>. The response includes a{' '}
-            <code className="text-gray-300">token</code> string and sets an HttpOnly session cookie for browsers.
-          </p>
-          <p className="text-sm text-gray-400 mb-3">
-            For headless access, send <code className="text-gray-300">Authorization: Bearer &lt;token&gt;</code> on each
-            request (or rely on the <code className="text-gray-300">opus_session</code> cookie when calling from the same
-            browser origin). For different web origins, set <code className="text-gray-300">CORS_ORIGINS</code> on the
-            server (see <code className="text-gray-400">docs/remote-viewing.md</code>).
-          </p>
-          <p className="text-sm text-gray-400">
-            Optional: store the JWT in <code className="text-gray-300">localStorage</code> key{' '}
-            <code className="text-gray-300">opus_bearer_token</code> so the bundled client attaches it automatically.
-          </p>
-        </>
-      ) : (
-        <p className="text-sm text-gray-500">Hidden to reduce noise during normal configuration.</p>
-      )}
-    </SectionCard>
-  )
-}
-
 function MaintenancePanel({ diagnostics, engine, loadingDiag, loadingEng, errorDiag, onRefresh }) {
   const [copied, setCopied] = useState(false)
   const [showRawEngine, setShowRawEngine] = useState(false)
@@ -1038,9 +996,6 @@ export default function Configuration() {
             setupStatus={setupStatus}
             isOriginalAdmin={isOriginalAdmin}
           />
-          <div className="mt-6">
-            <ApiTokenSettings />
-          </div>
         </>
       )}
 

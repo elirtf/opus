@@ -12,6 +12,15 @@ import { getPlaybackModeOverride } from '../utils/streamPlayback'
 const GRID_SIZES = [3, 4, 6]
 const HEALTH_POLL_MS = 30000
 
+// Max dashboard tiles allowed to run a live decoder simultaneously. The gate in
+// useLiveStreamGate enforces this to avoid overwhelming slow devices; the number
+// is NOT a browser HTTP limit. MSE/WebRTC go over WebSocket whose per-origin
+// budget is in the hundreds (Chrome ~255, Firefox ~200). Previously 6 — which
+// capped the dashboard at the first 6 tiles on a 3×3 (9) / 4×4 (16) / 6×6 (36)
+// grid. 24 covers 3×3 and 4×4 in full and still leaves headroom for browser
+// tab + LivePlayer fallback chain connections.
+const MAX_CONCURRENT_LIVE_DECODERS = 24
+
 const VIEW_MODES = [
   { id: 'all', label: 'All' },
   { id: 'problems', label: 'Problems' },
@@ -51,8 +60,7 @@ function CameraTile({ cam, streamName, online, onClick }) {
   const { containerRef, enabled: streamEnabled } = useLiveStreamGate({
     // Tight viewport: avoid marking many off-screen tiles as "visible" (would open too many go2rtc sessions).
     rootMargin: '0px',
-    // ~6 parallel MSE/WebSocket sessions per origin is a common browser limit over HTTP/1.1; excess tiles show go2rtc "stream not found".
-    maxConcurrentLiveDecoders: 6,
+    maxConcurrentLiveDecoders: MAX_CONCURRENT_LIVE_DECODERS,
   })
 
   const label = cam.display_name

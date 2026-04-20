@@ -15,6 +15,7 @@ import shutil
 import logging
 from app.config import get_recordings_dir
 from app.ffmpeg_config import get_video_pipeline_summary
+from app.go2rtc import go2rtc_rtsp_source
 from app import recorder_retention
 from app import recorder_segments
 from app.routes.api.utils import env_bool
@@ -342,7 +343,10 @@ class RecordingEngine:
         os.makedirs(cam_dir, exist_ok=True)
 
         if GO2RTC_RTSP_URL:
-            src = "%s/%s" % (GO2RTC_RTSP_URL, cam.name)
+            # Percent-encode the stream name: camera names like
+            # "ABC NVR 1-ch1-main" contain spaces that would otherwise
+            # produce a malformed RTSP URL.
+            src = go2rtc_rtsp_source(GO2RTC_RTSP_URL, cam.name)
         else:
             src = cam.rtsp_url
 

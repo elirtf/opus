@@ -14,6 +14,7 @@ Deletion:
 import os
 import requests as http
 import logging
+from urllib.parse import quote, unquote
 
 from app.config import get_recordings_dir
 
@@ -43,6 +44,30 @@ def _camera_transcode_value(camera, default: bool) -> bool:
     if val is None:
         return default
     return bool(val)
+
+
+def go2rtc_rtsp_source(base_url: str, stream_name: str) -> str:
+    """Build an RTSP URL for consuming a go2rtc-published stream.
+
+    Stream names in the DB come from user input (NVR name + channel + stream_type)
+    and can contain spaces or other characters that are not safe in a URL path.
+    Percent-encode the name so FFmpeg sees a well-formed URL; go2rtc decodes it
+    back to the registered key.
+    """
+    return "%s/%s" % (base_url.rstrip("/"), quote(stream_name, safe=""))
+
+
+def go2rtc_stream_name_from_rtsp(rtsp_url: str, base_url: str) -> str | None:
+    """Reverse of go2rtc_rtsp_source: extract and decode the stream name."""
+    if not base_url:
+        return None
+    base = base_url.rstrip("/")
+    if not rtsp_url.startswith(base + "/") and rtsp_url != base:
+        return None
+    tail = rtsp_url[len(base):].lstrip("/")
+    if not tail:
+        return None
+    return unquote(tail)
 
 
 def _transcode_source(rtsp_url: str, should_transcode: bool) -> str:

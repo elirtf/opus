@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import logging
 
+from app.go2rtc import go2rtc_rtsp_source, go2rtc_stream_name_from_rtsp
+
 logger = logging.getLogger("opus.processing.motion_rtsp")
 
 
@@ -53,13 +55,13 @@ def resolve_motion_sub_go2rtc(cam, go2rtc_rtsp_url: str) -> str | None:
     sk = paired_sub_name(cam.name)
     if not sk:
         return None
-    return "%s/%s" % (go2rtc_rtsp_url.rstrip("/"), sk)
+    return go2rtc_rtsp_source(go2rtc_rtsp_url, sk)
 
 
 def main_rtsp(cam, go2rtc_rtsp_url: str) -> str:
     """Record / clip source (always main stream key or direct URL)."""
     if go2rtc_rtsp_url:
-        return "%s/%s" % (go2rtc_rtsp_url.rstrip("/"), cam.name)
+        return go2rtc_rtsp_source(go2rtc_rtsp_url, cam.name)
     return cam.rtsp_url
 
 
@@ -91,13 +93,12 @@ def motion_rtsp(cam, go2rtc_rtsp_url: str, motion_rtsp_mode: str) -> str:
 
 
 def go2rtc_stream_key_from_motion_rtsp(motion_rtsp: str, go2rtc_rtsp_url: str) -> str | None:
-    """Last path segment of rtsp://go2rtc:8554/<key> when using the go2rtc relay."""
-    if not go2rtc_rtsp_url:
-        return None
-    base = go2rtc_rtsp_url.rstrip("/")
-    if not motion_rtsp.startswith(base + "/") and motion_rtsp != base:
-        return None
-    return motion_rtsp[len(base) :].lstrip("/") or None
+    """Last path segment of rtsp://go2rtc:8554/<key> when using the go2rtc relay.
+
+    Percent-decoded so it can be matched against go2rtc's /api/streams map,
+    whose keys are the raw stream names (with spaces, etc.) as registered.
+    """
+    return go2rtc_stream_name_from_rtsp(motion_rtsp, go2rtc_rtsp_url)
 
 
 def motion_stream_has_go2rtc_producers(

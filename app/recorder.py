@@ -33,7 +33,14 @@ RETENTION_INTERVAL   = int(os.environ.get("RECORDING_RETENTION_SECONDS", "300"))
 FFMPEG_RESTART_DELAY = int(os.environ.get("FFMPEG_RESTART_DELAY_SECONDS", "5"))
 GO2RTC_RTSP_URL      = os.environ.get("GO2RTC_RTSP_URL", "")
 MAX_CRASHES          = int(os.environ.get("RECORDING_MAX_CRASHES", "3"))
-SHELVE_RETRY_MIN     = int(os.environ.get("RECORDING_SHELVE_RETRY_MINUTES", "10"))
+SHELVE_RETRY_MIN     = int(os.environ.get("RECORDING_SHELVE_RETRY_MINUTES", "1"))
+# Any FFmpeg run that stayed up at least this long is considered healthy; the
+# next crash is treated as a fresh first-offence rather than accumulating
+# toward the shelve threshold. This keeps brief upstream hiccups (e.g. a
+# go2rtc container restart or NVR session drop) from disabling recording for
+# minutes at a time while still letting persistently-broken cameras fail fast
+# (crashes within the first few seconds still accumulate as before).
+HEALTHY_RUN_SECONDS  = int(os.environ.get("RECORDING_HEALTHY_RUN_SECONDS", "60"))
 STAGGER_DELAY        = float(os.environ.get("RECORDING_STAGGER_SECONDS", "2"))
 # Rolling segment buffer for events_only cameras (hours); older segments are purged first.
 EVENTS_ONLY_BUFFER_HOURS = int(os.environ.get("EVENTS_ONLY_BUFFER_HOURS", "48"))
@@ -293,7 +300,21 @@ class RecordingEngine:
                     continue
 
                 rt = time.time() - p["started_at"]
-                cr = p.get("crashes", 0) + 1
+                prev_cr = p.get("crashes", 0)
+                # A run that was healthy for at least HEALTHY_RUN_SECONDS is
+                # proof FFmpeg / the upstream stream were fine. Treat this
+                # crash as a fresh first-offence so the prior short-run
+                # failures don't stack into a shelve. Run-times below that
+                # keep accumulating, so a truly broken camera (e.g. bad URL,
+                # dead stream) still trips the shelve circuit breaker quickly.
+                if rt >= HEALTHY_RUN_SECONDS and prev_cr > 0:
+                    logger.info(
+                        "Resetting crash counter for %s after %ds healthy run (was %d)",
+                        name, int(rt), prev_cr,
+                    )
+                    cr = 1
+                else:
+                    cr = prev_cr + 1
                 p["crashes"] = cr
 
                 err = ""
@@ -308,7 +329,10 @@ class RecordingEngine:
 
                 if cr >= MAX_CRASHES:
                     if cr == MAX_CRASHES:
-                        logger.warning("Shelving %s (%d crashes)", name, cr)
+                        logger.warning(
+                            "Shelving %s (%d short-lived crashes, retry in %dm)",
+                            name, cr, SHELVE_RETRY_MIN,
+                        )
                     p["shelved"] = True
                     p["retry_at"] = time.time() + SHELVE_RETRY_MIN * 60
                     continue
@@ -553,7 +577,8 @@ class RecordingEngine:
                        "recordings_free_gb": free_gb,
                        "source": "go2rtc_relay" if GO2RTC_RTSP_URL else "direct_rtsp",
                        "stagger_seconds": STAGGER_DELAY,
-                       "shelve_after": MAX_CRASHES, "shelve_retry_min": SHELVE_RETRY_MIN},
+                       "shelve_after": MAX_CRASHES, "shelve_retry_min": SHELVE_RETRY_MIN,
+                       "healthy_run_seconds": HEALTHY_RUN_SECONDS},
         }
 
 

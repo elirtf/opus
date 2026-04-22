@@ -137,8 +137,9 @@ def _get_stream_health_cached():
 
 def _live_view_playback_warnings(video_codec: str | None) -> list[dict[str, str]]:
     """
-    go2rtc WebRTC requires codecs the browser can negotiate (typically H.264, VP8, VP9, AV1).
-    H.265/HEVC from the camera often yields: codecs not matched: video:H265 => ...
+    HEVC support across browsers / MSE varies (Firefox can't play it, Chrome
+    requires hardware decode, Safari/Edge usually fine). Surface a single
+    advisory so a black tile has an explanation.
     """
     if not video_codec:
         return []
@@ -146,11 +147,12 @@ def _live_view_playback_warnings(video_codec: str | None) -> list[dict[str, str]
     if "265" in u or "HEVC" in u:
         return [
             {
-                "code": "HEVC_WEBRTC",
+                "code": "HEVC_LIVE",
                 "message": (
-                    "This stream is H.265 (HEVC). Web browsers cannot negotiate H.265 over WebRTC, "
-                    "so go2rtc reports a codec mismatch (for example: video:H265 vs H.264/VP8/VP9/AV1). "
-                    "Configure an H.264 sub stream, or add FFmpeg transcoding in go2rtc — see go2rtc/README-HEVC.md."
+                    "This stream is H.265 (HEVC). Some browsers can't decode HEVC without "
+                    "hardware support — if live view is black, prefer an H.264 sub stream "
+                    "or enable per-camera FFmpeg transcoding (Camera configuration → Transcode). "
+                    "Recording still works regardless — segments are stream-copied."
                 ),
             }
         ]
@@ -602,7 +604,6 @@ def camera_streams(name: str):
     return api_response({
         "stream_name": live_key,
         "stream_selection_reason": live_reason,
-        "webrtc": f"/go2rtc/api/webrtc?src={live_key}",
         "mse": f"/go2rtc/stream.mse?src={live_key}",
         "hls": f"/go2rtc/stream.m3u8?src={live_key}",
         "html": f"/go2rtc/stream.html?src={live_key}&mode=mse",
@@ -701,7 +702,7 @@ def camera_stats(name: str):
                 "is_transcoded_live": is_transcoded_live,
                 "benchmark_hint": {
                     "target_test_minutes_per_mode": 3,
-                    "modes": ["webrtc", "mse", "hls"],
+                    "modes": ["mse", "hls"],
                 },
             }
         )

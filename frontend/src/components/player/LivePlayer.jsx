@@ -34,12 +34,10 @@ function buildLiveStreamKeyChain(cameraName, streamNameProp, preferSubStream, en
 }
 
 /**
- * Live playback strategy: go2rtc `stream.html` iframe for MSE/WebRTC,
- * with hls.js fallback.  Auto mode now defaults to MSE on desktop
- * (no ICE setup needed, reliable across browsers) and HLS on
- * touch/narrow viewports.  A full fallback chain (e.g. mse -> hls,
- * or webrtc -> mse -> hls) ensures the user sees video even when
- * the first mode fails.
+ * Live playback strategy: go2rtc `stream.html` iframe for MSE, with hls.js
+ * fallback. Auto mode defaults to MSE on desktop and HLS on touch/narrow
+ * viewports. A fallback chain (mse -> hls) ensures the user sees video even
+ * when the first mode fails.
  */
 function resolveMode(playbackMode) {
   if (playbackMode === "auto") {
@@ -50,7 +48,6 @@ function resolveMode(playbackMode) {
 }
 
 const FALLBACK_CHAINS = {
-  webrtc: ["webrtc", "mse", "hls"],
   mse: ["mse", "hls"],
   hls: ["hls", "mse"],
 };
@@ -61,9 +58,9 @@ const IFRAME_LOAD_TIMEOUT_MS = 20000;
 
 /**
  * LivePlayer
- * - Uses go2rtc `stream.html` iframe for MSE/WebRTC (desktop).
+ * - Uses go2rtc `stream.html` iframe for MSE (desktop).
  * - Falls back to HLS (<video> + hls.js / native) on touch/narrow devices.
- * - Automatic fallback chain when a mode fails (e.g. mse -> hls).
+ * - Automatic fallback chain when a mode fails (mse -> hls).
  */
 export default function LivePlayer({
   cameraName,
@@ -137,8 +134,7 @@ export default function LivePlayer({
 
   const iframeSrc = useMemo(() => {
     if (!streamKey || mode === "hls") return null;
-    const m = mode === "webrtc" ? "webrtc" : "mse";
-    const path = `/go2rtc/stream.html?src=${encodeURIComponent(streamKey)}&mode=${encodeURIComponent(m)}`;
+    const path = `/go2rtc/stream.html?src=${encodeURIComponent(streamKey)}&mode=mse`;
     return withOrigin(path);
   }, [streamKey, mode]);
 
@@ -264,10 +260,7 @@ function Go2rtcIframe({ src, title, cameraName, currentMode, streamKey, onTimeou
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/85 text-amber-100 text-xs px-4 text-center z-10">
           <p>Stream not responding (embedded player timed out).</p>
           <p className="text-gray-400 max-w-sm">
-            If you saw a go2rtc error like &quot;codecs not matched: video:H265&quot;, the
-            camera is sending H.265 but the browser cannot negotiate that codec over WebRTC.
-            Use an H.264 stream, or FFmpeg transcoding in go2rtc. Also check ICE (Configuration
-            &rarr; Streaming). {PLAYBACK_FAIL_HEVC_HINT}
+            {PLAYBACK_FAIL_HEVC_HINT}
           </p>
           <button
             type="button"

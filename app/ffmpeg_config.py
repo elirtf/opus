@@ -4,7 +4,7 @@ Set FFMPEG_HWACCEL to none (default), cuda, qsv, vaapi, videotoolbox, dxva2, d3d
 Optional FFMPEG_HWACCEL_DEVICE for multi-GPU (e.g. 0).
 
 Recording typically uses stream copy, so H.265 is preserved in MP4; browser live view
-may still need H.264/WebRTC — see go2rtc/README-HEVC.md.
+may need an H.264 sub stream or per-camera transcoding — see go2rtc/README-HEVC.md.
 """
 
 import os

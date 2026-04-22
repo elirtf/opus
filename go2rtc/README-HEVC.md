@@ -6,34 +6,21 @@ Segment recording uses **stream copy** (`-c:v copy`) when possible, so **H.265 o
 
 ## Live view (browser)
 
-Many browsers **do not** support HEVC inside **MSE** (`mode=mse` in `stream.html`). Firefox often shows errors like “No video with supported format or MIME type found.”
+Opus live view uses **MSE** (desktop, via `stream.html?mode=mse`) and **HLS** (touch / narrow viewports). HEVC support over these paths depends on the browser:
 
-### “codecs not matched: video:H265 => …” (WebRTC)
+- **Firefox** — no HEVC in MSE; expect "No video with supported format or MIME type found."
+- **Chrome / Edge** — HEVC in MSE only when the host has hardware decode support.
+- **Safari / Edge on Apple silicon** — HEVC generally fine.
 
-go2rtc may log or show something like:
+If a camera's live tile is black on your machine, the camera is almost certainly sending H.265 and your browser can't decode it.
 
-`webrtc/offer: streams: codecs not matched: video:H265 => video:VP8, video:VP9, video:H264, video:AV1, …`
+## Mitigations
 
-**Meaning:** The RTSP stream is **H.265 (HEVC)**. **WebRTC** in the browser only negotiates certain codecs (typically **H.264**, **VP8**, **VP9**, **AV1** — not H.265 in this path). go2rtc cannot map the camera’s H.265 track to what the browser offers, so setup fails.
+1. **Substream H.264** — Configure the camera or NVR so the **sub stream** is H.264; the dashboard and camera page prefer the sub stream for `*-main` tiles automatically.
 
-**What to do:** Use a stream that is **H.264** for live view (often the camera **sub stream**), or configure go2rtc **FFmpeg** transcoding to H.264. Opus may show a warning on the single-camera page when go2rtc reports HEVC on the live preview stream.
+2. **Per-camera transcode** — Set **Transcode** on the camera (Camera configuration UI). Opus will write the stream as `ffmpeg:rtsp://...#video=h264` in `go2rtc.yaml` so go2rtc runs an FFmpeg child process that re-encodes to H.264 for the browser. Note: transcoding is CPU-expensive; enable it only for cameras that need it.
 
-### WebRTC and reverse proxies
-
-`mode=webrtc` in go2rtc’s player negotiates UDP/WebRTC to the go2rtc host. Behind **Docker + nginx**, the browser often cannot reach those ICE candidates, which produces **“WebRTC: ICE failed”** in devtools. Fixing that usually means **reachable ICE candidates** (see **Configuration → Streaming** in Opus), **STUN/TURN**, or **host networking** for go2rtc. See [docs/remote-viewing.md](../docs/remote-viewing.md) for remote access and ICE.
-
-**How Opus uses this:**
-
-- **Single-camera page** (`/camera/...`): On **desktop / fine pointer** viewports, the UI requests **`mode=webrtc`** for lower latency. On **touch or narrow** viewports it uses the same **auto** path as the dashboard (**HLS** on small screens, **MSE** iframe elsewhere) for reliability and to avoid runaway HLS retries on some Safari builds.
-- **Dashboard tiles**: **MSE** (desktop) or **HLS** (mobile/narrow) via `playbackMode="auto"` — not WebRTC — so many simultaneous tiles are less likely to overwhelm ICE.
-
-**Mitigations:**
-
-1. **ICE candidates** — Set **stun:** / **turn:** lines under **Configuration → Streaming** (saved into `go2rtc.yaml`); restart the **go2rtc** container. Example public STUN: `stun:stun.l.google.com:19302`.
-
-2. **Substream H.264** — Configure the camera or NVR so the **sub stream** is H.264; the dashboard uses the sub stream for `*-main` tiles.
-
-3. **Transcode in go2rtc** — Point the stream at an FFmpeg pipeline that outputs H.264. See the [go2rtc documentation](https://github.com/AlexxIT/go2rtc) for `ffmpeg:` sources and hardware acceleration.
+3. **Transcode in go2rtc directly** — Point the stream at an FFmpeg pipeline that outputs H.264. See the [go2rtc documentation](https://github.com/AlexxIT/go2rtc) for `ffmpeg:` sources and hardware acceleration.
 
 Example idea (adjust for your RTSP URL and hardware):
 

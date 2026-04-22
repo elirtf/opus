@@ -11,7 +11,7 @@ from typing import Any
 
 import yaml
 
-from app.go2rtc_settings import allow_exec_module, get_webrtc_candidates
+from app.go2rtc_settings import allow_exec_module
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,6 @@ _DEFAULT_ALLOW_PATHS: tuple[str, ...] = (
     "/api",
     "/api/streams",
     "/api/ws",
-    "/api/webrtc",
     "/api/stream.m3u8",
     "/api/stream.mp4",
     "/api/frame.jpeg",
@@ -38,7 +37,8 @@ _DEFAULT_ALLOW_PATHS: tuple[str, ...] = (
 
 def _base_modules(include_exec: bool) -> list[str]:
     # Keep ws/mp4/hls/streams enabled explicitly; stream.html relies on /api/ws and HLS/MP4 APIs.
-    mods = ["api", "ws", "streams", "rtsp", "webrtc", "ffmpeg", "mp4", "hls", "mjpeg"]
+    # WebRTC is intentionally omitted — Opus plays back via MSE (desktop) and HLS (touch) only.
+    mods = ["api", "ws", "streams", "rtsp", "ffmpeg", "mp4", "hls", "mjpeg"]
     if include_exec:
         mods.append("exec")
     return mods
@@ -127,7 +127,6 @@ def _streams_need_exec_module(streams: dict[str, list[str]]) -> bool:
 
 def build_go2rtc_config_dict() -> dict[str, Any]:
     """Merged go2rtc config (safe defaults + DB)."""
-    candidates = get_webrtc_candidates()
     streams = _build_streams_from_db()
     include_exec = allow_exec_module() or _streams_need_exec_module(streams)
 
@@ -138,7 +137,6 @@ def build_go2rtc_config_dict() -> dict[str, Any]:
             "origin": "*",
         },
         "log": {"format": "text"},
-        "webrtc": {"candidates": candidates},
         # Lets go2rtc pick up FFmpeg from PATH; reconnect behaviour is handled per producer internally.
         "ffmpeg": {"bin": "ffmpeg"},
     }

@@ -127,10 +127,9 @@ export default function CameraView() {
               setModeOverride(v);
             }}
             className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200"
-            title="Saved in this browser (opus_live_playback_mode). Applies to dashboard tiles too. If live is choppy, try WebRTC; if the stream fails (e.g. H.265), try MSE or HLS."
+            title="Saved in this browser (opus_live_playback_mode). Applies to dashboard tiles too. Auto picks MSE on desktop and HLS on touch; override if one mode misbehaves on your device."
           >
             <option value="auto">Auto</option>
-            <option value="webrtc">WebRTC</option>
             <option value="mse">MSE</option>
             <option value="hls">HLS</option>
           </select>
@@ -176,8 +175,8 @@ export default function CameraView() {
 
       <div className="flex-1 bg-black min-h-0">
         {/*
-          Desktop: WebRTC for lower latency unless go2rtc stats report HEVC (then MSE).
-          Touch / narrow: same auto path as dashboard (HLS). Substream matches dashboard.
+          Desktop: MSE (lower latency than HLS, no per-consumer server-side FFmpeg).
+          Touch / narrow: HLS (adaptive bitrate, less decode pressure). Substream matches dashboard.
         */}
         <LivePlayer
           cameraName={cam.name}

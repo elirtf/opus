@@ -87,7 +87,7 @@ const SETTINGS_GROUP_LABELS = {
 const SETTINGS_GROUP_SUBTITLES = {
   recording: 'How long to keep recordings, segment size, and disk thresholds.',
   motion: 'Timing for motion-triggered clip capture.',
-  streaming: 'WebRTC ICE candidates and go2rtc security options.',
+  streaming: 'go2rtc security options (exec sources).',
   performance: 'Hardware acceleration and motion analysis tuning.',
 }
 
@@ -339,25 +339,12 @@ function SettingsPanel({ isOriginalAdmin, onSuccess, onError }) {
         }
         if (!Object.keys(changed).length) return
 
-        // Validate ICE candidates before sending
-        if (changed.go2rtc_webrtc_candidates) {
-          const lines = changed.go2rtc_webrtc_candidates
-          for (const ln of lines) {
-            if (!/^(stun|turn):/i.test(ln)) {
-              onError(`Each ICE line must start with stun: or turn:. Invalid: ${ln.slice(0, 96)}`)
-              return
-            }
-          }
-        }
-
         // Split into go2rtc and recording settings payloads
         const go2rtcPayload = {}
         const recordingPayload = {}
 
         for (const [key, val] of Object.entries(changed)) {
-          if (key === 'go2rtc_webrtc_candidates') {
-            go2rtcPayload.webrtc_candidates = val.length ? val : ['stun:8555']
-          } else if (key === 'go2rtc_allow_arbitrary_exec') {
+          if (key === 'go2rtc_allow_arbitrary_exec') {
             go2rtcPayload.allow_arbitrary_exec = val
           } else if (key === 'go2rtc_allow_exec_module') {
             go2rtcPayload.allow_exec_module = val

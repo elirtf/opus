@@ -9,26 +9,25 @@ export function isFirefox() {
 
 /**
  * Prefer HLS on touch / narrow viewports where decode pressure is higher
- * and adaptive bitrate helps.  Desktop browsers (including Firefox) now
- * default to MSE which is more reliable than WebRTC (no ICE required) and
- * avoids the server-side FFmpeg that go2rtc HLS spins up per consumer.
+ * and adaptive bitrate helps. Desktop defaults to MSE (lower latency, avoids
+ * the per-consumer server-side FFmpeg that go2rtc HLS spins up).
  */
 export function shouldPreferHlsForDevice() {
   if (typeof window === "undefined") return false;
   const override = getPlaybackModeOverride();
   if (override === "hls") return true;
-  if (override === "mse" || override === "webrtc") return false;
+  if (override === "mse") return false;
   if (window.matchMedia("(pointer: coarse)").matches) return true;
   return false;
 }
 
-/** go2rtc / browser: WebRTC cannot negotiate H.265 from the camera with typical browsers. */
-export const HEVC_WEBRTC_WARNING_CODE = "HEVC_WEBRTC";
+/** HEVC decode support varies by browser (Firefox: no, Chrome: needs hw, Safari/Edge: yes). */
+export const HEVC_LIVE_WARNING_CODE = "HEVC_LIVE";
 
 /**
- * Single-camera page playback mode.  Defaults to MSE on desktop (most
- * reliable -- no ICE setup, no server-side FFmpeg).  Falls back to "auto"
- * on touch devices (-> HLS).  Users can override via localStorage.
+ * Single-camera page playback mode. Defaults to MSE on desktop (lower latency,
+ * no server-side FFmpeg). Falls back to "auto" on touch (-> HLS). Users can
+ * override via localStorage.
  */
 export function cameraPagePlaybackMode(streamStats) {
   const override = getPlaybackModeOverride();
@@ -38,7 +37,7 @@ export function cameraPagePlaybackMode(streamStats) {
 }
 
 const PLAYBACK_MODE_KEY = "opus_live_playback_mode";
-const PLAYBACK_MODES = new Set(["auto", "hls", "mse", "webrtc"]);
+const PLAYBACK_MODES = new Set(["auto", "hls", "mse"]);
 
 export function getPlaybackModeOverride() {
   if (typeof localStorage === "undefined") return "auto";

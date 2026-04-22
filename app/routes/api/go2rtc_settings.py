@@ -33,28 +33,6 @@ def update_go2rtc_settings():
 
     data = request.get_json(silent=True) or {}
 
-    if "webrtc_candidates" in data:
-        raw = data["webrtc_candidates"]
-        if isinstance(raw, str):
-            lines = [ln.strip() for ln in raw.replace(",", "\n").splitlines() if ln.strip()]
-            candidates = lines
-        elif isinstance(raw, list):
-            candidates = [str(x).strip() for x in raw if str(x).strip()]
-        else:
-            return api_error("webrtc_candidates must be a list of strings or newline-separated text.", 400)
-        if len(candidates) > 32:
-            return api_error("At most 32 WebRTC candidates allowed.", 400)
-        for c in candidates:
-            if len(c) > 512:
-                return api_error("Each candidate must be at most 512 characters.", 400)
-        old_candidates = gset.get_webrtc_candidates()
-        try:
-            gset.set_webrtc_candidates(candidates)
-        except ValueError as e:
-            return api_error(str(e), 400)
-        if old_candidates != candidates:
-            write_audit("go2rtc_webrtc_candidates", ",".join(old_candidates), ",".join(candidates))
-
     if "allow_arbitrary_exec" in data:
         if gset.env_arbitrary_exec_is_set():
             return api_error(

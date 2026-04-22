@@ -21,16 +21,15 @@
 
 ---
 
-## If live view breaks (ICE / black screen)
+## If live view breaks (black screen)
 
-**Configuration → Settings** → Streaming → **WebRTC ICE candidates** (one per line, each starts with `stun:` or `turn:` in go2rtc format).
+Opus plays back live streams via **MSE** (desktop) and **HLS** (touch). There is no WebRTC / ICE / STUN layer, so remote viewing over a VPN behaves the same as LAN viewing.
 
-Examples:
+If a tile is black:
 
-- `stun:stun.l.google.com:19302` — often helps on the public internet; over VPN you may still use it or rely on direct paths.
-- `stun:8555` — works when the browser can reach go2rtc’s UDP on the Opus host (common on the same LAN; over VPN it depends on your layout).
-
-After changes, **restart the go2rtc container**. On the camera page, try **MSE** or **HLS** if a mode fails.
+- **Try the other mode.** On the camera page, switch **Mode** between **MSE** and **HLS**. If MSE fails but HLS works, the most likely cause is browser HEVC support — see [go2rtc/README-HEVC.md](../go2rtc/README-HEVC.md).
+- **Check the sub stream.** The dashboard prefers `*-sub` for tiles. If the NVR sub stream is offline, the UI falls back to `*-main`, which may be HEVC.
+- **Restart go2rtc** if you recently changed streams or transcoding in the Configuration page — go2rtc reloads `go2rtc.yaml` only at container start.
 
 ---
 

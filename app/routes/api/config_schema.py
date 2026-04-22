@@ -226,15 +226,6 @@ SCHEMA = [
     },
     # Streaming / go2rtc
     {
-        "key": "go2rtc_webrtc_candidates",
-        "label": "WebRTC ICE candidates",
-        "type": "string_list",
-        "default": ["stun:8555"],
-        "apply": "go2rtc",
-        "description": "ICE candidates written to go2rtc.yaml. Restart go2rtc after changes.",
-        "group": "streaming",
-    },
-    {
         "key": "go2rtc_allow_arbitrary_exec",
         "label": "Allow arbitrary exec sources",
         "type": "bool",
@@ -259,7 +250,6 @@ def _current_values():
     """Read current value for every schema key from the existing settings APIs."""
     from app.routes.api.recording_settings import get_setting, DEFAULTS
     from app.go2rtc_settings import (
-        get_webrtc_candidates,
         allow_arbitrary_exec_sources,
         allow_exec_module,
     )
@@ -267,9 +257,7 @@ def _current_values():
     values = {}
     for entry in SCHEMA:
         key = entry["key"]
-        if key == "go2rtc_webrtc_candidates":
-            values[key] = get_webrtc_candidates()
-        elif key == "go2rtc_allow_arbitrary_exec":
+        if key == "go2rtc_allow_arbitrary_exec":
             values[key] = allow_arbitrary_exec_sources()
         elif key == "go2rtc_allow_exec_module":
             values[key] = allow_exec_module()

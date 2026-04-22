@@ -22,7 +22,26 @@ from app.routes.api.utils import (
 )
 
 RECORDING_POLICIES = frozenset({"off", "continuous", "events_only"})
-from app.go2rtc import stream_sync, stream_delete, validate_stream_url_for_go2rtc
+from app.go2rtc import (
+    stream_sync,
+    stream_delete,
+    validate_stream_url_for_go2rtc,
+    ENABLE_GO2RTC_RECORD_SOURCE,
+)
+
+
+def _stream_registration_signature(cam):
+    """Snapshot of fields that actually drive go2rtc's registration for a camera.
+
+    If none of these change on an update, there is no reason to DELETE + PUT the
+    stream — doing so evicts a live producer and causes mid-playback flicker.
+    """
+    return (
+        cam.name,
+        (cam.rtsp_url or "").strip(),
+        (getattr(cam, "rtsp_substream_url", None) or "").strip(),
+        bool(getattr(cam, "transcode", False)),
+    )
 
 bp = Blueprint("api_cameras", __name__, url_prefix="/api/cameras")
 
@@ -316,6 +335,7 @@ def update_camera(cam_id):
 
     data = request.get_json(silent=True) or {}
     old_name = cam.name
+    old_sig = _stream_registration_signature(cam)
 
     if "name" in data:
         cam.name = (data["name"] or "").strip()
@@ -371,13 +391,20 @@ def update_camera(cam_id):
 
     cam.save()
 
+    new_sig = _stream_registration_signature(cam)
+    stream_fields_changed = old_sig != new_sig
+
+    # Only touch go2rtc when something it actually cares about changed.
+    # display_name / active / nvr_id / recording_* do not influence registration.
     if old_name != cam.name:
         stream_delete(old_name)
         old_pair = _paired_stream_name(old_name)
         new_pair = _paired_stream_name(cam.name)
         if old_pair and old_pair != new_pair:
             stream_delete(old_pair)
-    stream_sync(cam)
+
+    if stream_fields_changed:
+        stream_sync(cam)
 
     nvr_map = {nvr.id: nvr for nvr in NVR.select()}
     health = _get_stream_health_cached()
@@ -417,7 +444,11 @@ def toggle_recording(cam_id):
 
     cam.recording_enabled = enabled
     cam.save()
-    stream_sync(cam)
+
+    # Recording is handled by Opus's own recorder service. go2rtc only needs
+    # re-registration when the optional record: sink is enabled server-wide.
+    if ENABLE_GO2RTC_RECORD_SOURCE:
+        stream_sync(cam)
 
     status = "enabled" if cam.recording_enabled else "disabled"
     return api_response(

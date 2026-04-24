@@ -11,6 +11,7 @@ import signal
 import subprocess
 import threading
 import time
+from collections import deque
 import shutil
 import logging
 from app.config import get_recordings_dir
@@ -21,6 +22,40 @@ from app import recorder_segments
 from app.routes.api.utils import env_bool
 
 logger = logging.getLogger("opus.recorder")
+
+
+def _start_ffmpeg_stderr_drain(proc: subprocess.Popen, camera_name: str):
+    """
+    FFmpeg is started with stderr=PIPE so crashes can be diagnosed. The supervisor
+    must drain that pipe while the process runs; otherwise the OS buffer fills and
+    FFmpeg blocks on logging (segment rotation appears to stall indefinitely).
+    Returns (daemon_thread, deque of recent lines for last_error on exit).
+    """
+    recent: deque[str] = deque(maxlen=80)
+
+    def _run():
+        try:
+            errpipe = proc.stderr
+            if errpipe is None:
+                return
+            for line in iter(errpipe.readline, b""):
+                if not line:
+                    break
+                text = line.decode(errors="replace").rstrip()
+                if text:
+                    recent.append(text)
+                    logger.debug("%s ffmpeg: %s", camera_name, text)
+        except Exception:
+            logger.exception("stderr drain failed for %s", camera_name)
+
+    t = threading.Thread(
+        target=_run,
+        name="ffmpeg-stderr-%s" % (camera_name[:24] or "cam"),
+        daemon=True,
+    )
+    t.start()
+    return t, recent
+
 
 RECORDINGS_DIR       = get_recordings_dir()
 SEGMENT_MINUTES      = int(os.environ.get("RECORDING_SEGMENT_MINUTES", "5"))
@@ -318,8 +353,23 @@ class RecordingEngine:
                 p["crashes"] = cr
 
                 err = ""
+                thr = p.get("stderr_thread")
+                joined = True
+                if thr is not None:
+                    thr.join(timeout=3.0)
+                    joined = not thr.is_alive()
                 try:
-                    err = proc.stderr.read().decode(errors="replace")[-300:]
+                    parts = []
+                    buf = p.get("stderr_buf")
+                    if buf:
+                        parts.append("\n".join(buf))
+                    if joined and proc.stderr is not None:
+                        rest = proc.stderr.read()
+                        if rest:
+                            parts.append(rest.decode(errors="replace"))
+                    combined = "\n".join(parts).strip()
+                    if combined:
+                        err = combined[-300:]
                 except Exception:
                     pass
                 p["last_error"] = err or "exit %s" % proc.returncode
@@ -414,11 +464,14 @@ class RecordingEngine:
             logger.exception("FFmpeg launch failed: %s", cam.name)
             return
 
+        stderr_thread, stderr_buf = _start_ffmpeg_stderr_drain(proc, cam.name)
         self._procs[cam.name] = {
             "process": proc, "camera_id": cam.id, "source": src,
             "started_at": time.time(), "crashes": 0, "last_error": None,
             "shelved": False, "wait_until": None, "retry_at": None,
             "segment_minutes": seg_min,
+            "stderr_thread": stderr_thread,
+            "stderr_buf": stderr_buf,
         }
         logger.info("Recording: %s PID=%d src=%s", cam.name, proc.pid, src)
 

@@ -70,6 +70,10 @@ Segment FFmpeg arguments follow the same copy-record / RTSP input pattern as [Fr
 
 Documented in [docker-compose.yml](../docker-compose.yml) comments and recorder code.
 
+### Recorder: FFmpeg stderr (operations)
+
+The recorder service runs one long-lived **FFmpeg** process per camera. FFmpeg’s **standard error** stream (diagnostic text) is read continuously in a **background thread** so the small **pipe buffer** between FFmpeg and Python cannot fill up. If that buffer fills, FFmpeg can **block** while trying to log; segment rotation then appears to **stall** even though the process still looks “running.” Recent stderr lines are kept for **`last_error`** when a process exits. For deeper diagnosis, enable debug logging for the `opus.recorder` logger and watch for `ffmpeg:` lines.
+
 ### Motion / FFmpeg tuning (recorder + processor)
 
 | Variable | Role |

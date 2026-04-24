@@ -66,7 +66,8 @@ const _MAX_METRICS = 200;
 
 /**
  * Record a playback startup event (success or failure).
- * @param {{ camera: string, mode: string, success: boolean, ttffMs?: number, fallbackReason?: string }} entry
+ * @param {{ camera: string, mode: string, success: boolean, ttffMs?: number, fallbackReason?: string, milestone?: string }} entry
+ * `milestone: "embed_dom_ready"` — iframe document loaded; not time-to-first-frame (see go2rtc embed).
  */
 export function recordPlaybackMetric(entry) {
   const record = { ...entry, ts: Date.now() };
@@ -74,10 +75,17 @@ export function recordPlaybackMetric(entry) {
   if (_metricsLog.length > _MAX_METRICS) {
     _metricsLog.splice(0, _metricsLog.length - _MAX_METRICS);
   }
-  const tag = record.success ? "ok" : "fail";
+  const tag =
+    record.milestone === "embed_dom_ready"
+      ? "embed"
+      : record.success
+        ? "ok"
+        : "fail";
+  const timingLabel = record.milestone === "embed_dom_ready" ? "embed-ready-ms" : "ttff-ms";
   console.debug(
-    `[playback:${tag}] ${record.camera} mode=${record.mode} ttff=${record.ttffMs ?? "\u2014"}ms` +
-      (record.fallbackReason ? ` reason=${record.fallbackReason}` : "")
+    `[playback:${tag}] ${record.camera} mode=${record.mode} ${timingLabel}=${record.ttffMs ?? "\u2014"}` +
+      (record.fallbackReason ? ` reason=${record.fallbackReason}` : "") +
+      (record.milestone ? ` milestone=${record.milestone}` : "")
   );
 }
 

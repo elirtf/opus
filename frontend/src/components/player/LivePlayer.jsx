@@ -7,6 +7,7 @@ import {
 } from "react";
 import Hls from "hls.js";
 import { withOrigin } from "../../api/client";
+import { camerasApi } from "../../api/cameras";
 import {
   isFirefox,
   PLAYBACK_FAIL_HEVC_HINT,
@@ -35,8 +36,8 @@ function buildLiveStreamKeyChain(cameraName, streamNameProp, preferSubStream, en
 
 /**
  * Live playback strategy: go2rtc `stream.html` iframe for MSE, with hls.js
- * fallback. Auto mode defaults to MSE on desktop and HLS on touch/narrow
- * viewports. A fallback chain (mse -> hls) ensures the user sees video even
+ * fallback. Auto mode defaults to MSE on desktop and HLS on touch viewports.
+ * A fallback chain (mse -> hls) ensures the user sees video even
  * when the first mode fails.
  */
 function resolveMode(playbackMode) {
@@ -52,15 +53,23 @@ const FALLBACK_CHAINS = {
   hls: ["hls", "mse"],
 };
 
-const MAX_HLS_RETRIES = 1;
+/** Extra HLS rebuild attempts after a fatal error (each path retries up to this many rebuilds). */
+const MAX_HLS_RETRIES_FULL = 2;
+const MAX_HLS_RETRIES_TILE = 2;
 const RETRY_DELAY_MS = 3000;
+const RETRY_BACKOFF_CAP_MS = 8000;
 const IFRAME_LOAD_TIMEOUT_MS = 20000;
+
+const PRODUCER_POLL_MS = 2000;
+const PRODUCER_WAIT_MAX_MS = 60000;
 
 /**
  * LivePlayer
  * - Uses go2rtc `stream.html` iframe for MSE (desktop).
- * - Falls back to HLS (<video> + hls.js / native) on touch/narrow devices.
+ * - Falls back to HLS (<video> + hls.js / native) on touch devices.
  * - Automatic fallback chain when a mode fails (mse -> hls).
+ * @param {boolean} [compactLiveTile] — Gentler HLS buffering for dashboard tiles.
+ * @param {boolean} [pollForProducer] — Wait for camera stats `online` before starting (single-camera page).
  */
 export default function LivePlayer({
   cameraName,
@@ -70,9 +79,12 @@ export default function LivePlayer({
   preferSubStream = true,
   playbackMode = "auto",
   nativeVideoControls = true,
+  compactLiveTile = false,
+  pollForProducer = false,
 }) {
   const resolvedMode = resolveMode(playbackMode);
-  const [failedModes, setFailedModes] = useState(new Set());
+  const [modeFailuresByStreamKey, setModeFailuresByStreamKey] = useState({});
+  const [producerReady, setProducerReady] = useState(!pollForProducer);
 
   const streamKeys = useMemo(
     () => buildLiveStreamKeyChain(cameraName, streamNameProp, preferSubStream, enabled),
@@ -85,12 +97,56 @@ export default function LivePlayer({
   useEffect(() => {
     keyIndexRef.current = 0;
     setKeyIndex(0);
-    setFailedModes(new Set());
+    setModeFailuresByStreamKey({});
   }, [cameraName, streamNameProp, playbackMode, streamKeys.join("|")]);
 
   useEffect(() => {
-    setFailedModes(new Set());
-  }, [keyIndex]);
+    if (!pollForProducer || !enabled || !cameraName) {
+      setProducerReady(true);
+      return undefined;
+    }
+
+    setProducerReady(false);
+    let cancelled = false;
+    const started = Date.now();
+
+    async function probe() {
+      try {
+        const st = await camerasApi.stats(cameraName);
+        if (cancelled) return;
+        if (st && st.online === true) {
+          setProducerReady(true);
+          return true;
+        }
+      } catch {
+        /* ignore until timeout */
+      }
+      if (cancelled) return false;
+      if (Date.now() - started >= PRODUCER_WAIT_MAX_MS) {
+        setProducerReady(true);
+        return true;
+      }
+      return false;
+    }
+
+    let intervalId;
+    (async function run() {
+      const ok = await probe();
+      if (cancelled || ok) return;
+      intervalId = setInterval(async () => {
+        const done = await probe();
+        if (done && intervalId) {
+          clearInterval(intervalId);
+          intervalId = null;
+        }
+      }, PRODUCER_POLL_MS);
+    })();
+
+    return () => {
+      cancelled = true;
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [pollForProducer, enabled, cameraName]);
 
   const tryAdvanceStreamKey = useCallback(() => {
     const max = streamKeys.length;
@@ -105,32 +161,54 @@ export default function LivePlayer({
     return false;
   }, [streamKeys]);
 
+  const streamKey = streamKeys[keyIndex] ?? null;
+
+  const chain = useMemo(
+    () => FALLBACK_CHAINS[resolvedMode] || [resolvedMode],
+    [resolvedMode],
+  );
+
   const mode = useMemo(() => {
-    const chain = FALLBACK_CHAINS[resolvedMode] || [resolvedMode];
-    return chain.find((m) => !failedModes.has(m)) || chain[chain.length - 1];
-  }, [resolvedMode, failedModes]);
+    if (!streamKey) return null;
+    const failedSet = new Set(modeFailuresByStreamKey[streamKey] || []);
+    return chain.find((m) => !failedSet.has(m)) ?? null;
+  }, [chain, streamKey, modeFailuresByStreamKey]);
+
+  const chainExhausted = useMemo(() => {
+    if (!streamKey) return false;
+    const failedSet = new Set(modeFailuresByStreamKey[streamKey] || []);
+    return chain.length > 0 && chain.every((m) => failedSet.has(m));
+  }, [chain, streamKey, modeFailuresByStreamKey]);
 
   const handleModeFailed = useCallback((failedMode) => {
-    setFailedModes((prev) => {
-      if (prev.has(failedMode)) return prev;
-      const next = new Set(prev);
-      next.add(failedMode);
-      return next;
+    const sk = streamKeys[keyIndexRef.current];
+    if (!sk) return;
+    setModeFailuresByStreamKey((prev) => {
+      const cur = new Set(prev[sk] || []);
+      if (cur.has(failedMode)) return prev;
+      cur.add(failedMode);
+      return { ...prev, [sk]: [...cur] };
     });
+  }, [streamKeys]);
+
+  const resetPlayback = useCallback(() => {
+    keyIndexRef.current = 0;
+    setKeyIndex(0);
+    setModeFailuresByStreamKey({});
   }, []);
 
-  // Stable callback refs — prevents child effects from restarting on every parent render
-  const onIframeTimeout = useCallback(() => {
-    if (tryAdvanceStreamKey()) return;
-    handleModeFailed(mode);
-  }, [handleModeFailed, mode, tryAdvanceStreamKey]);
+  const onIframeTimeout = useCallback(
+    (failedMode) => {
+      if (tryAdvanceStreamKey()) return;
+      handleModeFailed(failedMode || "mse");
+    },
+    [handleModeFailed, tryAdvanceStreamKey],
+  );
 
   const onHlsFailed = useCallback(() => {
     if (tryAdvanceStreamKey()) return;
     handleModeFailed("hls");
   }, [handleModeFailed, tryAdvanceStreamKey]);
-
-  const streamKey = streamKeys[keyIndex] ?? null;
 
   const iframeSrc = useMemo(() => {
     if (!streamKey || mode === "hls") return null;
@@ -145,13 +223,14 @@ export default function LivePlayer({
   }, [streamKey, mode]);
 
   const gatedOff = Boolean(cameraName) && !enabled;
+  const waitingProducer = enabled && pollForProducer && !producerReady;
 
   if (!streamKey) {
     if (gatedOff) {
       return (
         <div
           className={`relative w-full h-full bg-black ${className}`}
-          aria-hidden
+          aria-label="Live view paused"
         />
       );
     }
@@ -164,6 +243,39 @@ export default function LivePlayer({
     );
   }
 
+  if (waitingProducer) {
+    return (
+      <div
+        className={`relative w-full h-full bg-black flex flex-col items-center justify-center text-gray-400 text-sm gap-2 px-4 text-center ${className}`}
+      >
+        <p>Connecting to camera feed…</p>
+        <p className="text-gray-600 text-xs max-w-xs">
+          Waiting until the stream server reports this camera online (or timeout), then starting live view.
+        </p>
+      </div>
+    );
+  }
+
+  if (chainExhausted) {
+    return (
+      <div
+        className={`relative w-full h-full bg-black flex flex-col items-center justify-center gap-4 text-center px-4 text-amber-100 text-xs ${className}`}
+      >
+        <p className="text-gray-200 text-sm max-w-sm">
+          Live view could not start in either embedded mode or HTTP live streaming mode for this stream.
+        </p>
+        <p className="text-gray-500 max-w-sm">{PLAYBACK_FAIL_HEVC_HINT}</p>
+        <button
+          type="button"
+          onClick={resetPlayback}
+          className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-sm"
+        >
+          Retry live view
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className={`relative w-full h-full bg-black ${className}`}>
       {mode === "hls" && hlsUrl ? (
@@ -172,6 +284,8 @@ export default function LivePlayer({
           cameraName={cameraName}
           nativeControls={nativeVideoControls}
           isFallback={mode !== resolvedMode}
+          compactLiveTile={compactLiveTile}
+          maxHlsRetries={compactLiveTile ? MAX_HLS_RETRIES_TILE : MAX_HLS_RETRIES_FULL}
           onFailed={onHlsFailed}
         />
       ) : iframeSrc ? (
@@ -198,9 +312,10 @@ function Go2rtcIframe({ src, title, cameraName, currentMode, streamKey, onTimeou
   const [nonce, setNonce] = useState(0);
   const timerRef = useRef(null);
   const mountedAt = useRef(Date.now());
-  // Ref keeps latest callback without restarting the timer effect
   const onTimeoutRef = useRef(onTimeout);
   onTimeoutRef.current = onTimeout;
+  const currentModeRef = useRef(currentMode);
+  currentModeRef.current = currentMode;
 
   const clearTimer = useCallback(() => {
     if (timerRef.current) {
@@ -224,7 +339,7 @@ function Go2rtcIframe({ src, title, cameraName, currentMode, streamKey, onTimeou
         fallbackReason: "iframe_timeout",
         streamKey: streamKey || "",
       });
-      onTimeoutRef.current?.();
+      onTimeoutRef.current?.(currentModeRef.current || "mse");
     }, IFRAME_LOAD_TIMEOUT_MS);
     return () => clearTimer();
   }, [src, nonce, clearTimer, cameraName, title, currentMode, streamKey]);
@@ -235,8 +350,9 @@ function Go2rtcIframe({ src, title, cameraName, currentMode, streamKey, onTimeou
     recordPlaybackMetric({
       camera: cameraName || title,
       mode: currentMode || "iframe",
-      success: true,
+      success: false,
       ttffMs: Date.now() - mountedAt.current,
+      milestone: "embed_dom_ready",
     });
   }, [clearTimer, cameraName, title, currentMode]);
 
@@ -275,7 +391,15 @@ function Go2rtcIframe({ src, title, cameraName, currentMode, streamKey, onTimeou
   );
 }
 
-function HlsVideo({ src, cameraName, nativeControls = true, isFallback = false, onFailed }) {
+function HlsVideo({
+  src,
+  cameraName,
+  nativeControls = true,
+  isFallback = false,
+  compactLiveTile = false,
+  maxHlsRetries = MAX_HLS_RETRIES_FULL,
+  onFailed,
+}) {
   const videoRef = useRef(null);
   const hlsRef = useRef(null);
   const retryCount = useRef(0);
@@ -340,19 +464,31 @@ function HlsVideo({ src, cameraName, nativeControls = true, isFallback = false, 
       onFailedRef.current?.();
     }
 
+    const hlsLiveConfig = compactLiveTile
+      ? {
+          enableWorker: !isFirefox(),
+          lowLatencyMode: false,
+          liveSyncDurationCount: 2,
+          liveMaxLatencyDurationCount: 6,
+          maxBufferLength: 8,
+          maxMaxBufferLength: 16,
+          backBufferLength: 3,
+        }
+      : {
+          enableWorker: !isFirefox(),
+          lowLatencyMode: true,
+          liveSyncDurationCount: 1,
+          liveMaxLatencyDurationCount: 3,
+          maxBufferLength: 4,
+          maxMaxBufferLength: 8,
+          backBufferLength: 0,
+        };
+
     function startHlsJs() {
       cleanup();
       if (cancelled) return;
 
-      const hls = new Hls({
-        enableWorker: !isFirefox(),
-        lowLatencyMode: true,
-        liveSyncDurationCount: 1,
-        liveMaxLatencyDurationCount: 3,
-        maxBufferLength: 4,
-        maxMaxBufferLength: 8,
-        backBufferLength: 0,
-      });
+      const hls = new Hls(hlsLiveConfig);
       hlsRef.current = hls;
       hls.loadSource(src);
       hls.attachMedia(video);
@@ -364,11 +500,15 @@ function HlsVideo({ src, cameraName, nativeControls = true, isFallback = false, 
         hls.destroy();
         hlsRef.current = null;
 
-        if (retryCount.current < MAX_HLS_RETRIES) {
+        if (retryCount.current < maxHlsRetries) {
           retryCount.current++;
+          const delay = Math.min(
+            RETRY_DELAY_MS * retryCount.current,
+            RETRY_BACKOFF_CAP_MS,
+          );
           retryTimer.current = setTimeout(() => {
             if (!cancelled) startHlsJs();
-          }, RETRY_DELAY_MS);
+          }, delay);
         } else {
           hlsFailed("hls_fatal_error");
         }
@@ -390,11 +530,15 @@ function HlsVideo({ src, cameraName, nativeControls = true, isFallback = false, 
         video.removeAttribute("src");
         video.load();
 
-        if (retryCount.current < MAX_HLS_RETRIES) {
+        if (retryCount.current < maxHlsRetries) {
           retryCount.current++;
+          const delay = Math.min(
+            RETRY_DELAY_MS * retryCount.current,
+            RETRY_BACKOFF_CAP_MS,
+          );
           retryTimer.current = setTimeout(() => {
             if (!cancelled) startNativeHls();
-          }, RETRY_DELAY_MS);
+          }, delay);
         } else {
           hlsFailed("native_hls_error");
         }
@@ -431,7 +575,7 @@ function HlsVideo({ src, cameraName, nativeControls = true, isFallback = false, 
       video.removeAttribute("src");
       video.load();
     };
-  }, [src, nativeControls, cleanup, cameraName, isFallback]);
+  }, [src, nativeControls, cleanup, cameraName, isFallback, compactLiveTile, maxHlsRetries]);
 
   return (
     <>

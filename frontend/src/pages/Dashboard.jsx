@@ -97,9 +97,10 @@ function CameraTile({ cam, streamName, online, onClick }) {
           <LivePlayer
             cameraName={cam.name}
             streamName={streamName}
-            enabled={streamEnabled}
+            enabled={streamEnabled && online !== false}
             playbackMode={getPlaybackModeOverride()}
             nativeVideoControls={false}
+            compactLiveTile
             className="h-full"
           />
         </div>

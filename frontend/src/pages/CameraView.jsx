@@ -14,6 +14,13 @@ export default function CameraView() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
   const [modeOverride, setModeOverride] = useState(getPlaybackModeOverride());
+  const [tryLiveDespiteOffline, setTryLiveDespiteOffline] = useState(false);
+  const [statsUnavailable, setStatsUnavailable] = useState(false);
+
+  useEffect(() => {
+    setTryLiveDespiteOffline(false);
+    setStatsUnavailable(false);
+  }, [name]);
 
   useEffect(() => {
     let alive = true;
@@ -22,13 +29,14 @@ export default function CameraView() {
       try {
         setLoading(true);
 
-        const [all, st] = await Promise.all([
+        const [all, stResult] = await Promise.all([
           camerasApi.summary(),
-          camerasApi.stats(name).catch(() => null),
+          camerasApi.stats(name).then((s) => ({ ok: true, data: s })).catch(() => ({ ok: false, data: null })),
         ]);
         if (!alive) return;
 
-        setStreamStats(st);
+        setStatsUnavailable(!stResult.ok);
+        setStreamStats(stResult.data);
 
         const found = all.find((c) => c.name === name);
         if (found) {
@@ -163,6 +171,11 @@ export default function CameraView() {
           ))}
         </div>
       )}
+      {statsUnavailable && (
+        <div className="shrink-0 px-4 py-2 bg-gray-900/80 border-b border-gray-800 text-[11px] text-amber-200/90">
+          Could not load stream diagnostics (codec warnings may be missing). Live view still runs.
+        </div>
+      )}
       {streamStats && (
         <div className="shrink-0 px-4 py-2 bg-gray-900/70 border-b border-gray-800 text-[11px] text-gray-400 flex flex-wrap gap-x-4 gap-y-1">
           <span>mode: {playbackMode}</span>
@@ -173,15 +186,28 @@ export default function CameraView() {
         </div>
       )}
 
-      <div className="flex-1 bg-black min-h-0">
+      <div className="flex-1 bg-black min-h-0 relative">
+        {cam?.online === false && !tryLiveDespiteOffline && (
+          <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 bg-black/90 text-center px-4">
+            <p className="text-gray-300 text-sm">This stream looks offline — live view is paused to save resources.</p>
+            <button
+              type="button"
+              onClick={() => setTryLiveDespiteOffline(true)}
+              className="text-sm px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white"
+            >
+              Try live anyway
+            </button>
+          </div>
+        )}
         {/*
           Desktop: MSE (lower latency than HLS, no per-consumer server-side FFmpeg).
-          Touch / narrow: HLS (adaptive bitrate, less decode pressure). Substream matches dashboard.
+          Touch: HLS (adaptive bitrate, less decode pressure). Substream matches dashboard.
         */}
         <LivePlayer
           cameraName={cam.name}
           streamName={cam.live_view_stream_name}
-          enabled={true}
+          enabled={(cam?.online !== false || tryLiveDespiteOffline) && Boolean(cam)}
+          pollForProducer
           playbackMode={playbackMode}
         />
       </div>
